@@ -139,7 +139,7 @@ export function Footer() {
 
       {/* Bottom bar */}
       <div className="max-w-[1200px] mx-auto relative z-10 mt-20 pt-8 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 text-white/25 text-xs">
-        <span>© 2025 TRAINREADY. All rights reserved.</span>
+        <span>© 2026 TRAINREADY. All rights reserved.</span>
         <div className="flex gap-6">
           <Link href="/privacy" className="hover:text-white/50 transition-colors duration-200">Privacy</Link>
           <Link href="/terms" className="hover:text-white/50 transition-colors duration-200">Terms</Link>
