@@ -20,15 +20,15 @@ function GooglePlayIcon() {
 function StoreButton({ store }: { store: "apple" | "google" }) {
   const isApple = store === "apple";
   return (
-    <button className="flex items-center gap-3 bg-white/10 hover:bg-white/15 border border-white/15 hover:border-white/30 backdrop-blur-md rounded-2xl px-5 py-3.5 transition-all duration-200 group w-full sm:w-auto sm:min-w-[170px] active:scale-95">
-      <span className="text-white/70 group-hover:text-white transition-colors duration-200">
+    <button className="flex items-center gap-4 bg-white hover:bg-white/90 rounded-2xl px-6 py-4 transition-all duration-200 group w-full sm:w-auto sm:min-w-[200px] active:scale-95 shadow-xl shadow-black/30">
+      <span className="text-black shrink-0">
         {isApple ? <AppleIcon /> : <GooglePlayIcon />}
       </span>
       <div className="text-left">
-        <div className="text-white/45 text-[10px] leading-none mb-0.5 uppercase tracking-wide">
+        <div className="text-black/50 text-[10px] leading-none mb-0.5 uppercase tracking-widest font-medium">
           {isApple ? "Download on the" : "Get it on"}
         </div>
-        <div className="text-white font-semibold text-sm leading-tight">
+        <div className="text-black font-bold text-base leading-tight">
           {isApple ? "App Store" : "Google Play"}
         </div>
       </div>

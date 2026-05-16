@@ -9,6 +9,7 @@ const features = [
     description:
       "Monitor your swim stroke, cycling power, and running pace with unified multi-sport analytics.",
     accent: true,
+    href: "#features",
   },
   {
     icon: "psychology",
@@ -16,13 +17,15 @@ const features = [
     description:
       "AI-powered periodization that balances your load across all disciplines to prevent overtraining.",
     accent: false,
+    href: "#training",
   },
   {
-    icon: "timer",
-    title: "Transition\nOptimization",
+    icon: "bolt",
+    title: "Race-Day\nStrategy",
     description:
-      "Analyze and improve your T1 and T2 times with dedicated transition tracking and coaching.",
+      "Build your perfect race plan with pacing targets, nutrition timing, and split projections for any distance.",
     accent: false,
+    href: "#race",
   },
   {
     icon: "group",
@@ -30,6 +33,7 @@ const features = [
     description:
       "Connect with fellow multi-sport athletes, join virtual triathlons, and share your journey.",
     accent: false,
+    href: "#community",
   },
 ];
 
@@ -47,35 +51,35 @@ export function FeaturesGrid() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           {features.map((feature, i) => (
-            <AnimateIn key={i} delay={i * 90} direction="up">
+            <AnimateIn key={i} delay={i * 90} direction="up" className="h-full">
               <div
-                className={`group relative rounded-3xl p-6 md:p-8 flex flex-col h-[280px] md:h-[320px] transition-all duration-300 cursor-default
+                className={`relative rounded-3xl p-7 flex flex-col gap-4 h-full transition-all duration-300 cursor-default
                   ${feature.accent
                     ? "bg-[#140A0A] border border-white/8"
-                    : "bg-[#1E1010]/60 border border-white/5 hover:border-white/10 hover:bg-[#1E1010]"
+                    : "bg-[#1E1010]/60 border border-white/5"
                   }`}
               >
                 {feature.accent && (
                   <div
-                    className="absolute top-6 right-6 w-2 h-2 rounded-full bg-[#FF2D55]"
+                    className="absolute top-7 right-7 w-2 h-2 rounded-full bg-[#FF2D55]"
                     style={{ boxShadow: "0 0 8px #FF2D55" }}
                   />
                 )}
                 <span
-                  className={`material-symbols-outlined text-3xl mb-6 transition-colors duration-300
-                    ${feature.accent ? "text-[#FF2D55]" : "text-white/25 group-hover:text-white/50"}`}
+                  className={`material-symbols-outlined text-[30px]
+                    ${feature.accent ? "text-[#FF2D55]" : "text-white/25"}`}
                 >
                   {feature.icon}
                 </span>
                 <h3
-                  className={`text-lg md:text-xl font-bold mb-auto whitespace-pre-line leading-tight
-                    ${feature.accent ? "text-white" : "text-white/80 group-hover:text-white"}`}
+                  className={`text-xl font-bold whitespace-pre-line leading-tight
+                    ${feature.accent ? "text-white" : "text-white/80"}`}
                 >
                   {feature.title}
                 </h3>
                 <p
-                  className={`text-[13px] leading-relaxed mt-4 transition-colors duration-300
-                    ${feature.accent ? "text-white/50" : "text-white/30 group-hover:text-white/50"}`}
+                  className={`text-[13px] leading-relaxed
+                    ${feature.accent ? "text-white/50" : "text-white/30"}`}
                 >
                   {feature.description}
                 </p>

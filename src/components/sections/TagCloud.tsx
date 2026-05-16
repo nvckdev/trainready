@@ -30,13 +30,13 @@ const rowsBelow: { tags: string[]; opacity: string }[] = [
   },
 ];
 
-function TagRow({ tags, opacity }: { tags: string[]; opacity: string }) {
+function TagRow({ tags, opacity, hidden }: { tags: string[]; opacity: string; hidden?: boolean }) {
   return (
-    <div className={`flex gap-3 justify-center flex-wrap ${opacity}`}>
+    <div className={`flex gap-3 justify-center overflow-hidden flex-nowrap md:flex-wrap ${opacity} ${hidden ? "hidden md:flex" : ""}`}>
       {tags.map((tag) => (
         <span
           key={tag}
-          className="border border-white/15 rounded-full px-5 py-2 text-sm text-white/70 whitespace-nowrap select-none"
+          className="border border-white/15 rounded-full px-4 py-1.5 md:px-5 md:py-2 text-xs md:text-sm text-white/70 whitespace-nowrap select-none flex-shrink-0"
         >
           {tag}
         </span>
@@ -47,28 +47,28 @@ function TagRow({ tags, opacity }: { tags: string[]; opacity: string }) {
 
 export function TagCloud() {
   return (
-    <section className="py-24 md:py-32 flex flex-col items-center overflow-hidden relative px-6">
+    <section className="py-14 md:py-32 flex flex-col items-center overflow-hidden relative px-0 md:px-6">
       {/* Top fade */}
-      <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#0A0505] to-transparent z-10 pointer-events-none" />
+      <div className="absolute top-0 left-0 right-0 h-24 md:h-32 bg-gradient-to-b from-[#0A0505] to-transparent z-10 pointer-events-none" />
       {/* Bottom fade */}
-      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#0A0505] to-transparent z-10 pointer-events-none" />
+      <div className="absolute bottom-0 left-0 right-0 h-24 md:h-32 bg-gradient-to-t from-[#0A0505] to-transparent z-10 pointer-events-none" />
 
-      <div className="flex flex-col gap-4 w-full max-w-[900px]">
+      <div className="flex flex-col gap-3 md:gap-4 w-full max-w-[900px]">
         {rowsAbove.map((row, i) => (
-          <TagRow key={i} {...row} />
+          <TagRow key={i} {...row} hidden={i < 2} />
         ))}
       </div>
 
       {/* CTA */}
-      <div className="flex justify-center items-center py-10 relative z-20">
-        <button className="bg-gradient-to-r from-[#FF2D55] to-pink-500 rounded-full px-12 py-5 text-xl font-extrabold text-white tracking-tight shadow-[0_0_60px_rgba(255,45,85,0.5)] hover:shadow-[0_0_90px_rgba(255,45,85,0.7)] hover:scale-105 active:scale-95 transition-all duration-200">
+      <div className="flex justify-center items-center py-8 md:py-10 relative z-20">
+        <button className="bg-gradient-to-r from-[#FF2D55] to-pink-500 rounded-full px-10 py-4 md:px-12 md:py-5 text-lg md:text-xl font-extrabold text-white tracking-tight shadow-[0_0_60px_rgba(255,45,85,0.5)] hover:shadow-[0_0_90px_rgba(255,45,85,0.7)] hover:scale-105 active:scale-95 transition-all duration-200">
           Own The Race
         </button>
       </div>
 
-      <div className="flex flex-col gap-4 w-full max-w-[900px]">
+      <div className="flex flex-col gap-3 md:gap-4 w-full max-w-[900px]">
         {rowsBelow.map((row, i) => (
-          <TagRow key={i} {...row} />
+          <TagRow key={i} {...row} hidden={i > 0} />
         ))}
       </div>
     </section>
