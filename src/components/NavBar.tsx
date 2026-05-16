@@ -32,10 +32,10 @@ export function NavBar() {
 
   return (
     <header
-      className={`fixed w-full top-0 z-50 transition-all duration-300 ${
+      className={`fixed w-full top-0 z-50 transition-all duration-500 ${
         scrolled
           ? "bg-[#0A0505]/92 backdrop-blur-xl border-b border-white/5 shadow-lg shadow-black/20"
-          : "bg-[#0A0505]/60 backdrop-blur-md border-b border-white/[0.04]"
+          : "bg-transparent border-b border-transparent"
       }`}
     >
       {/* Scroll progress bar */}
