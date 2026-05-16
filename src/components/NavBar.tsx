@@ -41,7 +41,7 @@ export function NavBar() {
       {/* Scroll progress bar */}
       <div
         className="absolute bottom-0 left-0 h-[2px] bg-[#FF2D55] rounded-r-full"
-        style={{ width: `${progress}%`, opacity: scrolled ? 1 : 0, transition: "width 150ms ease-out, opacity 300ms ease" }}
+        style={{ width: `${progress}%`, opacity: scrolled ? 1 : 0, transition: "width 60ms linear, opacity 300ms ease" }}
       />
 
       <nav className="max-w-[1440px] mx-auto px-4 md:px-6 py-3.5 md:py-4 flex items-center justify-between relative">
