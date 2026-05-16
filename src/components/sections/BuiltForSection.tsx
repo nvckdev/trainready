@@ -2,10 +2,10 @@ import Image from "next/image";
 import { AnimateIn } from "@/components/AnimateIn";
 
 const labels = [
-  { text: "Swim Tracking", position: "top-[14%] left-[6%]" },
-  { text: "Power Output", position: "top-[14%] right-[6%]" },
-  { text: "Run Dynamics", position: "bottom-[14%] left-[6%]" },
-  { text: "Race Strategy", position: "bottom-[14%] right-[6%]" },
+  { text: "Swim Tracking", position: "top-[18%] left-[5%]" },
+  { text: "Power Output", position: "top-[28%] right-[6%]" },
+  { text: "Run Dynamics", position: "bottom-[22%] left-[7%]" },
+  { text: "Race Strategy", position: "bottom-[14%] right-[5%]" },
 ];
 
 export function BuiltForSection() {
