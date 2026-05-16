@@ -23,6 +23,7 @@ export function BuiltForSection() {
           />
           <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-black/30 to-black/20" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+          <div className="absolute inset-0 bg-black/30" />
 
           <div className="absolute inset-0 flex items-center justify-center">
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight text-center drop-shadow-xl leading-tight px-6">

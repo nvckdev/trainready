@@ -67,12 +67,12 @@ export function CrewSection() {
       <div className="max-w-[1200px] mx-auto text-center relative z-10">
         <AnimateIn>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
-            Your Races. Your Targets.
+            Your Metrics. Your Plan.
             <br />
-            Your Tri Club.
+            Your Edge.
           </h2>
           <p className="text-white/40 text-sm mb-14 md:mb-20 max-w-[400px] mx-auto">
-            One app. Three disciplines. An entire community behind you.
+            Personalized training built around your data — not a generic template.
           </p>
         </AnimateIn>
 
