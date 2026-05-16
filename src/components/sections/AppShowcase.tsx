@@ -80,8 +80,7 @@ export function AppShowcase() {
 
       <AnimateIn delay={80} className="relative z-10 w-full max-w-[600px] mx-auto text-center">
         <p className="text-white/55 text-base md:text-lg leading-relaxed px-4">
-          Every session builds your legacy. Analyze your metrics across all
-          three disciplines in one unified platform.
+          Your plan isn't static. TRAINREADY reads your performance data in real time and adjusts intensity, volume, and recovery so you're always training at your optimal level.
         </p>
       </AnimateIn>
     </section>

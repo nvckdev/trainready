@@ -57,9 +57,7 @@ export function Footer() {
             <span className="text-xl font-bold tracking-tight">TRAINREADY</span>
           </div>
           <p className="text-white/40 text-sm leading-relaxed max-w-[280px]">
-            The premium triathlete&apos;s platform. Track every discipline, train
-            smarter, and share your multi-sport journey with the global
-            community.
+            The premium AI training ecosystem for triathletes — built to adapt to you and elevate every session.
           </p>
           {/* Red accent line */}
           <div className="mt-8 w-12 h-[2px] bg-[#FF2D55] rounded-full" />
