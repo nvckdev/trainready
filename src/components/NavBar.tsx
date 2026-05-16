@@ -17,12 +17,12 @@ const navRight = [
 const allLinks = [...navLeft, ...navRight];
 
 export function NavBar() {
-  const [scrolled, setScrolled] = useState(false);
+  const [scrollY, setScrollY] = useState(0);
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     const handler = () => {
-      setScrolled(window.scrollY > 20);
+      setScrollY(window.scrollY);
       const docH = document.documentElement.scrollHeight - window.innerHeight;
       setProgress(docH > 0 ? (window.scrollY / docH) * 100 : 0);
     };
@@ -30,18 +30,31 @@ export function NavBar() {
     return () => window.removeEventListener("scroll", handler);
   }, []);
 
+  // Normalise 0→1 over first 80px of scroll
+  const t = Math.min(scrollY / 80, 1);
+  // Ease-out curve for a natural deceleration
+  const eased = 1 - Math.pow(1 - t, 2);
+
+  const bgOpacity = eased * 0.93;
+  const blurPx = eased * 20;
+  const borderOpacity = eased * 0.07;
+  const shadowOpacity = eased * 0.3;
+
   return (
     <header
-      className={`fixed w-full top-0 z-50 transition-all duration-500 ${
-        scrolled
-          ? "bg-[#0A0505]/92 backdrop-blur-xl border-b border-white/5 shadow-lg shadow-black/20"
-          : "bg-transparent border-b border-transparent"
-      }`}
+      className="fixed w-full top-0 z-50"
+      style={{
+        backgroundColor: `rgba(10,5,5,${bgOpacity})`,
+        backdropFilter: `blur(${blurPx}px)`,
+        WebkitBackdropFilter: `blur(${blurPx}px)`,
+        borderBottom: `1px solid rgba(255,255,255,${borderOpacity})`,
+        boxShadow: `0 4px 30px rgba(0,0,0,${shadowOpacity})`,
+      }}
     >
       {/* Scroll progress bar */}
       <div
         className="absolute bottom-0 left-0 h-[2px] bg-[#FF2D55] rounded-r-full"
-        style={{ width: `${progress}%`, opacity: scrolled ? 1 : 0, transition: "width 60ms linear, opacity 300ms ease" }}
+        style={{ width: `${progress}%`, opacity: t > 0.1 ? 1 : 0, transition: "width 60ms linear, opacity 300ms ease" }}
       />
 
       <nav className="max-w-[1440px] mx-auto px-4 md:px-6 py-3.5 md:py-4 flex items-center justify-between relative">
