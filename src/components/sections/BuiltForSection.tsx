@@ -2,10 +2,10 @@ import Image from "next/image";
 import { AnimateIn } from "@/components/AnimateIn";
 
 const labels = [
-  { text: "Swim Tracking", position: "top-[16%] left-[6%]" },
-  { text: "Power Output", position: "top-[32%] right-[8%]" },
-  { text: "Run Dynamics", position: "bottom-[30%] left-[28%]" },
-  { text: "Race Strategy", position: "bottom-[16%] right-[8%]" },
+  { text: "Swim Tracking", position: "top-[14%] left-[6%]" },
+  { text: "Power Output", position: "top-[14%] right-[6%]" },
+  { text: "Run Dynamics", position: "bottom-[14%] left-[6%]" },
+  { text: "Race Strategy", position: "bottom-[14%] right-[6%]" },
 ];
 
 export function BuiltForSection() {
@@ -26,9 +26,7 @@ export function BuiltForSection() {
 
           <div className="absolute inset-0 flex items-center justify-center">
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight text-center drop-shadow-xl leading-tight px-6">
-              Built for Runners,
-              <br />
-              Cyclists, and Triathletes
+              Built for Every Athlete
             </h2>
           </div>
 
