@@ -39,7 +39,7 @@ export function HeroSection() {
         </div>
 
         <div className="flex items-center justify-center gap-4 md:gap-6 mt-10 md:mt-12 text-white/35 text-xs flex-wrap">
-          <span>All triathlon distances</span>
+          <span>All levels</span>
           <span className="w-px h-3 bg-white/20" />
           <span>Real-time coaching</span>
           <span className="w-px h-3 bg-white/20" />
