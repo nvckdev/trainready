@@ -1,9 +1,4 @@
-"use client";
-
 import Image from "next/image";
-import { motion } from "framer-motion";
-
-const ease = [0.21, 0.47, 0.32, 0.98] as const;
 
 export function HeroSection() {
   return (
@@ -23,53 +18,33 @@ export function HeroSection() {
       </div>
 
       <div className="max-w-[800px] mx-auto text-center relative z-20">
-        <motion.h1
-          className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tight leading-[1.05] mb-6 md:mb-8 text-glow drop-shadow-2xl"
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease }}
-        >
+        <h1 className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tight leading-[1.05] mb-6 md:mb-8 text-glow drop-shadow-2xl">
           Train Smarter.
           <br />
           <span className="text-white">Go Further.</span>
-        </motion.h1>
+        </h1>
 
-        <motion.p
-          className="text-white/75 text-base md:text-xl max-w-[540px] mx-auto mb-8 md:mb-10 font-medium leading-relaxed"
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.15, ease }}
-        >
+        <p className="text-white/75 text-base md:text-xl max-w-[540px] mx-auto mb-8 md:mb-10 font-medium leading-relaxed">
           The ultimate training ecosystem for runners, cyclists, and triathletes.
           Track every discipline with precision, optimize transitions, and peak on race day.
-        </motion.p>
+        </p>
 
-        <motion.div
-          className="flex flex-col sm:flex-row items-center justify-center gap-3"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.28, ease }}
-        >
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <button className="w-full sm:w-auto bg-white text-black font-bold rounded-full px-10 py-4 hover:bg-white/90 active:scale-95 transition-all duration-200 shadow-xl text-sm tracking-wide">
             Start Training Free
           </button>
           <button className="w-full sm:w-auto border border-white/20 text-white/90 rounded-full px-10 py-4 hover:bg-white/5 hover:border-white/30 transition-all duration-200 text-sm backdrop-blur-sm">
             Watch the demo
           </button>
-        </motion.div>
+        </div>
 
-        <motion.div
-          className="flex items-center justify-center gap-4 md:gap-6 mt-10 md:mt-12 text-white/35 text-xs flex-wrap"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.45, ease }}
-        >
+        <div className="flex items-center justify-center gap-4 md:gap-6 mt-10 md:mt-12 text-white/35 text-xs flex-wrap">
           <span>All levels</span>
           <span className="w-px h-3 bg-white/20" />
           <span>Real-time coaching</span>
           <span className="w-px h-3 bg-white/20" />
           <span>Swim · Bike · Run</span>
-        </motion.div>
+        </div>
       </div>
     </section>
   );
