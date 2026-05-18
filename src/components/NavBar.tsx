@@ -72,7 +72,7 @@ export function NavBar() {
         {/* Logo — centered on desktop, left-aligned on mobile */}
         <a href="/" className="flex items-center gap-2.5 lg:absolute lg:left-1/2 lg:-translate-x-1/2">
           <Image
-            src="https://lh3.googleusercontent.com/aida/ADBb0ujDgmM4zYyEHa8wFUQd1eFyPcep5iv9h_AgS-io9l-Ut2GWCP0Qg0CM1C1K1Zqrg3LZW7zxKGFOQl3D6CAx-gCTM0iMDoQbVhx0nqzeYlkZDQN-oYVzEKIUFScev3RsOMNEwJQhAhkADKTZ6lALmSOuyl9zsRQA3SlbMV-rplnDP5uBqpKFy1kMCOveJ-AWGeJLS32tG6tMyMgAIHcSvrmkOEyakOZIkm44ijPLD7R2eFEL7I1eN7_owrmn"
+            src="/logo.png"
             alt="TRAINREADY logo"
             width={28}
             height={28}
@@ -115,7 +115,7 @@ export function NavBar() {
             <SheetContent side="right" className="bg-[#140A0A] border-white/10 text-white w-[260px] p-6">
               <a href="/" className="flex items-center gap-2.5 mb-8">
                 <Image
-                  src="https://lh3.googleusercontent.com/aida/ADBb0ujDgmM4zYyEHa8wFUQd1eFyPcep5iv9h_AgS-io9l-Ut2GWCP0Qg0CM1C1K1Zqrg3LZW7zxKGFOQl3D6CAx-gCTM0iMDoQbVhx0nqzeYlkZDQN-oYVzEKIUFScev3RsOMNEwJQhAhkADKTZ6lALmSOuyl9zsRQA3SlbMV-rplnDP5uBqpKFy1kMCOveJ-AWGeJLS32tG6tMyMgAIHcSvrmkOEyakOZIkm44ijPLD7R2eFEL7I1eN7_owrmn"
+                  src="/logo.png"
                   alt="TRAINREADY"
                   width={26}
                   height={26}

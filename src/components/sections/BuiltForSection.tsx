@@ -14,7 +14,7 @@ export function BuiltForSection() {
       <AnimateIn>
         <div className="max-w-[1200px] mx-auto relative rounded-2xl md:rounded-3xl overflow-hidden h-[340px] md:h-[420px]">
           <Image
-            src="https://images.unsplash.com/photo-1774050021466-369013ca33ef?w=1920&q=90&auto=format&fit=crop"
+            src="/images/builtfor-bg.jpg"
             alt="Cyclist and runner racing on city street"
             fill
             quality={90}

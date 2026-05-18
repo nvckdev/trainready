@@ -7,7 +7,7 @@ export function WatchSection() {
     <section className="py-4 md:py-8 px-4 md:px-6 relative bg-black" id="race">
       <div className="max-w-[1200px] mx-auto relative overflow-hidden h-[600px] md:h-[800px] flex flex-col items-center justify-center rounded-2xl md:rounded-3xl">
         <Image
-          src="https://images.pexels.com/photos/31291212/pexels-photo-31291212.jpeg?auto=compress&cs=tinysrgb&w=1920"
+          src="/images/watch-bg.jpg"
           alt="Male runner checking watch during marathon"
           fill
           quality={90}

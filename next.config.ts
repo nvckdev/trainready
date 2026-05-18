@@ -3,17 +3,14 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
+      // Integration logos served from third-party CDNs (marquee strip)
       {
         protocol: "https",
-        hostname: "lh3.googleusercontent.com",
+        hostname: "cdn.mcmillanrunning.com",
       },
       {
         protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "images.pexels.com",
+        hostname: "wpassets.trainingpeaks.com",
       },
     ],
   },

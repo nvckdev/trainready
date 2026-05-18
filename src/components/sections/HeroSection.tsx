@@ -36,7 +36,7 @@ const integrations = [
     logo: (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src="https://upload.wikimedia.org/wikipedia/commons/e/e6/COROS_Wearables_Logo.png"
+        src="/logos/coros.png"
         alt="COROS"
         style={{ height: 22, width: "auto", display: "block", filter: "brightness(0) invert(1)" }}
       />
@@ -49,7 +49,7 @@ export function HeroSection() {
     <section className="relative pt-36 md:pt-48 pb-24 md:pb-32 px-6 min-h-[90vh] flex items-center justify-center overflow-hidden">
       <div className="absolute inset-0 z-0">
         <Image
-          src="https://images.pexels.com/photos/10141165/pexels-photo-10141165.jpeg?auto=compress&cs=tinysrgb&w=1920"
+          src="/images/hero-bg.jpg"
           alt="Runner silhouette on track at dramatic sunset with puddle reflections"
           fill
           priority
