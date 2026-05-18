@@ -96,10 +96,9 @@ export function HeroSection() {
           <div className="relative overflow-hidden w-full">
             <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#0A0505] to-transparent z-10 pointer-events-none" />
             <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#0A0505] to-transparent z-10 pointer-events-none" />
-            {/* 4 copies so one set (4 logos × ~200px gap ≈ 860px) always exceeds the
-                visible container, keeping each logo unique on screen at all times.
-                translateX(-50%) moves exactly 2 sets for a seamless loop. */}
-            <div className="flex animate-marquee-4x w-max items-center" style={{ gap: "200px" }}>
+            {/* 4 copies with responsive gap. translateX(-25%) moves exactly 1 of 4
+                sets per cycle — seamless loop. Gap widens as more logos are added. */}
+            <div className="flex animate-marquee-4x w-max items-center gap-[72px] md:gap-[120px]">
               {[...Array(4)].map((_, set) =>
                 integrations.map(({ name, logo }) => (
                   <div
