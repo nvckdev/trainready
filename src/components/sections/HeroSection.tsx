@@ -46,29 +46,24 @@ export function HeroSection() {
           <span>Swim · Bike · Run</span>
         </div>
 
-        {/* Integrations strip */}
+        {/* Integrations marquee */}
         <div className="mt-14 md:mt-20">
           <p className="text-white/25 text-[11px] uppercase tracking-widest mb-5">Connects with your gear</p>
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            {[
-              { name: "Strava", color: "#FC4C02" },
-              { name: "TrainingPeaks", color: "#4A90D9" },
-              { name: "Garmin", color: "#007CC3" },
-              { name: "COROS", color: "#E8E8E8" },
-            ].map((brand) => (
-              <div
-                key={brand.name}
-                className="flex items-center gap-2 border border-white/8 rounded-full px-4 py-2 bg-white/3 hover:bg-white/6 hover:border-white/15 transition-all duration-200"
-              >
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ background: brand.color }}
-                />
-                <span className="text-white/50 text-xs font-medium">{brand.name}</span>
-              </div>
-            ))}
-            <div className="flex items-center gap-2 border border-white/5 rounded-full px-4 py-2 bg-white/2">
-              <span className="text-white/20 text-xs">+ more</span>
+          <div className="relative overflow-hidden w-full">
+            {/* fade edges */}
+            <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#0A0505] to-transparent z-10 pointer-events-none" />
+            <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#0A0505] to-transparent z-10 pointer-events-none" />
+            <div className="flex animate-marquee gap-4 w-max">
+              {[...Array(2)].map((_, set) =>
+                ["Strava", "TrainingPeaks", "Garmin", "COROS", "Wahoo", "Apple Health", "Polar", "Suunto"].map((name) => (
+                  <div
+                    key={`${set}-${name}`}
+                    className="flex items-center gap-2 border border-white/10 rounded-full px-5 py-2 bg-white/4 shrink-0"
+                  >
+                    <span className="text-white/40 text-xs font-medium whitespace-nowrap">{name}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
