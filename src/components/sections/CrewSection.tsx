@@ -2,62 +2,121 @@
 
 import { AnimateIn } from "@/components/AnimateIn";
 
-function ScreenContent({ label, isMain = false }: { label: string; isMain?: boolean }) {
-  if (isMain) {
-    return (
-      <div className="w-full h-full flex flex-col p-5 gap-3 pt-8">
-        <div className="text-white/20 text-[9px] uppercase tracking-widest">Dashboard</div>
-        <div className="flex gap-2 mt-1">
+function WebDashboardWide() {
+  return (
+    <div
+      className="relative w-full rounded-xl overflow-hidden bg-[#0d0404]"
+      style={{ boxShadow: "0 40px 80px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.06), 0 0 60px rgba(255,45,85,0.05)" }}
+    >
+      {/* Browser chrome */}
+      <div className="bg-[#1a0a0a] px-4 py-3 flex items-center gap-3 border-b border-white/5">
+        <div className="flex gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-white/10" />
+          <div className="w-3 h-3 rounded-full bg-white/10" />
+          <div className="w-3 h-3 rounded-full bg-white/10" />
+        </div>
+        <div className="flex gap-3 ml-2 text-[10px] text-white/20">
+          <span className="border-b border-white/20 pb-1 text-white/40">Dashboard</span>
+          <span>Training Plan</span>
+          <span>Race Calendar</span>
+          <span className="hidden md:block">Analytics</span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <div className="w-6 h-6 rounded-full bg-[#FF2D55]/20 flex items-center justify-center">
+            <div className="w-2 h-2 rounded-full bg-[#FF2D55]" />
+          </div>
+          <span className="text-[10px] text-white/25 hidden sm:block">Nick A.</span>
+        </div>
+      </div>
+
+      {/* Dashboard layout */}
+      <div className="flex min-h-[320px] md:min-h-[380px]">
+        {/* Sidebar */}
+        <div className="hidden md:flex w-48 border-r border-white/5 flex-col py-5 px-3 gap-1 shrink-0">
           {[
-            { d: "S", val: "1.5", unit: "km", red: true },
-            { d: "B", val: "40", unit: "km", red: false },
-            { d: "R", val: "10", unit: "km", red: true },
+            { icon: "monitoring", label: "Dashboard", active: true },
+            { icon: "directions_run", label: "Training Plan", active: false },
+            { icon: "calendar_month", label: "Race Calendar", active: false },
+            { icon: "bar_chart", label: "Analytics", active: false },
+            { icon: "group", label: "Community", active: false },
           ].map((item) => (
-            <div key={item.d} className="flex-1 bg-white/5 rounded-xl p-2 text-center">
-              <div className={`font-bold text-sm ${item.red ? "text-[#FF2D55]" : "text-white"}`}>
-                {item.val}<span className="text-[8px] font-normal text-white/30 ml-0.5">{item.unit}</span>
-              </div>
-              <div className="text-[8px] text-white/20 mt-0.5">
-                {item.d === "S" ? "Swim" : item.d === "B" ? "Bike" : "Run"}
-              </div>
+            <div key={item.label} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs cursor-pointer transition-colors
+              ${item.active ? "bg-white/8 text-white" : "text-white/25 hover:text-white/40"}`}>
+              <span className="material-symbols-outlined text-[16px]">{item.icon}</span>
+              {item.label}
             </div>
           ))}
         </div>
-        <div className="bg-white/5 rounded-xl p-3">
-          <div className="text-[9px] text-white/30 mb-2">Weekly Volume</div>
-          <div className="flex items-end gap-1 h-10">
-            {[40, 65, 30, 80, 55, 70, 45].map((h, i) => (
-              <div key={i} className="flex-1 rounded-sm"
-                style={{ height: `${h}%`, background: i === 5 ? "#FF2D55" : "rgba(255,255,255,0.15)" }} />
-            ))}
+
+        {/* Main area */}
+        <div className="flex-1 p-4 md:p-5 grid grid-cols-2 md:grid-cols-3 gap-3">
+          {/* Next race card */}
+          <div className="col-span-2 md:col-span-1 bg-[#FF2D55]/10 border border-[#FF2D55]/20 rounded-xl p-4">
+            <div className="text-[10px] text-[#FF2D55]/70 uppercase tracking-widest mb-2">Next Race</div>
+            <div className="text-white font-bold text-sm mb-0.5">Ironman 70.3</div>
+            <div className="text-white/40 text-xs">18 days away</div>
+            <div className="mt-3 h-1 bg-white/10 rounded-full overflow-hidden">
+              <div className="h-full bg-[#FF2D55] rounded-full" style={{ width: "74%" }} />
+            </div>
+            <div className="text-[9px] text-white/20 mt-1">74% race-ready</div>
           </div>
-        </div>
-        <div className="bg-white/5 rounded-xl p-3 flex items-center gap-3">
-          <div className="w-6 h-6 rounded-full bg-[#FF2D55]/20 flex items-center justify-center shrink-0">
-            <div className="w-2 h-2 rounded-full bg-[#FF2D55]" />
+
+          {/* Weekly volume */}
+          <div className="bg-white/5 rounded-xl p-4">
+            <div className="text-[10px] text-white/30 uppercase tracking-widest mb-3">Weekly Volume</div>
+            <div className="flex items-end gap-1 h-14">
+              {[40, 65, 30, 80, 55, 95, 45].map((h, i) => (
+                <div key={i} className="flex-1 rounded-sm"
+                  style={{ height: `${h}%`, background: i === 5 ? "#FF2D55" : "rgba(255,255,255,0.12)" }} />
+              ))}
+            </div>
+            <div className="text-[9px] text-white/20 mt-2">Mon – Sun</div>
           </div>
-          <div>
-            <div className="text-[9px] text-white/60">Next Race</div>
-            <div className="text-[10px] text-white font-medium">Ironman 70.3 — 18d</div>
+
+          {/* Tri metrics */}
+          <div className="bg-white/5 rounded-xl p-4">
+            <div className="text-[10px] text-white/30 uppercase tracking-widest mb-3">Today</div>
+            <div className="space-y-2.5">
+              {[
+                { label: "Swim", val: "1.5km", pct: 85, color: "#FF2D55" },
+                { label: "Bike", val: "42km", pct: 62, color: "#fff" },
+                { label: "Run", val: "10km", pct: 40, color: "#FF2D55" },
+              ].map((d) => (
+                <div key={d.label} className="flex items-center gap-2">
+                  <div className="text-[9px] text-white/30 w-7 shrink-0">{d.label}</div>
+                  <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: d.color, opacity: 0.7 }} />
+                  </div>
+                  <div className="text-[9px] font-medium w-8 text-right" style={{ color: d.color }}>{d.val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* AI Insight card — spans full bottom on md */}
+          <div className="col-span-2 md:col-span-3 bg-white/4 border border-white/5 rounded-xl p-4 flex items-start gap-3">
+            <div className="w-6 h-6 rounded-full bg-[#FF2D55]/15 flex items-center justify-center shrink-0 mt-0.5">
+              <span className="material-symbols-outlined text-[13px] text-[#FF2D55]">psychology</span>
+            </div>
+            <div>
+              <div className="text-[10px] text-[#FF2D55]/70 uppercase tracking-widest mb-1">AI Coach Insight</div>
+              <div className="text-xs text-white/50 leading-relaxed">Your swim pace improved 4% this week. Based on your HRV trend, tomorrow's long bike is adjusted to Zone 2 to ensure full recovery before Saturday's brick session.</div>
+            </div>
           </div>
         </div>
       </div>
-    );
-  }
-  return (
-    <div className="w-full h-full flex items-center justify-center pt-6">
-      <span className="text-white/15 text-[10px] text-center px-4">{label}</span>
     </div>
   );
 }
 
+/* Phone carousel preserved for future mobile app — uncomment to restore
 const screens = [
   { label: "Leaderboard", isEdge: true },
   { label: "Race Calendar", isEdge: false },
   { label: "Dashboard", isMain: true, isEdge: false },
   { label: "Club Feed", isEdge: false },
   { label: "Goals", isEdge: true },
-];
+]; */
 
 export function CrewSection() {
   return (
@@ -76,29 +135,12 @@ export function CrewSection() {
           </p>
         </AnimateIn>
 
-        {/* Phone carousel */}
         <AnimateIn delay={100} direction="up">
-          <div className="flex justify-center items-end gap-3 md:gap-4 overflow-hidden w-full">
-            {screens.map((screen, i) => {
-              const isMain = screen.isMain;
-              const isEdge = screen.isEdge;
-              const isMid = !isMain && !isEdge;
-
-              return (
-                <div
-                  key={i}
-                  className={`relative flex-shrink-0 rounded-[2rem] md:rounded-[2.5rem] border border-[#1E1010] bg-[#0d0404] transition-all duration-300
-                    ${isMain ? "w-[220px] h-[460px] md:w-[260px] md:h-[540px] border-[#2a0f0f] shadow-2xl z-20" : ""}
-                    ${isMid ? "w-[160px] h-[340px] md:w-[220px] md:h-[460px] opacity-60" : ""}
-                    ${isEdge ? "w-[120px] h-[260px] md:w-[180px] md:h-[380px] opacity-25 hidden sm:block" : ""}
-                  `}
-                  style={isMain ? { boxShadow: "0 40px 80px rgba(0,0,0,0.8), 0 0 40px rgba(255,45,85,0.08)" } : undefined}
-                >
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-3 bg-black rounded-full z-10" />
-                  <ScreenContent label={screen.label} isMain={screen.isMain} />
-                </div>
-              );
-            })}
+          <div className="relative">
+            <div className="absolute inset-0 bg-[#FF2D55]/8 blur-[100px] rounded-full scale-150" />
+            <div className="relative z-10">
+              <WebDashboardWide />
+            </div>
           </div>
         </AnimateIn>
 
