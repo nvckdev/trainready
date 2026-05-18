@@ -169,8 +169,17 @@
   0% { transform: translateX(-50%); }
   100% { transform: translateX(0); }
 }
+/* 4-copy marquee: moves exactly 1 of 4 sets (-25%) per cycle so the same
+   logo is never simultaneously visible twice on screen */
+@keyframes marquee-4x {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-25%); }
+}
 .animate-marquee {
   animation: marquee 30s linear infinite;
+}
+.animate-marquee-4x {
+  animation: marquee-4x 40s linear infinite;
 }
 .animate-marquee-reverse {
   animation: marquee-reverse 30s linear infinite;
