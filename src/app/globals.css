@@ -158,6 +158,33 @@
   .phone-border {
     border: 6px solid #1a1a1a;
   }
+
+  /* Fixed, ultra-subtle film grain — adds analog depth over the flat dark base.
+     Pointer-events none so it never interferes; soft-light keeps it whisper quiet. */
+  .grain-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.04;
+    mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Premium label / eyebrow used above section headings */
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.35);
+  }
+}
+
+/* Animated conic sheen that sweeps across premium glass cards on hover */
+@property --sheen {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
 }
 
 /* Marquee animation */

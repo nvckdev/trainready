@@ -53,36 +53,50 @@ export function FeaturesGrid() {
           {features.map((feature, i) => (
             <AnimateIn key={i} delay={i * 90} direction="up" className="h-full">
               <div
-                className={`relative rounded-3xl p-7 flex flex-col gap-4 h-full transition-all duration-300 cursor-default
+                className={`group relative h-full rounded-3xl p-px overflow-hidden transition-transform duration-500 ease-out hover:-translate-y-1.5
                   ${feature.accent
-                    ? "bg-[#140A0A] border border-white/8"
-                    : "bg-[#1E1010]/60 border border-white/5"
+                    ? "bg-gradient-to-b from-[#FF2D55]/40 via-white/10 to-white/[0.03]"
+                    : "bg-gradient-to-b from-white/12 to-white/[0.03] hover:from-white/20"
                   }`}
               >
-                {feature.accent && (
+                <div className="relative flex h-full flex-col gap-5 rounded-[calc(1.5rem-1px)] bg-[#120808] p-7 overflow-hidden">
+                  {/* Crimson bloom — persistent on accent card, hover-reveal on others */}
                   <div
-                    className="absolute top-7 right-7 w-2 h-2 rounded-full bg-[#FF2D55]"
-                    style={{ boxShadow: "0 0 8px #FF2D55" }}
+                    className={`pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(255,45,85,0.16),transparent_65%)] transition-opacity duration-500
+                      ${feature.accent ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                   />
-                )}
-                <span
-                  className={`material-symbols-outlined text-[30px]
-                    ${feature.accent ? "text-[#FF2D55]" : "text-white/25"}`}
-                >
-                  {feature.icon}
-                </span>
-                <h3
-                  className={`text-xl font-bold whitespace-pre-line leading-tight
-                    ${feature.accent ? "text-white" : "text-white/80"}`}
-                >
-                  {feature.title}
-                </h3>
-                <p
-                  className={`text-[13px] leading-relaxed
-                    ${feature.accent ? "text-white/50" : "text-white/30"}`}
-                >
-                  {feature.description}
-                </p>
+                  {/* Top hairline highlight */}
+                  <div className="pointer-events-none absolute inset-x-7 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+
+                  {/* Editorial index */}
+                  <span className="absolute right-6 top-6 text-[11px] font-semibold tracking-widest text-white/15 tabular-nums">
+                    0{i + 1}
+                  </span>
+
+                  {/* Icon chip */}
+                  <div
+                    className={`relative flex h-12 w-12 items-center justify-center rounded-2xl border transition-colors duration-300
+                      ${feature.accent
+                        ? "border-[#FF2D55]/30 bg-[#FF2D55]/10 text-[#FF2D55]"
+                        : "border-white/8 bg-white/[0.03] text-white/40 group-hover:border-white/15 group-hover:text-white/70"
+                      }`}
+                  >
+                    <span className="material-symbols-outlined text-[26px]">{feature.icon}</span>
+                  </div>
+
+                  <h3
+                    className={`relative text-xl font-bold leading-tight whitespace-pre-line transition-colors duration-300
+                      ${feature.accent ? "text-white" : "text-white/85 group-hover:text-white"}`}
+                  >
+                    {feature.title}
+                  </h3>
+                  <p
+                    className={`relative text-[13px] leading-relaxed transition-colors duration-300
+                      ${feature.accent ? "text-white/55" : "text-white/35 group-hover:text-white/55"}`}
+                  >
+                    {feature.description}
+                  </p>
+                </div>
               </div>
             </AnimateIn>
           ))}

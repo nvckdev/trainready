@@ -11,6 +11,7 @@ import { Footer } from "@/components/sections/Footer";
 export default function Home() {
   return (
     <div className="bg-[#0A0505] text-white overflow-x-hidden">
+      <div className="grain-overlay" aria-hidden="true" />
       <NavBar />
       <main>
         <HeroSection />

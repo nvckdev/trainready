@@ -1,4 +1,24 @@
+"use client";
+
 import Image from "next/image";
+import { motion, useReducedMotion, type Variants } from "framer-motion";
+
+const HERO_EASE = [0.16, 1, 0.3, 1] as const;
+
+const heroContainer: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.12, delayChildren: 0.15 } },
+};
+
+const heroItem: Variants = {
+  hidden: { opacity: 0, y: 26, filter: "blur(8px)" },
+  show: {
+    opacity: 1,
+    y: 0,
+    filter: "blur(0px)",
+    transition: { duration: 0.85, ease: HERO_EASE },
+  },
+};
 
 const integrations = [
   {
@@ -45,6 +65,7 @@ const integrations = [
 ];
 
 export function HeroSection() {
+  const reduce = useReducedMotion();
   return (
     <section className="relative pt-36 md:pt-48 pb-24 md:pb-32 px-6 min-h-[90vh] flex items-center justify-center overflow-hidden">
       <div className="absolute inset-0 z-0">
@@ -61,37 +82,54 @@ export function HeroSection() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,45,85,0.1)_0%,transparent_65%)]" />
       </div>
 
-      <div className="w-full max-w-[800px] mx-auto text-center relative z-20">
-        <h1 className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tight leading-[1.05] mb-6 md:mb-8 text-glow drop-shadow-2xl">
+      <motion.div
+        className="w-full max-w-[800px] mx-auto text-center relative z-20"
+        variants={reduce ? undefined : heroContainer}
+        initial={reduce ? undefined : "hidden"}
+        animate={reduce ? undefined : "show"}
+      >
+        <motion.h1
+          variants={reduce ? undefined : heroItem}
+          className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tight leading-[1.05] mb-6 md:mb-8 text-glow drop-shadow-2xl"
+        >
           Train Smarter.
           <br />
           <span className="text-white">Go Further.</span>
-        </h1>
+        </motion.h1>
 
-        <p className="text-white/75 text-base md:text-xl max-w-[540px] mx-auto mb-8 md:mb-10 font-medium leading-relaxed">
+        <motion.p
+          variants={reduce ? undefined : heroItem}
+          className="text-white/75 text-base md:text-xl max-w-[540px] mx-auto mb-8 md:mb-10 font-medium leading-relaxed"
+        >
           The ultimate training ecosystem for runners, cyclists, and triathletes.
           Track every discipline with precision, optimize transitions, and peak on race day.
-        </p>
+        </motion.p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+        <motion.div
+          variants={reduce ? undefined : heroItem}
+          className="flex flex-col sm:flex-row items-center justify-center gap-3"
+        >
           <button className="w-full sm:w-auto bg-white text-black font-bold rounded-full px-10 py-4 hover:bg-white/90 active:scale-95 transition-all duration-200 shadow-xl text-sm tracking-wide">
             Start Training Free
           </button>
           <button className="w-full sm:w-auto border border-white/20 text-white/90 rounded-full px-10 py-4 hover:bg-white/5 hover:border-white/30 transition-all duration-200 text-sm backdrop-blur-sm">
             Watch the demo
           </button>
-        </div>
+        </motion.div>
 
-        <div className="flex items-center justify-center gap-4 md:gap-6 mt-10 md:mt-12 text-white/35 text-xs flex-wrap">
+        <motion.div
+          variants={reduce ? undefined : heroItem}
+          className="flex items-center justify-center gap-4 md:gap-6 mt-10 md:mt-12 text-white/35 text-xs flex-wrap"
+        >
           <span>All levels</span>
           <span className="w-px h-3 bg-white/20" />
           <span>Real-time coaching</span>
           <span className="w-px h-3 bg-white/20" />
           <span>Swim · Bike · Run</span>
-        </div>
+        </motion.div>
 
         {/* Integrations marquee */}
-        <div className="mt-14 md:mt-20">
+        <motion.div variants={reduce ? undefined : heroItem} className="mt-14 md:mt-20">
           <p className="text-white/25 text-[11px] uppercase tracking-widest mb-8">Connects with your gear</p>
           <div className="relative overflow-hidden w-full">
             <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#0A0505] to-transparent z-10 pointer-events-none" />
@@ -111,8 +149,8 @@ export function HeroSection() {
               )}
             </div>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
     </section>
   );
 }
