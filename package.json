@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "pipeline": "tsx pipeline/run.ts"
+    "pipeline": "tsx pipeline/run.ts",
+    "engine:backtest": "tsx engine/backtest.ts",
+    "engine:today": "tsx engine/today.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

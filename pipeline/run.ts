@@ -6,7 +6,7 @@ import { validate } from "./lib/validate.ts";
 
 const stage = process.argv[2] ?? "all";
 
-const { sessions, stats } = normalize();
+const { sessions, planned, stats } = normalize();
 console.log("normalize:", JSON.stringify(stats));
 if (stage === "normalize") process.exit(0);
 
@@ -18,7 +18,7 @@ const races = labelRaces(sessions, pmc);
 console.log(`label: ${races.length} race days`);
 if (stage === "label") process.exit(0);
 
-const datasetStats = buildDatasets(sessions, weekly, pmc, races);
+const datasetStats = buildDatasets(sessions, planned, weekly, pmc, races);
 console.log("dataset:", JSON.stringify(datasetStats));
 if (stage === "dataset") process.exit(0);
 
