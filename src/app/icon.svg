@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#241f1a"/>
+  <!-- The taper mark: volume narrowing to race day -->
+  <polygon points="8,26 44,30 44,34 8,38" fill="#f0521a"/>
+  <circle cx="52" cy="32" r="4.5" fill="#eee7d8"/>
+</svg>

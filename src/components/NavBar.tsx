@@ -20,30 +20,31 @@ function UtcClock() {
   }, []);
 
   return (
-    <span className="label-mono text-ink-muted tabular" suppressHydrationWarning>
+    <span className="label-mono text-bone-muted tabular" suppressHydrationWarning>
       {time ?? "--:--:-- UTC"}
     </span>
   );
 }
 
 const links = [
-  { href: "/#route", label: "The Route" },
-  { href: "/#instrument", label: "Instrument" },
+  { href: "/#protocol", label: "Protocol" },
+  { href: "/#course", label: "The Course" },
+  { href: "/#engine", label: "Engine" },
   { href: "/#disciplines", label: "Disciplines" },
   { href: "/#sync", label: "Sync" },
 ];
 
 export function NavBar() {
   return (
-    <header className="fixed top-0 inset-x-0 z-50 bg-paper">
+    <header className="fixed top-0 inset-x-0 z-50 bg-field">
       <div className="flex items-center justify-between gap-6 px-5 md:px-8 h-14">
         <Link href="/" className="flex items-center gap-3 shrink-0">
           <span className="rec-dot" aria-hidden="true" />
           <span className="display-engraved text-[15px] tracking-tight">
-            TrainReady
+            Taper
           </span>
-          <span className="label-mono text-ink-faint hidden lg:inline">
-            No. 001
+          <span className="label-mono text-bone-faint hidden lg:inline">
+            Adaptive training
           </span>
         </Link>
 
@@ -52,7 +53,7 @@ export function NavBar() {
             <Link
               key={href}
               href={href}
-              className="label-mono text-ink-muted hover:text-ink transition-colors duration-150"
+              className="label-mono text-bone-muted hover:text-bone transition-colors duration-150"
             >
               {label}
             </Link>
@@ -65,9 +66,9 @@ export function NavBar() {
           </span>
           <Link
             href="/#start"
-            className="label-mono bg-ink text-paper px-4 py-2 hover:bg-signal transition-colors duration-150"
+            className="label-mono bg-signal text-field px-4 py-2 hover:bg-bone transition-colors duration-150"
           >
-            Start
+            Join the beta
           </Link>
         </div>
       </div>

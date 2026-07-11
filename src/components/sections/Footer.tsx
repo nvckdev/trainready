@@ -2,19 +2,20 @@ import Link from "next/link";
 
 const COLS = [
   {
-    head: "Instrument",
+    head: "Method",
     links: [
-      { label: "The route", href: "/#route" },
-      { label: "Readiness", href: "/#instrument" },
+      { label: "Protocol", href: "/#protocol" },
+      { label: "The course", href: "/#course" },
+      { label: "The engine", href: "/#engine" },
       { label: "Disciplines", href: "/#disciplines" },
       { label: "Sync", href: "/#sync" },
     ],
   },
   {
-    head: "Record",
+    head: "Beta",
     links: [
-      { label: "Start recording", href: "/#start" },
-      { label: "Read the spec", href: "/#instrument" },
+      { label: "Join the beta", href: "/#start" },
+      { label: "Read the method", href: "/#engine" },
     ],
   },
   {
@@ -36,23 +37,23 @@ export function Footer() {
         <div className="col-span-2 md:col-span-6">
           <div className="flex items-center gap-3">
             <span className="rec-dot" aria-hidden="true" />
-            <span className="display-engraved text-xl">TrainReady</span>
+            <span className="display-engraved text-xl">Taper</span>
           </div>
-          <p className="label-mono text-ink-faint mt-4 max-w-[38ch] leading-relaxed">
-            Field manual, instrument no. 001. Recorded at 46.5197° N, 6.6323° E,
-            elevation 372 m.
+          <p className="label-mono text-bone-faint mt-4 max-w-[38ch] leading-relaxed">
+            Adaptive endurance training. Night edition, instrument no. 002.
+            Drafted at 46.5197° N, 6.6323° E.
           </p>
         </div>
 
         {COLS.map((col) => (
           <nav key={col.head} className="md:col-span-2" aria-label={col.head}>
-            <h3 className="label-mono text-ink-faint">{col.head}</h3>
+            <h3 className="label-mono text-bone-faint">{col.head}</h3>
             <ul className="mt-4 space-y-2.5">
               {col.links.map((l) => (
                 <li key={l.label}>
                   <Link
                     href={l.href}
-                    className="label-mono text-ink-muted hover:text-ink transition-colors duration-150"
+                    className="label-mono text-bone-muted hover:text-bone transition-colors duration-150"
                   >
                     {l.label}
                   </Link>
@@ -65,11 +66,9 @@ export function Footer() {
 
       <div className="rule" />
       <div className="flex flex-wrap items-center justify-between gap-3 py-4">
-        <span className="label-mono text-ink-faint">
-          © 2026 TrainReady Instruments
-        </span>
-        <span className="label-mono text-ink-faint">
-          Calibrated · Engraved · Ready
+        <span className="label-mono text-bone-faint">© 2026 Taper</span>
+        <span className="label-mono text-bone-faint">
+          Train · Taper · Race
         </span>
       </div>
       <div className="tick-strip" aria-hidden="true" />

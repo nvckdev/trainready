@@ -21,12 +21,12 @@ const DISCIPLINES: Discipline[] = [
     name: "Swim",
     metric1: ["Pace /100m", "1:38"],
     metric2: ["Stroke rate", "34 SPM"],
-    caption: "Stroke cadence, recorded per length",
+    caption: "Stroke work, prescribed per length",
     diagram: (
       <svg viewBox="0 0 260 90" className="w-full" aria-hidden="true">
         <line x1="0" y1="82" x2="260" y2="82" stroke="var(--hairline)" />
         {[0, 65, 130, 195, 260].map((x) => (
-          <line key={x} x1={x} y1="78" x2={x} y2="86" stroke="var(--ink-faint)" strokeWidth="1" />
+          <line key={x} x1={x} y1="78" x2={x} y2="86" stroke="var(--bone-faint)" strokeWidth="1" />
         ))}
         <path
           className="disc-line"
@@ -44,12 +44,12 @@ const DISCIPLINES: Discipline[] = [
     name: "Bike",
     metric1: ["Norm. power", "243 W"],
     metric2: ["Cadence", "91 RPM"],
-    caption: "Power distribution across intervals",
+    caption: "Intervals built from your power curve",
     diagram: (
       <svg viewBox="0 0 260 90" className="w-full" aria-hidden="true">
         <line x1="0" y1="82" x2="260" y2="82" stroke="var(--hairline)" />
         {[0, 65, 130, 195, 260].map((x) => (
-          <line key={x} x1={x} y1="78" x2={x} y2="86" stroke="var(--ink-faint)" strokeWidth="1" />
+          <line key={x} x1={x} y1="78" x2={x} y2="86" stroke="var(--bone-faint)" strokeWidth="1" />
         ))}
         <path
           className="disc-line"
@@ -67,7 +67,7 @@ const DISCIPLINES: Discipline[] = [
     name: "Run",
     metric1: ["Pace /km", "4:05"],
     metric2: ["Vert. gain", "612 M"],
-    caption: "Split profile, negative by design",
+    caption: "Splits planned negative, on purpose",
     diagram: (
       <svg viewBox="0 0 260 90" className="w-full" aria-hidden="true">
         <line x1="0" y1="82" x2="260" y2="82" stroke="var(--hairline)" />
@@ -183,12 +183,12 @@ export function DisciplinesSection() {
       className="relative px-5 md:px-8 py-[clamp(6rem,14vh,11rem)]"
     >
       <div className="flex items-baseline justify-between">
-        <p className="label-mono text-ink-muted">fig. 04 · Disciplines</p>
-        <p className="label-mono text-ink-faint hidden md:block">Sheet 4 of 6</p>
+        <p className="label-mono text-bone-muted">fig. 04 · Disciplines</p>
+        <p className="label-mono text-bone-faint hidden md:block">Sheet 04</p>
       </div>
 
       <h2 className="disc-title display-engraved mt-4 text-[clamp(2.4rem,6vw,5rem)] max-w-[18ch]">
-        Three disciplines, one instrument
+        Three disciplines, one engine
       </h2>
 
       <div className="mt-14 md:mt-20 grid grid-cols-1 md:grid-cols-3 border-t border-b border-hairline md:divide-x md:divide-hairline">
@@ -201,19 +201,19 @@ export function DisciplinesSection() {
               <h3 className="display-engraved text-[clamp(1.8rem,3vw,2.6rem)]">
                 {d.name}
               </h3>
-              <span className="label-mono text-signal-ink">{d.index}</span>
+              <span className="label-mono text-signal-bright">{d.index}</span>
             </div>
 
             <div className="mt-8 [&_.disc-line]:invisible">{d.diagram}</div>
-            <p className="label-mono text-ink-faint mt-3">{d.caption}</p>
+            <p className="label-mono text-bone-faint mt-3">{d.caption}</p>
 
             <dl className="mt-8 space-y-3">
               <div className="disc-metric flex justify-between border-t border-hairline pt-3">
-                <dt className="label-mono text-ink-muted">{d.metric1[0]}</dt>
+                <dt className="label-mono text-bone-muted">{d.metric1[0]}</dt>
                 <dd className="font-mono text-sm tabular">{d.metric1[1]}</dd>
               </div>
               <div className="disc-metric flex justify-between border-t border-hairline pt-3">
-                <dt className="label-mono text-ink-muted">{d.metric2[0]}</dt>
+                <dt className="label-mono text-bone-muted">{d.metric2[0]}</dt>
                 <dd className="font-mono text-sm tabular">{d.metric2[1]}</dd>
               </div>
             </dl>

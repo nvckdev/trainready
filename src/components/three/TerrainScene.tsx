@@ -6,9 +6,9 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { heightAt, routePoints, TERRAIN_SIZE } from "@/lib/terrain";
 
 // Palette hardcoded for GL (mirrors the OKLCH tokens in globals.css)
-const PAPER = "#f5f2ea";
-const INK = "#2e2925";
-const SIGNAL = "#eb5013";
+const FIELD = "#241f1a"; // night ground, matches --field
+const BONE = "#eee7d8"; // contour lines, matches --bone
+const SIGNAL = "#f0521a";
 
 export type ProgressState = { target: number; value: number };
 export type ProgressRef = React.RefObject<ProgressState>;
@@ -43,19 +43,19 @@ const fragmentShader = /* glsl */ `
   }
 
   void main() {
-    float minor = contour(vH, 1.0, 1.4) * 0.34;
-    float major = contour(vH, 5.0, 1.9) * 0.78;
+    float minor = contour(vH, 1.0, 1.4) * 0.3;
+    float major = contour(vH, 5.0, 1.9) * 0.72;
 
-    // Faint hillshade for tactility; keeps the paper feel
+    // Moonlit relief: multiplicative shading keeps the night ground dark
     vec3 light = normalize(vec3(0.45, 0.85, 0.3));
-    float shade = (1.0 - clamp(dot(normalize(vNormal), light), 0.0, 1.0)) * 0.17;
+    float lit = clamp(dot(normalize(vNormal), light), 0.0, 1.0);
 
     vec3 col = mix(uPaper, uInk, clamp(minor + major, 0.0, 1.0));
-    col = mix(col, uInk, shade);
+    col *= 0.78 + 0.38 * lit;
 
     // Survey graticule: faint square grid over the whole sheet
     float grat = max(contour(vWorldPos.x, 24.0, 1.2), contour(vWorldPos.z, 24.0, 1.2));
-    col = mix(col, uInk, grat * 0.09);
+    col = mix(col, uInk, grat * 0.07);
 
     // Dissolve into the page: camera-distance fog and radial edge fade
     float dist = distance(vWorldPos.xz, uCamPos.xz);
@@ -85,8 +85,8 @@ function Terrain() {
 
   const uniforms = useMemo(
     () => ({
-      uPaper: { value: new THREE.Color(PAPER) },
-      uInk: { value: new THREE.Color(INK) },
+      uPaper: { value: new THREE.Color(FIELD) },
+      uInk: { value: new THREE.Color(BONE) },
       uCamPos: { value: new THREE.Vector3() },
     }),
     []
@@ -213,7 +213,7 @@ export function TerrainScene({
       camera={{ fov: 55, near: 0.5, far: 500, position: [-60, 60, 130] }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
     >
-      <color attach="background" args={[PAPER]} />
+      <color attach="background" args={[FIELD]} />
       <Terrain />
       <Route progressRef={progress} />
       <Rig progressRef={progress} />

@@ -1,6 +1,6 @@
 import { LegalLayout } from "@/components/LegalLayout";
 
-export const metadata = { title: "Terms of Service — TRAINREADY" };
+export const metadata = { title: "Terms of Service — Taper" };
 
 export default function TermsPage() {
   return (
@@ -11,7 +11,7 @@ export default function TermsPage() {
       sections={[
         {
           heading: "Acceptance of Terms",
-          body: "By creating an account or using TRAINREADY, you agree to be bound by these Terms of Service. If you do not agree, please do not use our platform. We may update these terms from time to time; continued use after changes constitutes acceptance.",
+          body: "By creating an account or using Taper, you agree to be bound by these Terms of Service. If you do not agree, please do not use our platform. We may update these terms from time to time; continued use after changes constitutes acceptance.",
         },
         {
           heading: "Your Account",
@@ -25,7 +25,7 @@ export default function TermsPage() {
         {
           heading: "Acceptable Use",
           body: [
-            "Use TRAINREADY only for lawful purposes and in accordance with these Terms.",
+            "Use Taper only for lawful purposes and in accordance with these Terms.",
             "Do not attempt to reverse-engineer, scrape, or extract data from the platform.",
             "Do not upload content that is abusive, misleading, or infringes third-party rights.",
             "Do not share your account credentials with others.",
@@ -38,15 +38,15 @@ export default function TermsPage() {
         },
         {
           heading: "Intellectual Property",
-          body: "All content, branding, software, and training methodologies on TRAINREADY are owned by or licensed to us. You retain ownership of the training data you upload. By using the platform you grant us a limited, non-exclusive licence to process your data to provide the service.",
+          body: "All content, branding, software, and training methodologies on Taper are owned by or licensed to us. You retain ownership of the training data you upload. By using the platform you grant us a limited, non-exclusive licence to process your data to provide the service.",
         },
         {
           heading: "Disclaimers",
-          body: "TRAINREADY provides training guidance for informational purposes only. It is not a substitute for professional medical or coaching advice. Always consult a qualified professional before starting a new training programme. We are not liable for any injury or loss arising from your use of the platform.",
+          body: "Taper provides training guidance for informational purposes only. It is not a substitute for professional medical or coaching advice. Always consult a qualified professional before starting a new training programme. We are not liable for any injury or loss arising from your use of the platform.",
         },
         {
           heading: "Limitation of Liability",
-          body: "To the maximum extent permitted by law, TRAINREADY shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the platform. Our total liability to you shall not exceed the amount you paid us in the 12 months preceding the claim.",
+          body: "To the maximum extent permitted by law, Taper shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the platform. Our total liability to you shall not exceed the amount you paid us in the 12 months preceding the claim.",
         },
         {
           heading: "Termination",
@@ -54,7 +54,7 @@ export default function TermsPage() {
         },
         {
           heading: "Governing Law",
-          body: "These Terms are governed by the laws of the jurisdiction in which TRAINREADY is incorporated. Any disputes shall be subject to the exclusive jurisdiction of the courts in that jurisdiction.",
+          body: "These Terms are governed by the laws of the jurisdiction in which Taper is incorporated. Any disputes shall be subject to the exclusive jurisdiction of the courts in that jurisdiction.",
         },
         {
           heading: "Contact",

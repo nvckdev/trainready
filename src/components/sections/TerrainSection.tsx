@@ -93,9 +93,9 @@ export function TerrainSection() {
   return (
     <section
       ref={root}
-      id="route"
-      className="relative h-svh overflow-hidden bg-paper"
-      aria-label="Course survey: an ink-contour terrain with the race route drawn across it"
+      id="course"
+      className="relative h-svh overflow-hidden bg-field"
+      aria-label="Course survey: a night contour terrain with the race route drawn across it"
     >
       <div className="absolute inset-0">
         {reduced !== null && (
@@ -109,41 +109,41 @@ export function TerrainSection() {
       {/* HUD — survey sheet furniture over the scene */}
       <div className="pointer-events-none absolute inset-0 flex flex-col justify-between px-5 md:px-8 pt-24 md:pt-28 pb-6">
         <div>
-          <p className="route-hud label-mono text-ink-muted">
+          <p className="route-hud label-mono text-bone-muted">
             fig. 02 · Course survey
           </p>
-          <h2 className="route-title display-engraved mt-3 text-[clamp(2.2rem,5.5vw,4.6rem)] max-w-[14ch]">
-            Every meter, measured
+          <h2 className="route-title display-engraved mt-3 text-[clamp(2.2rem,5.5vw,4.6rem)] max-w-[15ch]">
+            Built for your course
           </h2>
         </div>
 
         <div>
           <dl className="route-hud flex flex-wrap gap-x-10 gap-y-4 mb-5">
             <div>
-              <dt className="label-mono text-ink-faint">Distance</dt>
+              <dt className="label-mono text-bone-faint">Distance</dt>
               <dd className="flex items-baseline gap-1.5">
-                <span ref={kmRef} className="font-mono text-2xl md:text-3xl tabular text-ink">
+                <span ref={kmRef} className="font-mono text-2xl md:text-3xl tabular text-bone">
                   0.0
                 </span>
-                <span className="label-mono text-ink-faint">/ {TOTAL_KM} KM</span>
+                <span className="label-mono text-bone-faint">/ {TOTAL_KM} KM</span>
               </dd>
             </div>
             <div>
-              <dt className="label-mono text-ink-faint">Elevation</dt>
+              <dt className="label-mono text-bone-faint">Elevation</dt>
               <dd className="flex items-baseline gap-1.5">
-                <span ref={elevRef} className="font-mono text-2xl md:text-3xl tabular text-ink">
+                <span ref={elevRef} className="font-mono text-2xl md:text-3xl tabular text-bone">
                   412
                 </span>
-                <span className="label-mono text-ink-faint">M</span>
+                <span className="label-mono text-bone-faint">M</span>
               </dd>
             </div>
             <div>
-              <dt className="label-mono text-ink-faint">Grade</dt>
+              <dt className="label-mono text-bone-faint">Grade</dt>
               <dd className="flex items-baseline gap-1.5">
-                <span ref={gradeRef} className="font-mono text-2xl md:text-3xl tabular text-ink">
+                <span ref={gradeRef} className="font-mono text-2xl md:text-3xl tabular text-bone">
                   +0.0
                 </span>
-                <span className="label-mono text-ink-faint">%</span>
+                <span className="label-mono text-bone-faint">%</span>
               </dd>
             </div>
           </dl>
@@ -155,11 +155,11 @@ export function TerrainSection() {
               className="h-[2px] bg-signal origin-left scale-x-0 -mt-[1.5px]"
             />
             <div className="flex justify-between pt-2">
-              <span className="label-mono text-ink-faint">Start</span>
-              <span className="label-mono text-ink-faint hidden sm:inline">
-                The route records itself as you scroll
+              <span className="label-mono text-bone-faint">Start</span>
+              <span className="label-mono text-bone-faint hidden sm:inline">
+                Import the race file. The plan climbs what you&apos;ll climb.
               </span>
-              <span className="label-mono text-ink-faint">Finish</span>
+              <span className="label-mono text-bone-faint">Finish</span>
             </div>
           </div>
         </div>

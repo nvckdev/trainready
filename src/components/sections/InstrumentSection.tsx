@@ -6,35 +6,35 @@ import { gsap, SplitText, useGSAP } from "@/lib/gsap";
 const SPECS = [
   {
     n: "01",
-    name: "Readiness",
-    body: "One number each morning, computed from load, sleep, and strain. No interpretation required.",
+    name: "Goal-backed season",
+    body: "Base, build, peak, taper: back-cast from race day and sized by the seasons you've already recorded.",
   },
   {
     n: "02",
-    name: "Calibration",
-    body: "Pace, power, and heart-rate zones re-derived weekly from every session you record.",
+    name: "Zones, re-derived",
+    body: "Thresholds re-estimated from every breakthrough effort. Your zones are versioned, like the rest of the plan.",
   },
   {
     n: "03",
-    name: "Transitions",
-    body: "T1 and T2 timed to the second, then coached until they are shorter.",
+    name: "Daily re-flow",
+    body: "Miss Tuesday, and Wednesday already knows. The plan bends around your life; the goal doesn't move.",
   },
   {
     n: "04",
     name: "Course match",
-    body: "Your current fitness projected onto the exact profile of the race you entered.",
+    body: "Import the race file and the long days learn its climbs, surface, and heat.",
   },
   {
     n: "05",
-    name: "Race plan",
-    body: "Split targets engraved before the gun. Pacing enforced live, at your wrist.",
+    name: "The why",
+    body: "Every session names the adaptation it targets and the evidence behind it. No black boxes.",
   },
 ];
 
-const SPLITS = [
-  { km: "KM 01", t: "4:05" },
-  { km: "KM 02", t: "4:02" },
-  { km: "KM 03", t: "3:58" },
+const TODAY = [
+  { label: "Session", value: "Bike · 2 × 20' @ FTP" },
+  { label: "Why", value: "Raise threshold before build 2 closes" },
+  { label: "Re-flowed", value: "Thu run → Fri (travel)" },
 ];
 
 /* Load-vs-capacity sparkline geometry (viewBox 0 0 220 64) */
@@ -158,18 +158,16 @@ export function InstrumentSection() {
   return (
     <section
       ref={root}
-      id="instrument"
+      id="engine"
       className="relative px-5 md:px-8 py-[clamp(6rem,14vh,11rem)]"
     >
       <div className="flex items-baseline justify-between">
-        <p className="label-mono text-ink-muted">fig. 03 · The instrument</p>
-        <p className="label-mono text-ink-faint hidden md:block">
-          Sheet 3 of 6
-        </p>
+        <p className="label-mono text-bone-muted">fig. 03 · The engine</p>
+        <p className="label-mono text-bone-faint hidden md:block">Sheet 03</p>
       </div>
 
       <h2 className="inst-title display-engraved mt-4 text-[clamp(2.4rem,6vw,5rem)] max-w-[16ch]">
-        One readout for readiness
+        Every morning, re-planned
       </h2>
 
       <div className="mt-14 md:mt-20 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8">
@@ -177,18 +175,18 @@ export function InstrumentSection() {
         <div className="lg:col-span-7 relative">
           <div className="inst-panel relative max-w-[430px] mx-auto lg:mx-0 lg:ml-12">
             {/* Crop marks */}
-            <span className="absolute -top-3 -left-3 w-3 h-3 border-t border-l border-ink" aria-hidden="true" />
-            <span className="absolute -top-3 -right-3 w-3 h-3 border-t border-r border-ink" aria-hidden="true" />
-            <span className="absolute -bottom-3 -left-3 w-3 h-3 border-b border-l border-ink" aria-hidden="true" />
-            <span className="absolute -bottom-3 -right-3 w-3 h-3 border-b border-r border-ink" aria-hidden="true" />
+            <span className="absolute -top-3 -left-3 w-3 h-3 border-t border-l border-bone" aria-hidden="true" />
+            <span className="absolute -top-3 -right-3 w-3 h-3 border-t border-r border-bone" aria-hidden="true" />
+            <span className="absolute -bottom-3 -left-3 w-3 h-3 border-b border-l border-bone" aria-hidden="true" />
+            <span className="absolute -bottom-3 -right-3 w-3 h-3 border-b border-r border-bone" aria-hidden="true" />
 
-            <div className="border border-ink bg-paper-raised shadow-instrument">
+            <div className="border border-bone bg-field-raised shadow-instrument">
               {/* Status bar */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
-                <span className="label-mono text-ink">Tue 11 Jul</span>
+                <span className="label-mono text-bone">Tue 11 Jul</span>
                 <span className="flex items-center gap-2">
                   <span className="rec-dot" aria-hidden="true" />
-                  <span className="label-mono text-ink-muted">Recording</span>
+                  <span className="label-mono text-bone-muted">Recording</span>
                 </span>
               </div>
 
@@ -218,17 +216,17 @@ export function InstrumentSection() {
                 <div>
                   <div className="flex items-baseline gap-1">
                     <span className="inst-ready-num font-mono text-5xl tabular">0</span>
-                    <span className="label-mono text-ink-faint">/100</span>
+                    <span className="label-mono text-bone-faint">/100</span>
                   </div>
-                  <p className="label-mono text-ink-muted mt-1">Ready to race</p>
+                  <p className="label-mono text-bone-muted mt-1">Ready to race</p>
                 </div>
               </div>
 
               {/* Load vs capacity */}
               <div className="px-5 py-5 border-b border-hairline">
                 <div className="flex justify-between mb-3">
-                  <span className="label-mono text-ink-faint">Load</span>
-                  <span className="label-mono text-ink-faint">6 weeks</span>
+                  <span className="label-mono text-bone-faint">Load</span>
+                  <span className="label-mono text-bone-faint">6 weeks</span>
                 </div>
                 <svg viewBox="0 0 220 64" className="w-full" aria-hidden="true">
                   <line x1="0" y1="63.5" x2="220" y2="63.5" stroke="var(--hairline)" />
@@ -244,19 +242,26 @@ export function InstrumentSection() {
                 </svg>
               </div>
 
-              {/* Splits */}
+              {/* Today's decision */}
               <div className="px-5 py-4">
-                {SPLITS.map((s, i) => (
+                {TODAY.map((s, i) => (
                   <div
-                    key={s.km}
-                    className={`inst-split-row flex justify-between py-2 ${
-                      i < SPLITS.length - 1 ? "border-b border-hairline" : ""
+                    key={s.label}
+                    className={`inst-split-row grid grid-cols-[5.5rem_1fr] gap-3 py-2 ${
+                      i < TODAY.length - 1 ? "border-b border-hairline" : ""
                     }`}
                   >
-                    <span className="label-mono text-ink-muted">{s.km}</span>
-                    <span className="font-mono text-sm tabular text-ink">{s.t}</span>
-                    <span className="label-mono text-signal-ink">
-                      {i === 2 ? "▲ Fastest" : " "}
+                    <span className="label-mono text-bone-faint pt-0.5">
+                      {s.label}
+                    </span>
+                    <span
+                      className={
+                        i === 2
+                          ? "label-mono text-signal-bright pt-0.5"
+                          : "font-mono text-sm text-bone"
+                      }
+                    >
+                      {s.value}
                     </span>
                   </div>
                 ))}
@@ -268,18 +273,18 @@ export function InstrumentSection() {
               className="pointer-events-none absolute inset-0 w-full h-full overflow-visible hidden lg:block"
               aria-hidden="true"
             >
-              <line className="inst-leader invisible" x1="100%" y1="24%" x2="128%" y2="24%" stroke="var(--ink)" strokeWidth="1" />
-              <line className="inst-leader invisible" x1="100%" y1="56%" x2="128%" y2="56%" stroke="var(--ink)" strokeWidth="1" />
-              <line className="inst-leader invisible" x1="0%" y1="86%" x2="-14%" y2="86%" stroke="var(--ink)" strokeWidth="1" />
+              <line className="inst-leader invisible" x1="100%" y1="24%" x2="128%" y2="24%" stroke="var(--bone)" strokeWidth="1" />
+              <line className="inst-leader invisible" x1="100%" y1="56%" x2="128%" y2="56%" stroke="var(--bone)" strokeWidth="1" />
+              <line className="inst-leader invisible" x1="0%" y1="86%" x2="-14%" y2="86%" stroke="var(--bone)" strokeWidth="1" />
             </svg>
-            <p className="inst-callout label-mono text-ink-muted absolute left-[132%] top-[24%] -translate-y-1/2 w-40 hidden lg:block">
+            <p className="inst-callout label-mono text-bone-muted absolute left-[132%] top-[24%] -translate-y-1/2 w-40 hidden lg:block">
               3a · Readiness, computed daily
             </p>
-            <p className="inst-callout label-mono text-ink-muted absolute left-[132%] top-[56%] -translate-y-1/2 w-40 hidden lg:block">
+            <p className="inst-callout label-mono text-bone-muted absolute left-[132%] top-[56%] -translate-y-1/2 w-40 hidden lg:block">
               3b · Load vs. capacity
             </p>
-            <p className="inst-callout label-mono text-ink-muted absolute right-[118%] top-[86%] -translate-y-1/2 w-36 text-right hidden lg:block">
-              3c · Negative splits, detected
+            <p className="inst-callout label-mono text-bone-muted absolute right-[118%] top-[86%] -translate-y-1/2 w-36 text-right hidden lg:block">
+              3c · Re-flowed overnight
             </p>
           </div>
         </div>
@@ -290,10 +295,10 @@ export function InstrumentSection() {
             <div key={s.n} className="inst-spec">
               <div className="inst-spec-rule rule" />
               <div className="inst-spec-body grid grid-cols-[3.5rem_1fr] gap-4 py-5">
-                <span className="label-mono text-signal-ink pt-1">{s.n}</span>
+                <span className="label-mono text-signal-bright pt-1">{s.n}</span>
                 <div>
                   <h3 className="font-semibold text-lg">{s.name}</h3>
-                  <p className="text-ink-muted text-[15px] leading-relaxed mt-1 max-w-[44ch]">
+                  <p className="text-bone-muted text-[15px] leading-relaxed mt-1 max-w-[44ch]">
                     {s.body}
                   </p>
                 </div>

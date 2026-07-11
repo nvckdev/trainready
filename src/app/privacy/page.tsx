@@ -1,6 +1,6 @@
 import { LegalLayout } from "@/components/LegalLayout";
 
-export const metadata = { title: "Privacy Policy — TRAINREADY" };
+export const metadata = { title: "Privacy Policy — Taper" };
 
 export default function PrivacyPage() {
   return (
@@ -11,7 +11,7 @@ export default function PrivacyPage() {
       sections={[
         {
           heading: "Overview",
-          body: "TRAINREADY ('we', 'our', or 'us') is committed to protecting your personal information. This Privacy Policy explains how we collect, use, disclose, and safeguard your data when you use our mobile application and website. By using TRAINREADY, you agree to the practices described here.",
+          body: "Taper ('we', 'our', or 'us') is committed to protecting your personal information. This Privacy Policy explains how we collect, use, disclose, and safeguard your data when you use our mobile application and website. By using Taper, you agree to the practices described here.",
         },
         {
           heading: "Information We Collect",
@@ -26,7 +26,7 @@ export default function PrivacyPage() {
         {
           heading: "How We Use Your Information",
           body: [
-            "To provide, personalise, and improve the TRAINREADY platform and your training experience.",
+            "To provide, personalise, and improve the Taper platform and your training experience.",
             "To generate performance insights, training recommendations, and race-day strategy.",
             "To send transactional emails and, where you have opted in, product updates and coaching tips.",
             "To detect and prevent fraud, abuse, and security incidents.",

@@ -1,6 +1,7 @@
 import { NavBar } from "@/components/NavBar";
 import { SmoothScroll } from "@/components/SmoothScroll";
 import { Hero } from "@/components/sections/Hero";
+import { ProtocolSection } from "@/components/sections/ProtocolSection";
 import { TerrainSection } from "@/components/sections/TerrainSection";
 import { InstrumentSection } from "@/components/sections/InstrumentSection";
 import { DisciplinesSection } from "@/components/sections/DisciplinesSection";
@@ -14,6 +15,7 @@ export default function Home() {
       <NavBar />
       <main>
         <Hero />
+        <ProtocolSection />
         <TerrainSection />
         <InstrumentSection />
         <DisciplinesSection />

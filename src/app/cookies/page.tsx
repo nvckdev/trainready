@@ -1,6 +1,6 @@
 import { LegalLayout } from "@/components/LegalLayout";
 
-export const metadata = { title: "Cookie Policy — TRAINREADY" };
+export const metadata = { title: "Cookie Policy — Taper" };
 
 export default function CookiesPage() {
   return (
@@ -11,7 +11,7 @@ export default function CookiesPage() {
       sections={[
         {
           heading: "What Are Cookies",
-          body: "Cookies are small text files placed on your device when you visit our website. They help us recognise you, remember your preferences, and understand how you interact with TRAINREADY so we can improve your experience.",
+          body: "Cookies are small text files placed on your device when you visit our website. They help us recognise you, remember your preferences, and understand how you interact with Taper so we can improve your experience.",
         },
         {
           heading: "Cookies We Use",
@@ -36,7 +36,7 @@ export default function CookiesPage() {
         },
         {
           heading: "Managing Cookies",
-          body: "You can control cookies through your browser settings — most browsers allow you to block or delete cookies. Note that disabling essential cookies may prevent parts of TRAINREADY from working correctly. You can also opt out of analytics cookies by enabling 'Do Not Track' in your browser.",
+          body: "You can control cookies through your browser settings — most browsers allow you to block or delete cookies. Note that disabling essential cookies may prevent parts of Taper from working correctly. You can also opt out of analytics cookies by enabling 'Do Not Track' in your browser.",
         },
         {
           heading: "Cookie Retention",

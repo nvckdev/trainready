@@ -95,31 +95,32 @@ export function RaceDaySection() {
       <div className="race-field bg-signal">
         <div className="race-inner px-6 md:px-14 py-16 md:py-24">
           <div className="flex items-baseline justify-between">
-            <p className="label-mono text-ink">fig. 06 · The gun</p>
-            <p className="label-mono text-ink/70 hidden md:block">Final sheet</p>
+            <p className="label-mono text-field">fig. 06 · The gun</p>
+            <p className="label-mono text-field/70 hidden md:block">Final sheet</p>
           </div>
 
-          <h2 className="race-title display-engraved text-ink mt-6 text-[clamp(3.4rem,11vw,10rem)]">
-            Race day
+          <h2 className="race-title display-engraved text-field mt-6 text-[clamp(3.4rem,11vw,10rem)]">
+            Trust the taper
           </h2>
 
           <div
-            className="font-mono tabular text-paper text-[clamp(2rem,6.5vw,5.5rem)] mt-4 leading-none"
+            className="font-mono tabular text-field/80 text-[clamp(2rem,6.5vw,5.5rem)] mt-4 leading-none"
             aria-label="Race stopwatch running"
           >
             {time}
           </div>
 
           <div className="mt-10 md:mt-14 md:flex items-end justify-between gap-10">
-            <p className="max-w-[40ch] text-ink text-[15px] md:text-base leading-relaxed">
-              Months of meters, calibrated into one number that says go. The
-              instrument is ready. The only measurement left is yours.
+            <p className="max-w-[42ch] text-field text-[15px] md:text-base leading-relaxed">
+              The plan&apos;s last move is to do less. Three quiet weeks, volume
+              narrowing to nothing, and everything you built arrives at once.
+              That part is already scheduled.
             </p>
             <a
-              href="#instrument"
-              className="label-mono inline-block mt-8 md:mt-0 bg-ink text-paper px-8 py-4 hover:bg-paper hover:text-ink transition-colors duration-150 shrink-0"
+              href="mailto:beta@taper.training?subject=Taper%20beta"
+              className="label-mono inline-block mt-8 md:mt-0 bg-field text-bone px-8 py-4 hover:bg-bone hover:text-field transition-colors duration-150 shrink-0"
             >
-              Start recording
+              Join the beta
             </a>
           </div>
         </div>

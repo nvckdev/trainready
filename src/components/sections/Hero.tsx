@@ -23,13 +23,13 @@ function ContourField() {
           d={CONTOUR_D}
           className="contour-ring"
           transform={`translate(300 220) rotate(${i * 4}) scale(${s}) translate(-300 -220)`}
-          stroke="var(--ink-faint)"
+          stroke="var(--bone-faint)"
           strokeWidth="1"
           vectorEffect="non-scaling-stroke"
         />
       ))}
       {/* Summit crosshair */}
-      <g stroke="var(--ink)" strokeWidth="1">
+      <g stroke="var(--bone)" strokeWidth="1">
         <line x1="290" y1="220" x2="310" y2="220" />
         <line x1="300" y1="210" x2="300" y2="230" />
       </g>
@@ -39,7 +39,7 @@ function ContourField() {
         fontFamily="var(--font-fragment), monospace"
         fontSize="10"
         letterSpacing="0.08em"
-        fill="var(--ink-muted)"
+        fill="var(--bone-muted)"
       >
         ELEV 1 847 M
       </text>
@@ -57,7 +57,7 @@ function ContourField() {
         fontFamily="var(--font-fragment), monospace"
         fontSize="10"
         letterSpacing="0.08em"
-        fill="var(--signal-ink)"
+        fill="var(--signal-bright)"
         className="hero-route-label"
       >
         KM 42.2
@@ -67,10 +67,10 @@ function ContourField() {
 }
 
 const STATS = [
-  { label: "Pace", target: 252, unit: "/KM", format: (v: number) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, "0")}` },
-  { label: "Power", target: 287, unit: "W", format: (v: number) => String(Math.round(v)) },
-  { label: "Heart rate", target: 152, unit: "BPM", format: (v: number) => String(Math.round(v)) },
-  { label: "VO₂ max", target: 61.4, unit: "ML/KG·MIN", format: (v: number) => v.toFixed(1) },
+  { label: "Readiness", target: 87, unit: "/100", format: (v: number) => String(Math.round(v)) },
+  { label: "Fitness", target: 82, unit: "CTL", format: (v: number) => String(Math.round(v)) },
+  { label: "Compliance", target: 94, unit: "%", format: (v: number) => String(Math.round(v)) },
+  { label: "Race in", target: 42, unit: "DAYS", format: (v: number) => String(Math.round(v)) },
 ];
 
 export function Hero() {
@@ -186,7 +186,7 @@ export function Hero() {
     <section
       ref={root}
       className="relative pt-14 min-h-svh flex flex-col"
-      aria-label="TrainReady, the training instrument"
+      aria-label="Taper, adaptive endurance training"
     >
       {/* Contour field, drafted into the top right */}
       <div className="pointer-events-none absolute right-[-6%] top-16 w-[62vw] max-w-[720px] opacity-90 hidden md:block [&_.contour-ring]:invisible [&_.hero-route]:invisible">
@@ -196,39 +196,46 @@ export function Hero() {
       <div className="relative z-10 px-5 md:px-8 pt-12 md:pt-16 grow flex flex-col">
         {/* Field-book header line */}
         <div className="flex flex-wrap items-baseline gap-x-8 gap-y-1 overflow-hidden">
-          <span className="hero-kick label-mono text-ink">Field manual</span>
-          <span className="hero-kick label-mono text-ink-muted">
-            Precision training instrument
+          <span className="hero-kick label-mono text-bone">Taper</span>
+          <span className="hero-kick label-mono text-bone-muted">
+            Adaptive endurance training
           </span>
-          <span className="hero-kick label-mono text-ink-faint">Rev. 2026.07</span>
+          <span className="hero-kick label-mono text-bone-faint">
+            Beta · Rev 2026.07
+          </span>
         </div>
 
-        <h1 className="display-engraved mt-10 md:mt-14 text-[clamp(4.2rem,16vw,15rem)]">
-          <span className="hero-word block">Train</span>
-          <span className="hero-word block text-signal">Ready</span>
+        <h1 className="display-engraved mt-10 md:mt-12 text-[clamp(3.2rem,11.5vw,10.5rem)]">
+          <span className="hero-word block text-bone-faint">Train</span>
+          <span className="hero-word block text-signal">Taper</span>
+          <span className="hero-word block">Race</span>
         </h1>
 
-        <div className="hero-tick tick-strip mt-8 md:mt-10 max-w-[720px]" aria-hidden="true" />
+        <div
+          className="hero-tick taper-rule mt-8 md:mt-10 max-w-[720px]"
+          aria-hidden="true"
+        />
 
         <div className="mt-8 md:mt-10 md:grid md:grid-cols-12 md:gap-8">
-          <p className="hero-body col-span-5 max-w-[46ch] text-[15px] md:text-base leading-relaxed text-ink-muted">
-            A precision instrument for endurance. It records every meter you
-            swim, ride, and run; calibrates your training load against the
-            course ahead; and tells you, in numbers, when you are ready to race.
+          <p className="hero-body col-span-5 max-w-[46ch] text-[15px] md:text-base leading-relaxed text-bone-muted">
+            Tell Taper the race. It builds your season from your training
+            history, your experience, and the hours you actually have; then it
+            re-plans every morning as life happens. Trained on years of real
+            racing data, aimed at one day.
           </p>
 
           <div className="col-span-7 mt-8 md:mt-0 flex flex-wrap items-start gap-3 overflow-hidden">
             <a
               href="#start"
-              className="hero-cta label-mono bg-signal text-paper px-7 py-4 hover:bg-ink transition-colors duration-150"
+              className="hero-cta label-mono bg-signal text-field px-7 py-4 hover:bg-bone transition-colors duration-150"
             >
-              Start recording
+              Join the beta
             </a>
             <a
-              href="#instrument"
-              className="hero-cta label-mono border border-hairline text-ink px-7 py-4 hover:border-ink transition-colors duration-150"
+              href="#engine"
+              className="hero-cta label-mono border border-hairline text-bone px-7 py-4 hover:border-bone transition-colors duration-150"
             >
-              Read the spec
+              Read the method
             </a>
           </div>
         </div>
@@ -242,22 +249,22 @@ export function Hero() {
                 key={s.label}
                 className={`py-5 md:py-6 pr-4 ${i > 0 ? "md:border-l md:border-hairline md:pl-6" : ""}`}
               >
-                <dt className="label-mono text-ink-faint">{s.label}</dt>
+                <dt className="label-mono text-bone-faint">{s.label}</dt>
                 <dd className="mt-1 flex items-baseline gap-2">
-                  <span className="hero-stat-value font-mono text-2xl md:text-3xl tabular text-ink">
+                  <span className="hero-stat-value font-mono text-2xl md:text-3xl tabular text-bone">
                     0
                   </span>
-                  <span className="label-mono text-ink-faint">{s.unit}</span>
+                  <span className="label-mono text-bone-faint">{s.unit}</span>
                 </dd>
               </div>
             ))}
           </dl>
           <div className="rule" />
           <div className="hero-foot flex items-center justify-between py-3">
-            <span className="label-mono text-ink-faint">
-              Scroll to begin calibration
+            <span className="label-mono text-bone-faint">
+              Scroll to read the method
             </span>
-            <span className="label-mono text-ink-faint tabular">
+            <span className="label-mono text-bone-faint tabular">
               46.5197° N, 6.6323° E
             </span>
           </div>
