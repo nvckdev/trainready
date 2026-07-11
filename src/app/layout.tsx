@@ -1,26 +1,30 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Archivo, Fragment_Mono } from "next/font/google";
 import "./globals.css";
 
-const jakartaSans = Plus_Jakarta_Sans({
-  variable: "--font-jakarta",
+const archivo = Archivo({
+  variable: "--font-archivo",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  axes: ["wdth"],
+});
+
+const fragmentMono = Fragment_Mono({
+  variable: "--font-fragment",
+  subsets: ["latin"],
+  weight: "400",
 });
 
 export const metadata: Metadata = {
-  title: "TRAINREADY | Triathlon Tracking",
+  title: "TrainReady — The Training Instrument",
   description:
-    "The ultimate training ecosystem for runners, cyclists, and triathletes. Track every discipline with precision, optimize transitions, and peak on race day.",
+    "A precision training instrument for runners, cyclists, and triathletes. Every meter measured. Swim, bike, run — recorded, calibrated, race-ready.",
   icons: {
     icon: [
       { url: "/icon.png", sizes: "32x32", type: "image/png" },
       { url: "/icon-48.png", sizes: "48x48", type: "image/png" },
       { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
     ],
-    apple: [
-      { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
-    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
     shortcut: "/icon.png",
   },
 };
@@ -31,13 +35,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${jakartaSans.variable} dark`}>
-      <head>
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
-        />
-      </head>
+    <html lang="en" className={`${archivo.variable} ${fragmentMono.variable}`}>
       <body className="min-h-full antialiased">{children}</body>
     </html>
   );

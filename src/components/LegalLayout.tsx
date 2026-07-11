@@ -15,45 +15,47 @@ interface LegalLayoutProps {
 
 export function LegalLayout({ title, subtitle, updated, sections }: LegalLayoutProps) {
   return (
-    <div className="min-h-screen bg-[#0A0505] text-white">
+    <div className="min-h-screen">
       <NavBar />
 
-      <main className="max-w-[760px] mx-auto px-6 pt-40 pb-32">
-        {/* Header */}
-        <div className="mb-16">
-          <p className="text-[#FF2D55] text-xs font-bold uppercase tracking-widest mb-4">{subtitle}</p>
-          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-6">{title}</h1>
-          <p className="text-white/35 text-sm">Last updated: {updated}</p>
-          <div className="mt-8 w-12 h-[2px] bg-[#FF2D55] rounded-full" />
-        </div>
+      <main className="max-w-[760px] mx-auto px-5 md:px-6 pt-32 pb-24">
+        <header className="mb-14">
+          <p className="label-mono text-signal-ink">{subtitle}</p>
+          <h1 className="display-engraved text-[clamp(2.2rem,6vw,3.6rem)] mt-3">{title}</h1>
+          <p className="label-mono text-ink-faint mt-4">Last updated: {updated}</p>
+          <div className="tick-strip mt-8" aria-hidden="true" />
+        </header>
 
-        {/* Sections */}
-        <div className="flex flex-col gap-12">
+        <div className="flex flex-col">
           {sections.map((section, i) => (
-            <div key={i}>
-              <h2 className="text-lg font-bold mb-4 text-white/90">{section.heading}</h2>
-              {Array.isArray(section.body) ? (
-                <ul className="flex flex-col gap-3">
-                  {section.body.map((item, j) => (
-                    <li key={j} className="flex gap-3 text-white/50 text-sm leading-relaxed">
-                      <span className="w-1 h-1 rounded-full bg-[#FF2D55] mt-2 shrink-0" />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-white/50 text-sm leading-relaxed">{section.body}</p>
-              )}
-            </div>
+            <section key={i} className="border-t border-hairline py-8 grid md:grid-cols-[3rem_1fr] gap-x-6 gap-y-3">
+              <span className="label-mono text-ink-faint pt-1">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <div>
+                <h2 className="font-semibold text-lg mb-3">{section.heading}</h2>
+                {Array.isArray(section.body) ? (
+                  <ul className="flex flex-col gap-2.5">
+                    {section.body.map((item, j) => (
+                      <li key={j} className="grid grid-cols-[1.5rem_1fr] text-ink-muted text-[15px] leading-relaxed">
+                        <span className="label-mono text-ink-faint pt-0.5">{String.fromCharCode(97 + j)}.</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-ink-muted text-[15px] leading-relaxed">{section.body}</p>
+                )}
+              </div>
+            </section>
           ))}
         </div>
 
-        {/* Footer nav */}
-        <div className="mt-20 pt-8 border-t border-white/5 flex gap-6 text-xs text-white/25">
-          <Link href="/privacy" className="hover:text-white/60 transition-colors">Privacy</Link>
-          <Link href="/terms" className="hover:text-white/60 transition-colors">Terms</Link>
-          <Link href="/cookies" className="hover:text-white/60 transition-colors">Cookies</Link>
-        </div>
+        <nav className="mt-16 pt-5 border-t border-hairline flex gap-7" aria-label="Legal pages">
+          <Link href="/privacy" className="label-mono text-ink-muted hover:text-ink transition-colors duration-150">Privacy</Link>
+          <Link href="/terms" className="label-mono text-ink-muted hover:text-ink transition-colors duration-150">Terms</Link>
+          <Link href="/cookies" className="label-mono text-ink-muted hover:text-ink transition-colors duration-150">Cookies</Link>
+        </nav>
       </main>
     </div>
   );

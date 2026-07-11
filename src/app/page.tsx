@@ -1,28 +1,26 @@
 import { NavBar } from "@/components/NavBar";
-import { HeroSection } from "@/components/sections/HeroSection";
-import { AppShowcase } from "@/components/sections/AppShowcase";
-import { FeaturesGrid } from "@/components/sections/FeaturesGrid";
-import { BuiltForSection } from "@/components/sections/BuiltForSection";
-import { CrewSection } from "@/components/sections/CrewSection";
-import { WatchSection } from "@/components/sections/WatchSection";
-import { TagCloud } from "@/components/sections/TagCloud";
+import { SmoothScroll } from "@/components/SmoothScroll";
+import { Hero } from "@/components/sections/Hero";
+import { TerrainSection } from "@/components/sections/TerrainSection";
+import { InstrumentSection } from "@/components/sections/InstrumentSection";
+import { DisciplinesSection } from "@/components/sections/DisciplinesSection";
+import { SyncSection } from "@/components/sections/SyncSection";
+import { RaceDaySection } from "@/components/sections/RaceDaySection";
 import { Footer } from "@/components/sections/Footer";
 
 export default function Home() {
   return (
-    <div className="bg-[#0A0505] text-white overflow-x-hidden">
-      <div className="grain-overlay" aria-hidden="true" />
+    <SmoothScroll>
       <NavBar />
       <main>
-        <HeroSection />
-        <AppShowcase />
-        <FeaturesGrid />
-        <BuiltForSection />
-        <CrewSection />
-        <WatchSection />
-        <TagCloud />
+        <Hero />
+        <TerrainSection />
+        <InstrumentSection />
+        <DisciplinesSection />
+        <SyncSection />
+        <RaceDaySection />
       </main>
       <Footer />
-    </div>
+    </SmoothScroll>
   );
 }
