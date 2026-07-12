@@ -1,24 +1,32 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { referenceEngine } from "./reference.ts";
+import { TaperV1 } from "./learned.ts";
 import type { AthleteState } from "./types.ts";
 
-/** Prints the engine's prescription for the coming week from current state. */
+/** Prints taper-v1's prescription for the coming week: the model is warmed
+ *  on every prior week of history, then asked about the latest state. */
 
 const ROOT = process.cwd();
-const lines = readFileSync(join(ROOT, "data/datasets/weekly-examples.jsonl"), "utf8")
+const examples = readFileSync(join(ROOT, "data/datasets/weekly-examples.jsonl"), "utf8")
   .split("\n")
-  .filter(Boolean);
-const latest = JSON.parse(lines[lines.length - 1]) as {
-  weekStart: string;
-  features: AthleteState;
-  targets: { weekTss: number };
-};
+  .filter(Boolean)
+  .map(
+    (l) =>
+      JSON.parse(l) as {
+        weekStart: string;
+        features: AthleteState;
+        targets: { weekTss: number };
+      }
+  );
 
-const p = referenceEngine.prescribeWeek(latest.features);
+const engine = new TaperV1();
+const latest = examples[examples.length - 1];
+for (const ex of examples.slice(0, -1)) engine.observe(ex.features, ex.targets.weekTss);
+
+const p = engine.prescribeWeek(latest.features);
 const f = latest.features;
 
-console.log(`\nTAPER · ${referenceEngine.name} · week of ${latest.weekStart}`);
+console.log(`\nTAPER · ${engine.name} · week of ${latest.weekStart}`);
 console.log(`state  CTL ${f.ctl} · ATL ${f.atl} · TSB ${f.tsb} · trailing weeks [${f.last4WeeksTss.join(", ")}]`);
 console.log(`\nprescription`);
 console.log(`  phase     ${p.phase}`);

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { inferDiscipline } from "./sportInfer.ts";
+import { estimatePlannedTss } from "./estimateTss.ts";
 import { listJson, NORMALIZED, RAW, readJson, writeJson, writeJsonl } from "./io.ts";
 import type { PlannedSession, RawChunk, RawWorkout, Session } from "./types.ts";
 
@@ -37,6 +38,7 @@ export function normalize(): {
     if (w.type === "planned") {
       // "DAY OFF" placeholders carry no load; skip them, keep real plans.
       if (/day off/i.test(w.title ?? "")) continue;
+      const tss = w.tss_planned ?? w.tss;
       planned.push({
         id: w.id,
         date: w.date,
@@ -44,7 +46,16 @@ export function normalize(): {
         discipline,
         durationHr: w.duration_planned,
         distanceKm: w.distance_planned_km,
-        tss: w.tss_planned ?? w.tss,
+        tss,
+        tssEst:
+          tss ??
+          estimatePlannedTss({
+            discipline,
+            durationHr: w.duration_planned,
+            distanceKm: w.distance_planned_km,
+            title: w.title,
+            description: w.description,
+          }),
       });
       continue;
     }
@@ -52,6 +63,7 @@ export function normalize(): {
     const durationHr = w.duration_actual;
     if (!durationHr || durationHr <= 0) zeroDuration++;
 
+    const hasPlan = w.duration_planned !== null || w.distance_planned_km !== null;
     sessions.push({
       id: w.id,
       date: w.date,
@@ -64,6 +76,17 @@ export function normalize(): {
       plannedDurationHr: w.duration_planned,
       plannedDistanceKm: w.distance_planned_km,
       plannedTss: w.tss_planned,
+      plannedTssEst:
+        w.tss_planned ??
+        (hasPlan
+          ? estimatePlannedTss({
+              discipline,
+              durationHr: w.duration_planned,
+              distanceKm: w.distance_planned_km,
+              title: w.title,
+              description: w.description,
+            })
+          : null),
       isRaceLeg,
     });
   }

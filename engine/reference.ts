@@ -32,6 +32,12 @@ function phaseFor(state: AthleteState, cutback: boolean): Phase {
   const d = state.daysToNextRace;
   if (d !== null && d <= 7) return "race";
   if (d !== null && d <= 21) return "taper";
+  // No near race and the athlete has clearly stepped away: don't prescribe
+  // CTL-maintenance through a deliberate break; meet them where they are.
+  const noNearRace = d === null || d > 120;
+  if (noNearRace && (state.breakRatio < 0.6 || state.daysSinceLastSession > 10)) {
+    return "offseason";
+  }
   if (state.tsb < CFG.tsbFloor) return "recovery";
   if (cutback) return "recovery";
   if (d !== null && d <= 84) return "build";
@@ -62,6 +68,15 @@ export const referenceEngine: Engine = {
         const frac = state.daysToNextRace! <= 14 ? CFG.taper.twoOut : CFG.taper.threeOut;
         weekTss = trailingMean * frac;
         rationale = `Taper, ${state.daysToNextRace} days out: shed fatigue faster than fitness (ATL τ=7 vs CTL τ=42) by holding ${Math.round(frac * 100)}% of trailing load.`;
+        break;
+      }
+      case "offseason": {
+        // Re-entry ramp anchored on what the athlete is actually doing now,
+        // not on the fitness they used to have.
+        const recent = state.last4WeeksTss.slice(-2);
+        const recentMean = recent.reduce((s, x) => s + x, 0) / Math.max(1, recent.length);
+        weekTss = Math.max(CFG.minWeekTss, recentMean * 1.1);
+        rationale = `Off-season/return: no race inside 120 days and recent load is ${Math.round(state.breakRatio * 100)}% of the trailing two months. Rebuild from current volume (+10%), not from old CTL.`;
         break;
       }
       case "recovery": {

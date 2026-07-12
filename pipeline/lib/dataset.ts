@@ -19,6 +19,10 @@ export interface WeeklyExample {
     last4Shares: { swim: number; bike: number; run: number };
     daysToNextRace: number | null;
     weeksSinceStart: number;
+    /** mean(last 2 weeks TSS) / mean(last 8 weeks TSS): <0.6 smells like a break. */
+    breakRatio: number;
+    /** Days between the week's start and the most recent completed session. */
+    daysSinceLastSession: number;
   };
   targets: {
     weekTss: number;
@@ -32,6 +36,8 @@ export interface WeeklyExample {
      * sessions). Null before 2024-09-10 where extraction was completed-only.
      */
     plannedTss: number | null;
+    /** Same, with duration×IF² estimates filling TP's missing planned TSS. */
+    plannedTssEst: number | null;
   };
 }
 
@@ -48,18 +54,26 @@ export function buildDatasets(
   const raceDates = races.map((r) => r.date).sort();
 
   // Coach-programmed load per week: plans paired onto completions plus
-  // plans that were never executed.
+  // plans that were never executed. Raw = TP-computed only; Est fills the
+  // run/swim gap with duration×IF² estimates.
   const plannedByWeek = new Map<string, number>();
+  const plannedEstByWeek = new Map<string, number>();
+  const add = (m: Map<string, number>, date: string, v: number | null) => {
+    if (v === null) return;
+    const w = isoWeekStart(date);
+    m.set(w, (m.get(w) ?? 0) + v);
+  };
   for (const s of sessions) {
-    if (s.plannedTss === null) continue;
-    const w = isoWeekStart(s.date);
-    plannedByWeek.set(w, (plannedByWeek.get(w) ?? 0) + s.plannedTss);
+    add(plannedByWeek, s.date, s.plannedTss);
+    add(plannedEstByWeek, s.date, s.plannedTss ?? s.plannedTssEst);
   }
   for (const p of planned) {
-    if (p.tss === null) continue;
-    const w = isoWeekStart(p.date);
-    plannedByWeek.set(w, (plannedByWeek.get(w) ?? 0) + p.tss);
+    add(plannedByWeek, p.date, p.tss);
+    add(plannedEstByWeek, p.date, p.tssEst);
   }
+
+  // For break detection: most recent session on/before a given date.
+  const sessionDates = [...new Set(sessions.map((s) => s.date))].sort();
 
   const examples: WeeklyExample[] = [];
   weekly.forEach((w, i) => {
@@ -81,6 +95,20 @@ export function buildDatasets(
       run: round2(sum((x) => x.tssByDiscipline.run ?? 0) / trailingTss),
     };
 
+    const last8 = weekly.slice(Math.max(0, i - 8), i);
+    const mean = (arr: WeekAggregate[]) =>
+      arr.reduce((s, x) => s + x.tss, 0) / Math.max(1, arr.length);
+    const breakRatio = round2(mean(last4.slice(-2)) / Math.max(1, mean(last8)));
+
+    let lastIdx = sessionDates.length - 1;
+    while (lastIdx >= 0 && sessionDates[lastIdx] >= w.weekStart) lastIdx--;
+    const daysSinceLastSession =
+      lastIdx >= 0
+        ? Math.round(
+            (Date.parse(w.weekStart) - Date.parse(sessionDates[lastIdx])) / 86400000
+          )
+        : 999;
+
     const swim = w.tssByDiscipline.swim ?? 0;
     const bike = w.tssByDiscipline.bike ?? 0;
     const run = w.tssByDiscipline.run ?? 0;
@@ -96,6 +124,8 @@ export function buildDatasets(
         last4Shares,
         daysToNextRace,
         weeksSinceStart: i,
+        breakRatio,
+        daysSinceLastSession,
       },
       targets: {
         weekTss: round2(w.tss),
@@ -107,6 +137,10 @@ export function buildDatasets(
         plannedTss:
           w.weekStart >= PLANNED_DATA_START
             ? round2(plannedByWeek.get(w.weekStart) ?? 0)
+            : null,
+        plannedTssEst:
+          w.weekStart >= PLANNED_DATA_START
+            ? round2(plannedEstByWeek.get(w.weekStart) ?? 0)
             : null,
       },
     });

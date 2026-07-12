@@ -4,7 +4,7 @@
  * rules engine here, or the proprietary algorithm) plugs in behind it.
  */
 
-export type Phase = "base" | "build" | "taper" | "race" | "recovery";
+export type Phase = "base" | "build" | "taper" | "race" | "recovery" | "offseason";
 
 export interface AthleteState {
   /** Chronic training load at the week's start. */
@@ -19,6 +19,10 @@ export interface AthleteState {
   daysToNextRace: number | null;
   /** Weeks of continuous training history (for cutback rhythm). */
   weeksSinceStart: number;
+  /** mean(last 2 weeks TSS) / mean(last 8 weeks TSS): <0.6 smells like a break. */
+  breakRatio: number;
+  /** Days since the athlete last completed any session. */
+  daysSinceLastSession: number;
 }
 
 export interface WeekPrescription {

@@ -44,6 +44,8 @@ export interface Session {
   plannedDurationHr: number | null;
   plannedDistanceKm: number | null;
   plannedTss: number | null;
+  /** Estimated planned TSS where TrainingPeaks didn't compute one. */
+  plannedTssEst: number | null;
   isRaceLeg: boolean;
 }
 
@@ -56,6 +58,8 @@ export interface PlannedSession {
   durationHr: number | null;
   distanceKm: number | null;
   tss: number | null;
+  /** tss when present, otherwise duration×IF² estimate. */
+  tssEst: number | null;
 }
 
 export interface DayAggregate {

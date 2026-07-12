@@ -1,26 +1,20 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { referenceEngine } from "./reference.ts";
-import type { AthleteState } from "./types.ts";
+import { TaperV1 } from "./learned.ts";
+import type { AthleteState, Engine } from "./types.ts";
 
 /**
- * Replays every corpus week through an engine and scores its prescription
- * against (a) what the athlete actually executed and (b) what the coach
- * programmed, where plan data exists. Writes data/reports/engine-backtest.md
- * and a per-week CSV.
+ * Replays every corpus week through each engine (walk-forward: learned
+ * engines observe a week only after prescribing it) and scores prescriptions
+ * against executed load and estimated coach-programmed load. Writes
+ * data/reports/engine-backtest.md and a per-week CSV.
  */
 
 interface Example {
   weekStart: string;
-  features: AthleteState & { daysToNextRace: number | null };
-  targets: {
-    weekTss: number;
-    sessions: number;
-    swimShare: number;
-    bikeShare: number;
-    runShare: number;
-    plannedTss: number | null;
-  };
+  features: AthleteState;
+  targets: { weekTss: number; plannedTss: number | null; plannedTssEst: number | null };
 }
 
 const ROOT = process.cwd();
@@ -29,26 +23,35 @@ const examples: Example[] = readFileSync(join(ROOT, "data/datasets/weekly-exampl
   .filter(Boolean)
   .map((l) => JSON.parse(l));
 
-const engine = referenceEngine;
+const v1 = new TaperV1();
+const engines: Engine[] = [referenceEngine, v1];
 
-interface Row {
-  week: string;
+interface Cell {
   phase: string;
   predicted: number;
+}
+interface Row {
+  week: string;
   executed: number;
-  planned: number | null;
+  plannedEst: number | null;
   daysToRace: number | null;
+  byEngine: Record<string, Cell>;
 }
 
 const rows: Row[] = examples.map((ex) => {
-  const p = engine.prescribeWeek(ex.features);
+  const byEngine: Record<string, Cell> = {};
+  for (const e of engines) {
+    const p = e.prescribeWeek(ex.features);
+    byEngine[e.name] = { phase: p.phase, predicted: p.weekTss };
+  }
+  // Learned engines see the outcome only after prescribing (no look-ahead).
+  v1.observe(ex.features, ex.targets.weekTss);
   return {
     week: ex.weekStart,
-    phase: p.phase,
-    predicted: p.weekTss,
     executed: ex.targets.weekTss,
-    planned: ex.targets.plannedTss,
+    plannedEst: ex.targets.plannedTssEst,
     daysToRace: ex.features.daysToNextRace,
+    byEngine,
   };
 });
 
@@ -56,14 +59,9 @@ const rows: Row[] = examples.map((ex) => {
 
 const mae = (pairs: Array<[number, number]>) =>
   pairs.reduce((s, [a, b]) => s + Math.abs(a - b), 0) / Math.max(1, pairs.length);
-const mape = (pairs: Array<[number, number]>) =>
-  (pairs
-    .filter(([, b]) => b > 30)
-    .reduce((s, [a, b]) => s + Math.abs(a - b) / b, 0) /
-    Math.max(1, pairs.filter(([, b]) => b > 30).length)) *
-  100;
 const corr = (pairs: Array<[number, number]>) => {
   const n = pairs.length;
+  if (n < 3) return NaN;
   const ma = pairs.reduce((s, [a]) => s + a, 0) / n;
   const mb = pairs.reduce((s, [, b]) => s + b, 0) / n;
   let num = 0,
@@ -77,132 +75,138 @@ const corr = (pairs: Array<[number, number]>) => {
   return num / Math.sqrt(da * db);
 };
 
-const vsExecuted: Array<[number, number]> = rows.map((r) => [r.predicted, r.executed]);
+function scores(name: string) {
+  const all: Array<[number, number]> = rows.map((r) => [r.byEngine[name].predicted, r.executed]);
 
-// Weeks where the athlete demonstrably trained to plan (executed at least
-// 60% of their trailing month's weekly mean): the compliance-noise-reduced
-// view of prescription quality.
-const consistent: Array<[number, number]> = [];
-rows.forEach((r, i) => {
-  if (i < 4) return;
-  const trailing = rows.slice(i - 4, i).reduce((s, x) => s + x.executed, 0) / 4;
-  if (trailing > 50 && r.executed >= trailing * 0.6) consistent.push([r.predicted, r.executed]);
-});
+  const consistent: Array<[number, number]> = [];
+  rows.forEach((r, i) => {
+    if (i < 4) return;
+    const trailing = rows.slice(i - 4, i).reduce((s, x) => s + x.executed, 0) / 4;
+    if (trailing > 50 && r.executed >= trailing * 0.6)
+      consistent.push([r.byEngine[name].predicted, r.executed]);
+  });
 
-// Direction agreement: did the engine call this week up or down vs the
-// athlete's previous executed week, and did the coach agree?
-let dirHits = 0;
-let dirTotal = 0;
-for (let i = 1; i < rows.length; i++) {
-  const prev = rows[i - 1].executed;
-  const predDir = Math.sign(rows[i].predicted - prev);
-  const actDir = Math.sign(rows[i].executed - prev);
-  if (Math.abs(rows[i].executed - prev) < 25) continue; // flat weeks don't vote
-  dirTotal++;
-  if (predDir === actDir) dirHits++;
+  const vsPlanned: Array<[number, number]> = rows
+    .filter((r) => r.plannedEst !== null && r.plannedEst > 30)
+    .map((r) => [r.byEngine[name].predicted, r.plannedEst!]);
+
+  let dirHits = 0,
+    dirTotal = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const prev = rows[i - 1].executed;
+    if (Math.abs(rows[i].executed - prev) < 25) continue;
+    dirTotal++;
+    if (Math.sign(rows[i].byEngine[name].predicted - prev) === Math.sign(rows[i].executed - prev))
+      dirHits++;
+  }
+
+  return {
+    maeAll: mae(all),
+    corrAll: corr(all),
+    maeConsistent: mae(consistent),
+    corrConsistent: corr(consistent),
+    nConsistent: consistent.length,
+    maePlanned: vsPlanned.length ? mae(vsPlanned) : null,
+    corrPlanned: vsPlanned.length ? corr(vsPlanned) : null,
+    nPlanned: vsPlanned.length,
+    direction: (dirHits / Math.max(1, dirTotal)) * 100,
+  };
 }
 
-// Taper behavior: in the two weeks before each race, how much did the engine
-// cut vs how much the athlete actually cut (relative to 4 weeks prior).
-const raceWeeks = rows.filter((r) => r.daysToRace !== null && r.daysToRace <= 14);
-const taperCuts = raceWeeks.map((r) => {
+const s0 = scores(referenceEngine.name);
+const s1 = scores(v1.name);
+
+// Taper behavior at races for both engines
+const taperRows = rows.filter((r) => r.daysToRace !== null && r.daysToRace <= 14);
+const taperCuts = taperRows.map((r) => {
   const idx = rows.indexOf(r);
-  const baselineRows = rows.slice(Math.max(0, idx - 6), Math.max(0, idx - 2));
-  const baseline =
-    baselineRows.reduce((s, x) => s + x.executed, 0) / Math.max(1, baselineRows.length);
+  const base = rows.slice(Math.max(0, idx - 6), Math.max(0, idx - 2));
+  const baseline = base.reduce((s, x) => s + x.executed, 0) / Math.max(1, base.length);
+  const pct = (v: number) => (baseline > 0 ? Math.round((v / baseline) * 100) + "%" : "n/a");
   return {
     week: r.week,
-    daysToRace: r.daysToRace,
-    predictedCut: baseline > 0 ? r.predicted / baseline : null,
-    actualCut: baseline > 0 ? r.executed / baseline : null,
+    d: r.daysToRace,
+    ref: pct(r.byEngine[referenceEngine.name].predicted),
+    v1: pct(r.byEngine[v1.name].predicted),
+    actual: pct(r.executed),
   };
 });
 
 // ——— outputs ———————————————————————————————————————————————
 
-mkdirSync(join(ROOT, "data/reports"), { recursive: true });
 writeFileSync(
   join(ROOT, "data/derived/engine-backtest.csv"),
-  ["week,phase,predicted_tss,executed_tss,planned_tss,days_to_race"]
+  ["week,days_to_race,executed_tss,planned_est_tss,ref_phase,ref_tss,v1_phase,v1_tss"]
     .concat(
-      rows.map(
-        (r) =>
-          `${r.week},${r.phase},${r.predicted},${r.executed},${r.planned ?? ""},${r.daysToRace ?? ""}`
+      rows.map((r) =>
+        [
+          r.week,
+          r.daysToRace ?? "",
+          r.executed,
+          r.plannedEst ?? "",
+          r.byEngine[referenceEngine.name].phase,
+          r.byEngine[referenceEngine.name].predicted,
+          r.byEngine[v1.name].phase,
+          r.byEngine[v1.name].predicted,
+        ].join(",")
       )
     )
     .join("\n") + "\n"
 );
 
-const phaseCounts = new Map<string, number>();
-for (const r of rows) phaseCounts.set(r.phase, (phaseCounts.get(r.phase) ?? 0) + 1);
+const fm = (n: number | null, d = 1) => (n === null || Number.isNaN(n) ? "n/a" : n.toFixed(d));
 
-const md = `# Taper engine backtest — ${engine.name}
+const md = `# Taper engine backtest — reference-v0 vs taper-v1
 
-Generated ${new Date().toISOString().slice(0, 10)} · ${rows.length} weeks replayed (founder corpus)
+Generated ${new Date().toISOString().slice(0, 10)} · ${rows.length} weeks replayed (founder corpus), walk-forward, zero look-ahead
 
-The reference engine is the transparent physiology baseline (and safety
-scaffold) the proprietary/learned engine must beat. Scores below are the
-bar, not the ceiling.
+taper-v1 = ridge regression on the athlete's own history, clamped inside the
+reference engine's phase guardrails. It activates after 24 observed weeks;
+before that it defers to the reference.
 
 ## Weekly load prescription
 
-| Comparison | Weeks | MAE (TSS) | MAPE | Correlation |
+| Metric | reference-v0 | taper-v1 |
+|---|---|---|
+| MAE vs executed, all ${rows.length} weeks | ${fm(s0.maeAll)} | **${fm(s1.maeAll)}** |
+| MAE vs executed, consistent-training weeks (${s1.nConsistent}) | ${fm(s0.maeConsistent)} | **${fm(s1.maeConsistent)}** |
+| Correlation, consistent weeks | ${fm(s0.corrConsistent, 2)} | **${fm(s1.corrConsistent, 2)}** |
+| MAE vs coach-programmed (est.), ${s1.nPlanned} weeks | ${fm(s0.maePlanned)} | **${fm(s1.maePlanned)}** |
+| Correlation vs coach-programmed (est.) | ${fm(s0.corrPlanned, 2)} | **${fm(s1.corrPlanned, 2)}** |
+| Direction agreement | ${fm(s0.direction, 0)}% | **${fm(s1.direction, 0)}%** |
+
+"Coach-programmed (est.)" fills TrainingPeaks' missing planned TSS (11% run,
+0% swim coverage) with duration×IF² estimates from the plan text; it is a
+noisy but honest reconstruction of coach intent after 2024-09.
+
+## Taper behavior at races (≤14 days out, % of trailing month)
+
+| Week | Days out | reference-v0 | taper-v1 | Athlete |
 |---|---|---|---|---|
-| vs executed weeks (all) | ${vsExecuted.length} | ${mae(vsExecuted).toFixed(1)} | ${mape(vsExecuted).toFixed(0)}% | ${corr(vsExecuted).toFixed(2)} |
-| vs executed, consistent-training weeks | ${consistent.length} | ${mae(consistent).toFixed(1)} | ${mape(consistent).toFixed(0)}% | ${corr(consistent).toFixed(2)} |
-
-A "vs coach-programmed" comparison is not yet measurable: TrainingPeaks
-carries planned TSS for 98% of bike plans but 11% of run and 0% of swim
-plans, so weekly planned totals are bike-skewed noise. Follow-up: estimate
-planned TSS from planned duration × phase intensity before scoring it.
-
-Direction agreement (up/down vs previous week, flat weeks excluded):
-**${dirHits}/${dirTotal} = ${((dirHits / Math.max(1, dirTotal)) * 100).toFixed(0)}%**
-
-## Phase calls
-
-${[...phaseCounts.entries()]
-  .sort((a, b) => b[1] - a[1])
-  .map(([p, n]) => `- ${p}: ${n} weeks`)
-  .join("\n")}
-
-## Taper behavior at races (≤14 days out)
-
-| Week | Days to race | Engine cut to | Athlete cut to |
-|---|---|---|---|
-${taperCuts
-  .map(
-    (t) =>
-      `| ${t.week} | ${t.daysToRace} | ${t.predictedCut === null ? "n/a" : Math.round(t.predictedCut * 100) + "%"} | ${t.actualCut === null ? "n/a" : Math.round(t.actualCut * 100) + "%"} |`
-  )
-  .join("\n")}
-
-(percent of the trailing month's weekly load)
+${taperCuts.map((t) => `| ${t.week} | ${t.d} | ${t.ref} | ${t.v1} | ${t.actual} |`).join("\n")}
 
 ## Reading the numbers
 
-- "Executed" weeks embed compliance noise: illness, travel, and skipped
-  sessions that no forward-looking engine can (or should) predict. The
-  consistent-training subset is the fairer read.
-- Race detection is corpus-derived (multi-leg days); races the detector
-  missed will make some taper weeks look like disagreement.
-- The reference engine sees no season context (no off-season concept), so it
-  prescribes maintenance load through breaks the athlete took deliberately.
+- Walk-forward means taper-v1's early weeks are the reference engine; its
+  advantage compounds as history accumulates.
+- Executed weeks embed compliance noise (illness, travel, skipped sessions);
+  the consistent-training subset and the coach-programmed comparison are the
+  fairer reads of prescription quality.
+- The reference engine now has an off-season phase (no race in 120 days +
+  demonstrated break → rebuild from current volume, not old CTL).
 
 Per-week detail: \`data/derived/engine-backtest.csv\`.
 `;
 
+mkdirSync(join(ROOT, "data/reports"), { recursive: true });
 writeFileSync(join(ROOT, "data/reports/engine-backtest.md"), md);
+
 console.log(
   JSON.stringify(
     {
       weeks: rows.length,
-      maeVsExecuted: +mae(vsExecuted).toFixed(1),
-      corrVsExecuted: +corr(vsExecuted).toFixed(2),
-      consistentWeeks: consistent.length,
-      maeConsistent: +mae(consistent).toFixed(1),
-      corrConsistent: +corr(consistent).toFixed(2),
-      directionAgreement: +((dirHits / Math.max(1, dirTotal)) * 100).toFixed(0),
+      reference: { maeConsistent: +fm(s0.maeConsistent), corr: +fm(s0.corrConsistent, 2), maePlanned: s0.maePlanned && +fm(s0.maePlanned), dir: +fm(s0.direction, 0) },
+      taperV1: { maeConsistent: +fm(s1.maeConsistent), corr: +fm(s1.corrConsistent, 2), maePlanned: s1.maePlanned && +fm(s1.maePlanned), dir: +fm(s1.direction, 0) },
     },
     null,
     1
