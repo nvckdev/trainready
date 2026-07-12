@@ -65,10 +65,10 @@ export function NavBar() {
             <UtcClock />
           </span>
           <Link
-            href="/#start"
+            href="/app"
             className="label-mono bg-signal text-field px-4 py-2 hover:bg-bone transition-colors duration-150"
           >
-            Join the beta
+            Open the app
           </Link>
         </div>
       </div>

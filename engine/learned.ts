@@ -106,6 +106,9 @@ export class TaperV1 implements Engine {
 
   prescribeWeek(state: AthleteState): WeekPrescription {
     const ref = referenceEngine.prescribeWeek(state);
+    // The taper is protocol, not preference: race-proximal weeks follow the
+    // physiology schedule exactly; the learned layer has no vote.
+    if (ref.phase === "taper" || ref.phase === "race") return ref;
     if (!this.weights) {
       return { ...ref, rationale: `${ref.rationale} (learned layer warming up: ${this.history.length}/${MIN_TRAIN} weeks observed)` };
     }
