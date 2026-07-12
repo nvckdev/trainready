@@ -1,0 +1,6 @@
+# Known invariant failures = the hardening work order
+# (.claude/skills/taper-plan-hardening). This file may only SHRINK.
+# New failures not listed here block every commit.
+I2
+I3
+I4

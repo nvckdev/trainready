@@ -99,8 +99,8 @@ Run everything from the repo root. After EVERY fix: `npx tsc -p engine
 
 1. `npx tsc -p engine --noEmit && npx tsc --noEmit` — both clean.
 2. `npm run engine:invariants` — `14 pass, 0 fail`, exit code 0.
-3. `npm run engine:backtest` — taper-v1 consistent-week MAE ≤ 83.1 and
-   direction ≥ 73 (fixes must not regress the scorecard; small improvements
-   are fine, regressions mean your fix leaked into weekly load logic).
+3. `npm run engine:backtest` — taper-v1 within the pinned baselines in
+   scripts/verify.sh (fixes must not regress the scorecard; regressions
+   mean your fix leaked into weekly load logic).
 4. `npm run lint` and `npm run build` — clean.
 5. Fixes 4 and 5 verified per their acceptance lines.

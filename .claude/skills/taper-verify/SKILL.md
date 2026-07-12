@@ -42,8 +42,10 @@ day's TSS is missing; do NOT touch the PMC constants (42/7) to fix it.
 ```bash
 npm run engine:backtest
 ```
-Pinned baselines (from data/reports/engine-backtest.md, 183-week corpus):
-- taper-v1 maeConsistent ≤ 83.1, corr ≥ 0.82, directionAgreement ≥ 73
+Pinned baselines (183-week corpus, re-pinned 2026-07-12 after the taper
+protocol-lock deliberately traded executed-week MAE for race-week
+correctness — invariant I5b guards that side):
+- taper-v1 maeConsistent ≤ 88.2, corr ≥ 0.80, directionAgreement ≥ 74
 - reference maeConsistent ≤ 91.0 (it may drift ±1 with corpus refreshes)
 Any engine change that worsens taper-v1 on two or more of its three numbers
 is a regression: revert or fix before committing.

@@ -10,7 +10,9 @@
     "pipeline": "tsx pipeline/run.ts",
     "engine:backtest": "tsx engine/backtest.ts",
     "engine:today": "tsx engine/today.ts",
-    "engine:invariants": "tsx engine/invariants.ts"
+    "engine:invariants": "tsx engine/invariants.ts",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "verify": "bash scripts/verify.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
