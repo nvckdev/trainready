@@ -9,7 +9,8 @@
     "lint": "eslint",
     "pipeline": "tsx pipeline/run.ts",
     "engine:backtest": "tsx engine/backtest.ts",
-    "engine:today": "tsx engine/today.ts"
+    "engine:today": "tsx engine/today.ts",
+    "engine:invariants": "tsx engine/invariants.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
