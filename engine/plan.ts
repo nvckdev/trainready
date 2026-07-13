@@ -1,3 +1,14 @@
+import {
+  finishEstimate,
+  goalCtlTarget,
+  LONG_EASY_KMH,
+  LONG_MIN_CAP,
+  longRunKm,
+  parseGoalTime,
+  peakLongKm,
+  raceDistanceKm,
+  type GoalCtl,
+} from "./goal.ts";
 import { TaperV1 } from "./learned.ts";
 import type { AthleteState, Phase } from "./types.ts";
 import type { Zones } from "./zones.ts";
@@ -38,6 +49,12 @@ export interface PlanRequest {
    *  Default false → anchor-v2 is standard. Also switchable via env
    *  ANCHOR_LEGACY=1. */
   anchorLegacy?: boolean;
+  /** Optional race goal time, "H:MM:SS" or "MM:SS". When present (and the
+   *  race is a run distance), the plan is periodized toward the CTL the goal
+   *  pace implies (engine/goal.ts) and surfaces an honest gap assessment.
+   *  Optional → every existing caller/harness stays valid; parsed engine-side,
+   *  so an invalid/empty value simply leaves the goal target inert. */
+  goalTime?: string;
 }
 
 export interface PlannedSessionOut {
@@ -72,6 +89,20 @@ export interface Plan {
     startCtl: number;
     projectedRaceCtl: number;
     projectedRaceTsb: number;
+    /** Honest goal-vs-reachable assessment (engine/goal.ts). Present only when
+     *  a run-distance race goal was supplied; absent for goal-less and tri
+     *  plans, so existing plans are unaffected. The rails are NEVER loosened to
+     *  close the gap — reachablePeakCtl is literally the plotted trajectory's
+     *  peak, and the finish is a load-limited bound, not a prediction. */
+    goalGap?: {
+      goalTime: string; // "1:24:00"
+      requiredPeakCtl: number; // ~50 — the race-day CTL the goal pace needs
+      reachablePeakCtl: number; // ~26 — safe race-day CTL under the rails
+      realisticFinish: string; // "1:43"
+      gapCtl: number; // ~24
+      message: string; // the §4.2 paragraph
+      loadLimited: true; // flags the finish as a bound, not a prediction
+    };
   };
   weeks: PlanWeek[];
 }
@@ -323,6 +354,23 @@ export function generatePlan(
   const engine = new TaperV1({ anchorLegacy: req.anchorLegacy, anchorV2: req.anchorV2 });
   for (const h of history) engine.observe(h.state, h.actualTss, h.weekStart);
 
+  // Race goal → required-CTL target (engine/goal.ts). Parsed once. Only run
+  // distances carry a goal target (raceDistanceKm is undefined for tri types),
+  // so goalTime is inert for a triathlon. An unparseable/empty string leaves
+  // `goal` undefined and the whole feature dormant — the plan is byte-identical
+  // to a goal-less plan. `goalPeakCtl` is threaded onto each week's state below;
+  // it is the SOLE trigger for the learned-layer goal floor and never touches
+  // the backtest (which never calls generatePlan) — see engine/types.ts.
+  const goalDistanceKm = raceDistanceKm(req.raceType);
+  const goalSec = req.goalTime ? parseGoalTime(req.goalTime) : undefined;
+  const goal: GoalCtl | undefined =
+    goalSec !== undefined && goalDistanceKm !== undefined
+      ? goalCtlTarget(goalDistanceKm, goalSec)
+      : undefined;
+  const isRunRace = goalDistanceKm !== undefined;
+  const longPeakKm = peakLongKm(req.raceType);
+  let prevLongKm: number | undefined; // tracked across the week loop (like prevPrescribed)
+
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
   const startDateStr = req.startDate ?? iso(Date.now());
   if (req.raceDate < startDateStr) throw new Error("race date is in the past");
@@ -355,6 +403,9 @@ export function generatePlan(
       // anchor-v2 week-1 base floor. weeks[] is pushed at the end of each
       // iteration, so length 0 is exactly week index 0.
       isFirstPlanWeek: weeks.length === 0,
+      // Plan-only goal target (see above / engine/types.ts). Drives the
+      // learned-layer goal floor; absent on the backtest path.
+      goalPeakCtl: goal?.peakCtl,
       last4Shares: initialState.last4Shares,
       daysToNextRace: daysToRace,
       weeksSinceStart,
@@ -388,10 +439,58 @@ export function generatePlan(
     const placed = active.filter(
       (s) => !(s.kind.includes("long") && wStart + s.weekdayIdx * DAY >= raceT - 6 * DAY)
     );
+    // Long-run distance-tied floor (goal plans only, base/build/recovery —
+    // docs/periodization-spec.md §5). The reference taper/race weeks defer 100%
+    // to their own decay (rule 2), so the floor is skipped there. It sets the
+    // run-long DURATION from the injury-capped distance progression (≤ +2 km &
+    // ≤ +8%/week, cap 24 km / 130 min, flat on cutbacks) and lets that session's
+    // TSS track the duration, then redistributes the remainder over the other
+    // sessions so the WEEK total stays = trainableTss (the rail-bound
+    // prescription). Decoupling long-run distance from week volume this way is
+    // what keeps the +20% ramp ceiling / TSB floor intact while the long run
+    // grows: CTL rises from the goal FLOOR on p.weekTss (§2.2), not from
+    // inflating the long session. The long run is capped at 60% of the week so
+    // the other sessions never fall under their minimums.
+    const longSlot = placed.find((s) => s.kind === "run-long");
+    const LONG_IF2 = TEMPLATES["run-long"].intensity * TEMPLATES["run-long"].intensity * 100;
+    let longFloorHr: number | undefined;
+    if (
+      goal &&
+      isRunRace &&
+      longSlot &&
+      (p.phase === "base" || p.phase === "build" || p.phase === "recovery")
+    ) {
+      const baseLongHr = (trainableTss * longSlot.weight) / totalWeight / LONG_IF2;
+      const capHr = (trainableTss * 0.6) / LONG_IF2; // long run ≤ 60% of the week
+      // Week 1 opens the progression from a sensible base (a half build starts
+      // the long run near ~13 km, scaled down for shorter races), then each
+      // later week steps up ≤ +2 km toward the injury-capped peak; cutbacks hold
+      // flat. The 60% cap keeps a low-volume early week from over-weighting it.
+      const startKm = Math.min(13, longPeakKm * 0.6);
+      const targetKm =
+        prevLongKm === undefined
+          ? Math.min(longPeakKm, Math.max(baseLongHr * LONG_EASY_KMH, startKm))
+          : longRunKm(prevLongKm, longPeakKm, p.phase === "recovery");
+      const targetHr = Math.min(targetKm / LONG_EASY_KMH, LONG_MIN_CAP / 60, 2.6);
+      longFloorHr = Math.min(Math.max(targetHr, baseLongHr), capHr);
+    }
+    const longFinalTss = longFloorHr !== undefined ? LONG_IF2 * longFloorHr : undefined;
+    const otherBaseSum =
+      longFinalTss !== undefined && longSlot
+        ? placed.filter((s) => s !== longSlot).reduce((s, x) => s + (trainableTss * x.weight) / totalWeight, 0)
+        : 0;
+    const otherScale =
+      longFinalTss !== undefined && otherBaseSum > 0
+        ? Math.max(0, trainableTss - longFinalTss) / otherBaseSum
+        : 1;
+
     const sessions: PlannedSessionOut[] = placed.map((slot) => {
       const t = TEMPLATES[slot.kind];
-      const tss = (trainableTss * slot.weight) / totalWeight;
+      const isLong = slot === longSlot;
+      let tss = (trainableTss * slot.weight) / totalWeight;
+      if (longFinalTss !== undefined) tss = isLong ? longFinalTss : tss * otherScale;
       let durationHr = tss / (t.intensity * t.intensity * 100);
+      if (isLong && longFloorHr !== undefined) durationHr = longFloorHr;
       durationHr = Math.min(slot.kind === "bike-long" ? 4.5 : slot.kind === "run-long" ? 2.6 : 1.6, Math.max(0.4, durationHr));
       const m = mins(durationHr);
       const date = iso(wStart + slot.weekdayIdx * DAY);
@@ -406,6 +505,12 @@ export function generatePlan(
         why: t.why,
       };
     });
+    // Track the emitted long-run distance for next week's progression (like
+    // prevPrescribed). Only base/build/recovery weeks carry a run-long here.
+    const emittedLong = sessions.find((s) => longSlot && s.date === iso(wStart + longSlot.weekdayIdx * DAY) && s.discipline === "run");
+    if (goal && isRunRace && emittedLong && (p.phase === "base" || p.phase === "build" || p.phase === "recovery")) {
+      prevLongKm = emittedLong.durationHr * LONG_EASY_KMH;
+    }
 
     if (raceWeek) {
       const raceDow = (new Date(raceT).getUTCDay() + 6) % 7;
@@ -458,6 +563,18 @@ export function generatePlan(
     weeksSinceStart++;
   }
 
+  const projectedRaceCtl = raceMorning ? raceMorning.ctl : r1(ctl);
+
+  // Honest goal-vs-reachable gap (spec §4). The reachable figure is literally
+  // the plotted trajectory's race-morning CTL — computed under the rails, never
+  // by loosening them — so the surfaced gap matches the emitted curve. The
+  // finish is a load-limited BOUND (clamped no faster than the goal pace),
+  // never a hard prediction (§1.3): a naturally fast runner can beat it.
+  const goalGap =
+    goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
+      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length)
+      : undefined;
+
   return {
     meta: {
       generatedAt: new Date().toISOString(),
@@ -468,11 +585,42 @@ export function generatePlan(
       daysPerWeek: req.daysPerWeek,
       longDay: req.longDay,
       startCtl: r1(initialState.ctl),
-      projectedRaceCtl: raceMorning ? raceMorning.ctl : r1(ctl),
+      projectedRaceCtl,
       projectedRaceTsb: raceMorning ? raceMorning.tsb : r1(ctl - atl),
+      ...(goalGap ? { goalGap } : {}),
     },
     weeks,
   };
+}
+
+/** "H:MM" clock from seconds (rounds to the nearest minute, carries to hours). */
+function fmtClock(totalSec: number): string {
+  const totalMin = Math.round(totalSec / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
+}
+
+function buildGoalGap(
+  goalTime: string,
+  goal: GoalCtl,
+  reachableRaceDayCtl: number,
+  distanceKm: number,
+  goalSec: number,
+  startCtl: number,
+  planWeeks: number
+): NonNullable<Plan["meta"]["goalGap"]> {
+  const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
+  const reachablePeakCtl = r1(reachableRaceDayCtl);
+  const gapCtl = r1(Math.max(0, requiredPeakCtl - reachablePeakCtl));
+  // Load-limited finish from the reachable CTL, clamped no faster than goal.
+  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm));
+  const realisticFinish = fmtClock(finishSec);
+  const message =
+    gapCtl > 1
+      ? `Goal ${goalTime} implies a race-day CTL around ${Math.round(requiredPeakCtl)}. A safe progression from your current ~${Math.round(startCtl)} over ${planWeeks} weeks — held under the +20% weekly ramp, the −25 form floor, and your calf/tendon long-run limit — reaches about ${Math.round(reachablePeakCtl)}. That projects to roughly ${realisticFinish} here (load-limited; sharp legs can beat it). To close the ~${Math.round(gapCtl)}-CTL gap: extend the timeline (a 26–30 week build), treat ${realisticFinish} as the honest target for this race and ${goalTime} as a multi-season goal, or — only once the calf fully clears — ramp nearer (never above) the +20% ceiling. Re-test threshold pace mid-block to refine.`
+      : `Goal ${goalTime} (race-day CTL ~${Math.round(requiredPeakCtl)}) is within reach of your projected ~${Math.round(reachablePeakCtl)} — hold the ramp and the taper and it stays on the table (~${realisticFinish} load-limited).`;
+  return { goalTime, requiredPeakCtl, reachablePeakCtl, realisticFinish, gapCtl, message, loadLimited: true };
 }
 
 const mean = (a: number[]) => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);

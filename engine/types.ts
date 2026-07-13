@@ -32,6 +32,15 @@ export interface AthleteState {
    *  base/build weeks — regressing the pinned baselines once anchor-v2 became
    *  the default. Absent everywhere except a real plan's first week. */
   isFirstPlanWeek?: boolean;
+  /** Required peak (pre-taper) CTL implied by the plan's race goal
+   *  (engine/goal.ts goalCtlTarget). Set ONLY inside generatePlan's per-week
+   *  state; NEVER present on the backtest replay path (dataset features lack
+   *  it — engine/backtest.ts prescribes from records that have no such key),
+   *  so the goal periodization floor (engine/learned.ts) cannot fire there.
+   *  Mirrors isFirstPlanWeek's audited neutrality pattern — the goal target is
+   *  invisible to prescribeWeek(ex.features), keeping the pinned backtest
+   *  baselines byte-for-byte unchanged (taper-rules rule 7). */
+  goalPeakCtl?: number;
   /** Trailing discipline mix of executed load. */
   last4Shares: { swim: number; bike: number; run: number };
   /** Days from the week's start to the next A-race, if one is scheduled. */

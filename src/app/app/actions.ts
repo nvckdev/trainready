@@ -100,6 +100,10 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     // default "today" is UTC — always pass the athlete-local date explicitly.
     startDate: localToday(),
     anchorLegacy: !demonstratedCapacityAnchoring,
+    // Optional race-goal time. Free-text, parsed engine-side (engine/goal.ts):
+    // an empty/invalid value simply leaves the goal target inert. Round-trips
+    // through plan-io with the rest of the request, so Re-plan keeps the goal.
+    goalTime: String(formData.get("goalTime") || "") || undefined,
   };
   buildAndSave(request);
   revalidatePath("/app", "layout");

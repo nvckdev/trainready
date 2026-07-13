@@ -101,6 +101,23 @@ export default function PlanPage() {
       </div>
       <div className="rule mt-5 mb-8" />
 
+      {plan.meta.goalGap && (
+        <div className="border border-hairline mb-8 p-4">
+          <p className="label-mono text-bone-muted">Goal check</p>
+          <p className="mt-1 text-[15px] leading-relaxed text-bone">
+            {plan.meta.goalGap.goalTime} implies a race-day CTL around{" "}
+            {Math.round(plan.meta.goalGap.requiredPeakCtl)}; a safe climb from ~
+            {Math.round(plan.meta.startCtl)} reaches ~
+            {Math.round(plan.meta.goalGap.reachablePeakCtl)} → realistic finish ~
+            {plan.meta.goalGap.realisticFinish}{" "}
+            <span className="text-bone-faint">(load-limited)</span>.
+          </p>
+          <p className="mt-2 text-[13px] leading-relaxed text-bone-faint max-w-[72ch]">
+            {plan.meta.goalGap.message}
+          </p>
+        </div>
+      )}
+
       <SeasonExplainer phases={new Set(plan.weeks.map((w) => w.phase))} />
 
       <div className="space-y-3">

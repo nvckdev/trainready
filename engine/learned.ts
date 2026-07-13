@@ -170,6 +170,19 @@ const ANCHOR_V2_MAX_CUT = 0.65; // consecutive prescriptions may fall ≤ 35%
 // overload — still under the rule-4 ramp rails (see prescribeWeek).
 const ANCHOR_V2_BASE_FLOOR = 1.15; // × maintenance (CTL×7)
 const ANCHOR_V2_BASE_FLOOR_RUNWAY_DAYS = 98; // 14 weeks
+// Goal-backed periodization floor (docs/periodization-spec.md §2.1).
+// Fires ONLY when generatePlan threaded a race goal onto the state
+// (state.goalPeakCtl) — plan-only, absent on the backtest replay path. It
+// generalizes the week-1 base floor to every base/build week while CTL is
+// still short of the goal summit, pushing the week toward the +20% ramp
+// CEILING so CTL climbs (rule 4: build weeks may push toward the cap, never
+// exceed it). The calf/tendon protection is NOT an extra weekly haircut — it
+// lives in the long-run distance progression (engine/goal.ts, ≤ +2 km/wk,
+// 24 km cap) and the −25 TSB floor, which route the reference engine to a
+// recovery week before load ever gets dangerous. The floor is itself
+// min()-capped by the SAME rails as the base floor (trailing-month mean and
+// the smoothed ramp-cap reference), so it can never breach them.
+const ANCHOR_V2_GOAL_RAMP = ANCHOR_V2_RAMP_CAP; // +20% ramp ceiling (the rail)
 
 /** Newest non-zero executed/prescribed week — the classic ramp base. */
 function prevNonZeroWeek(state: AthleteState): number | undefined {
@@ -347,6 +360,34 @@ export class TaperV1 implements Engine {
         baseFloorLift = true;
       }
     }
+    // Goal-backed periodization floor (spec §2.1): plan-only (gated on the
+    // explicit goalPeakCtl signal — never set on the backtest path), base/build
+    // only, and only while CTL is still short of the goal summit. Aims at the
+    // injury-tempered ramp ceiling so every build week overloads at (just
+    // under) the rails and CTL rises. It is placed AFTER the week-1 base floor
+    // and BEFORE the WoW smoothing band + weekly-60 clamp, so all rule-4 rails
+    // still bind afterward. Recovery weeks keep their legacy cutback bounds, so
+    // the trajectory dips on cutbacks: rise, rise, rise, dip, rise → rising CTL.
+    // Auto-off once state.ctl ≥ goalPeakCtl (the climb flattens at the peak
+    // instead of overshooting past what the race needs).
+    let goalFloorLift = false;
+    if (
+      this.anchorV2 &&
+      (ref.phase === "base" || ref.phase === "build") &&
+      state.goalPeakCtl !== undefined && // plan-only — absent in the backtest
+      state.ctl < state.goalPeakCtl // stop overloading once at the summit
+    ) {
+      // Injury-tempered ramp ceiling: never above +13% over the trailing month
+      // or the smoothed ramp-cap reference (both ≤ the +20% rail), and never
+      // above the weekly TSS the goal summit itself implies (no overshoot).
+      const rampCeil = Math.min(trailingMean * ANCHOR_V2_GOAL_RAMP, rampCapRef(state) * ANCHOR_V2_GOAL_RAMP);
+      const goalWeekly = state.goalPeakCtl * 7;
+      const goalFloor = Math.min(rampCeil, goalWeekly);
+      if (goalFloor > value) {
+        value = goalFloor;
+        goalFloorLift = true;
+      }
+    }
     // Anchor-v2 week-over-week smoothing band: within a simulated plan (the
     // caller tells us its own previous prescription), consecutive targets
     // move at most +20% / −35%. The band deliberately does NOT apply to the
@@ -369,7 +410,7 @@ export class TaperV1 implements Engine {
       weekTss: Math.round(clamped),
       sessions: Math.min(13, Math.max(3, Math.round(clamped / 62))),
       shares: ref.shares,
-      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
+      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (goalFloorLift ? `, lifted to ${Math.round(clamped)} by the goal target (race needs peak CTL ~${Math.round(state.goalPeakCtl!)}; ramping at the +13% injury-capped ceiling)` : baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
     };
   }
 }

@@ -34,10 +34,12 @@ export function RaceDisciplineFields({
   fieldClass,
   defaultRaceType = "run-half",
   defaultMode = "running-only",
+  defaultGoalTime = "",
 }: {
   fieldClass: string;
   defaultRaceType?: string;
   defaultMode?: DisciplineMode;
+  defaultGoalTime?: string;
 }) {
   const [raceType, setRaceType] = useState(defaultRaceType);
   const [mode, setMode] = useState<string>(defaultMode);
@@ -75,6 +77,23 @@ export function RaceDisciplineFields({
           </select>
         </div>
       </div>
+      {!isTri(raceType) && (
+        <div>
+          <label htmlFor="goalTime" className="label-mono text-bone-faint block mb-2">
+            Goal finish time (optional)
+          </label>
+          <input
+            id="goalTime"
+            name="goalTime"
+            defaultValue={defaultGoalTime}
+            placeholder="1:24:00"
+            className={fieldClass}
+          />
+          <p className="label-mono text-bone-faint mt-2">
+            Periodizes the build toward the fitness this pace implies, and shows an honest gap check. Leave blank to plan from fitness alone.
+          </p>
+        </div>
+      )}
       {mismatch && (
         <p role="alert" className="border border-hairline px-3 py-2.5 text-[13px] leading-relaxed text-signal-bright">
           A triathlon distance trains three sports — this plan will still prescribe swim and
