@@ -1,4 +1,4 @@
-import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, stravaConfigured } from "@/lib/athlete-data";
+import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readPlan } from "@/lib/plan-io";
 import { briefForWeek } from "@/lib/week-insights";
 import { EmptyState, SessionCard, StatChip, WeekBriefStrip } from "@/components/app/bits";
@@ -72,7 +72,7 @@ export default async function TodayPage() {
   const pmc = getPmc();
   const latest = pmc[pmc.length - 1];
   const stored = readPlan();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
 
   const upcoming = stored
     ? stored.plan.weeks

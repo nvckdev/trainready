@@ -2,8 +2,8 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { generatePlan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
-import { getAthlete, getHistory, getLatestState } from "@/lib/athlete-data";
+import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
+import { getAthlete, getHistory, getLatestState, localToday } from "@/lib/athlete-data";
 import { readPlan, setSessionStatus, writePlan } from "@/lib/plan-io";
 
 function buildAndSave(request: PlanRequest): void {
@@ -12,7 +12,30 @@ function buildAndSave(request: PlanRequest): void {
   if (!athlete || !state) throw new Error("no corpus: import training history first");
   const history = getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss }));
   const plan = generatePlan(request, state, history, athlete.zones);
+  carryStatusForward(plan);
   writePlan({ request, plan });
+}
+
+/**
+ * Re-planning must not erase the athlete's log: copy done/skipped marks from
+ * the existing plan (if any) onto matching sessions in the new one. Match on
+ * (date, discipline) — titles change when durations shift, so never on title.
+ * Only past-or-today sessions carry status forward.
+ */
+function carryStatusForward(plan: Plan): void {
+  const prev = readPlan();
+  if (!prev) return;
+  const today = localToday();
+  const marked = new Map<string, "done" | "skipped">();
+  for (const w of prev.plan.weeks)
+    for (const s of w.sessions)
+      if (s.status && s.date <= today) marked.set(`${s.date}␟${s.discipline}`, s.status);
+  if (!marked.size) return;
+  for (const w of plan.weeks)
+    for (const s of w.sessions) {
+      const status = marked.get(`${s.date}␟${s.discipline}`);
+      if (status) s.status = status;
+    }
 }
 
 export async function generatePlanAction(formData: FormData): Promise<void> {
@@ -24,6 +47,9 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     longDay: (String(formData.get("longDay")) === "sunday" ? "sunday" : "saturday") as
       | "saturday"
       | "sunday",
+    // Engine layering keeps engine/plan.ts free of src/ imports, so its
+    // default "today" is UTC — always pass the athlete-local date explicitly.
+    startDate: localToday(),
   };
   buildAndSave(request);
   revalidatePath("/app", "layout");
@@ -34,7 +60,7 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
 export async function replanAction(): Promise<void> {
   const stored = readPlan();
   if (!stored) redirect("/app/start");
-  buildAndSave({ ...stored!.request, startDate: undefined });
+  buildAndSave({ ...stored!.request, startDate: localToday() });
   revalidatePath("/app", "layout");
   redirect("/app/plan");
 }

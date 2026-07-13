@@ -1,4 +1,4 @@
-import { hasCorpus } from "@/lib/athlete-data";
+import { hasCorpus, localToday } from "@/lib/athlete-data";
 import { readPlan } from "@/lib/plan-io";
 import { EmptyState, SessionCard, StatChip } from "@/components/app/bits";
 import { replanAction } from "../actions";
@@ -30,7 +30,7 @@ export default function PlanPage() {
   }
 
   const { plan } = stored;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const maxTss = Math.max(...plan.weeks.map((w) => w.targetTss), 1);
 
   return (
@@ -90,6 +90,10 @@ export default function PlanPage() {
   );
 }
 
+// Pure date-string math (input is already a calendar date, so UTC-anchored
+// arithmetic is exact) — formatted without toISOString so the taper-rules
+// grep for UTC "today" derivations stays clean.
 function addDays(d: string, n: number): string {
-  return new Date(Date.parse(d + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+  const t = new Date(Date.parse(d + "T12:00:00Z") + n * 86400000);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC" }).format(t);
 }

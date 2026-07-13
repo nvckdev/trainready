@@ -207,6 +207,37 @@ interface Slot {
   weight: number;
 }
 
+// Priority to KEEP when a template yields more slots than daysPerWeek
+// (highest first): long ride, long run, the quality run, bike work, then
+// fillers and swims. Applied generically so future template edits cannot
+// silently exceed the athlete's chosen days.
+const KEEP_PRIORITY: Kind[] = [
+  "bike-long",
+  "run-long",
+  "run-vo2",
+  "run-tempo",
+  "bike-threshold",
+  "bike-z2",
+  "run-strides",
+  "run-easy",
+  "swim-threshold",
+  "swim-endurance",
+];
+
+/** Drop lowest-priority slots until the week fits daysPerWeek. Survivors
+ * keep their original weekdayIdx — no redistribution. */
+function capToDays(slots: Slot[], daysPerWeek: number): Slot[] {
+  const out = [...slots];
+  while (out.length > daysPerWeek) {
+    let drop = 0;
+    for (let i = 1; i < out.length; i++) {
+      if (KEEP_PRIORITY.indexOf(out[i].kind) >= KEEP_PRIORITY.indexOf(out[drop].kind)) drop = i;
+    }
+    out.splice(drop, 1);
+  }
+  return out;
+}
+
 function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
   const longIdx = req.longDay === "saturday" ? 5 : 6;
   const otherWeekend = req.longDay === "saturday" ? 6 : 5;
@@ -222,7 +253,7 @@ function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
     if (req.daysPerWeek >= 5) slots.push({ weekdayIdx: 2, kind: "run-easy", weight: 0.8 });
     if (req.daysPerWeek >= 6) slots.push({ weekdayIdx: otherWeekend, kind: "run-easy", weight: 0.85 });
     if (req.daysPerWeek >= 7) slots.push({ weekdayIdx: 0, kind: "bike-z2", weight: 0.6 });
-    return slots;
+    return capToDays(slots, req.daysPerWeek);
   }
 
   const slots: Slot[] = [
@@ -234,7 +265,7 @@ function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
   ];
   if (req.daysPerWeek >= 6) slots.push({ weekdayIdx: 4, kind: "swim-endurance", weight: 0.55 });
   if (req.daysPerWeek >= 7) slots.push({ weekdayIdx: 0, kind: "run-easy", weight: 0.6 });
-  return slots;
+  return capToDays(slots, req.daysPerWeek);
 }
 
 // ——— date helpers ————————————————————————————————————————————
@@ -249,6 +280,12 @@ function mondayOnOrAfter(dateStr: string): number {
   return dow === 0 ? t : t + (7 - dow) * DAY;
 }
 
+function mondayOnOrBefore(dateStr: string): number {
+  const t = Date.parse(dateStr + "T12:00:00Z");
+  const dow = (new Date(t).getUTCDay() + 6) % 7;
+  return t - dow * DAY;
+}
+
 // ——— generation ————————————————————————————————————————————————
 
 export function generatePlan(
@@ -261,8 +298,13 @@ export function generatePlan(
   for (const h of history) engine.observe(h.state, h.actualTss);
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
-  const start = mondayOnOrAfter(req.startDate ?? iso(Date.now()));
-  if (raceT < start) throw new Error("race date is in the past");
+  const startDateStr = req.startDate ?? iso(Date.now());
+  if (req.raceDate < startDateStr) throw new Error("race date is in the past");
+  // Mid-week signup for a race that same week (e.g. Tue signup, Sat race):
+  // next Monday would overshoot the race, so anchor on the CURRENT week's
+  // Monday instead and filter pre-startDate sessions out of the emitted week.
+  let start = mondayOnOrAfter(startDateStr);
+  if (start > raceT) start = mondayOnOrBefore(startDateStr);
 
   let ctl = initialState.ctl;
   let atl = initialState.atl;
@@ -305,7 +347,15 @@ export function generatePlan(
       : slots;
 
     const totalWeight = active.reduce((s, x) => s + x.weight, 0) || 1;
-    const sessions: PlannedSessionOut[] = active.map((slot) => {
+    // No "long" session inside the final 6 days before the gun, even when the
+    // race falls early in a week (a Monday race makes the preceding taper week
+    // NOT a race week, yet its weekend long slots land the day before the
+    // start line). The dropped share is NOT redistributed — race proximity
+    // simply makes the week lighter, which is correct.
+    const placed = active.filter(
+      (s) => !(s.kind.includes("long") && wStart + s.weekdayIdx * DAY >= raceT - 6 * DAY)
+    );
+    const sessions: PlannedSessionOut[] = placed.map((slot) => {
       const t = TEMPLATES[slot.kind];
       const tss = (trainableTss * slot.weight) / totalWeight;
       let durationHr = tss / (t.intensity * t.intensity * 100);
@@ -351,12 +401,17 @@ export function generatePlan(
       atl = atl + (dayTss - atl) / 7;
     }
 
+    // A plan may start mid-week (see the mondayOnOrBefore fallback): the PMC
+    // simulation above still runs the full Monday-anchored week, but sessions
+    // dated before the start are never emitted — don't prescribe the past.
+    const emitted = sessions.filter((s) => s.date >= startDateStr);
+
     weeks.push({
       weekStart: iso(wStart),
       phase: p.phase,
-      targetTss: Math.round(sessions.reduce((s, x) => s + x.tss, 0)),
+      targetTss: Math.round(emitted.reduce((s, x) => s + x.tss, 0)),
       projected,
-      sessions,
+      sessions: emitted,
     });
 
     last8.push(p.weekTss);

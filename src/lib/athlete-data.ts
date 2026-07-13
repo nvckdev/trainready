@@ -22,6 +22,16 @@ export function hasCorpus(): boolean {
   return existsSync(p("datasets", "weekly-examples.jsonl"));
 }
 
+/**
+ * Today's date (YYYY-MM-DD) in the athlete's timezone, America/New_York.
+ * A UTC-derived "today" (toISOString-style) flips to tomorrow after ~8pm
+ * local. Every athlete-facing "today" must come from here (rule 16).
+ * en-CA locale formats as YYYY-MM-DD.
+ */
+export function localToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+}
+
 export function getAthlete(): AthleteProfile | null {
   try {
     const a = JSON.parse(readFileSync(p("raw", "athlete.json"), "utf8"));

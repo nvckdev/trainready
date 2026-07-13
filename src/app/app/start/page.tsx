@@ -1,4 +1,4 @@
-import { getLatestState, hasCorpus } from "@/lib/athlete-data";
+import { getLatestState, hasCorpus, localToday } from "@/lib/athlete-data";
 import { EmptyState } from "@/components/app/bits";
 import { generatePlanAction } from "../actions";
 
@@ -20,12 +20,14 @@ export default function StartPage() {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
   const state = getLatestState();
-  // Server component, force-dynamic: rendered per request, so "now" is stable
-  // for the lifetime of this render.
-  // eslint-disable-next-line react-hooks/purity
-  const now = Date.now();
-  const minDate = new Date(now + 21 * 86400000).toISOString().slice(0, 10);
-  const defaultDate = new Date(now + 112 * 86400000).toISOString().slice(0, 10);
+  // Server component, force-dynamic: rendered per request, so "today" is
+  // stable for the lifetime of this render. Anchored to the athlete's
+  // timezone (America/New_York), not UTC — see localToday.
+  const todayT = Date.parse(localToday() + "T12:00:00Z");
+  const fmtUtc = (t: number) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "UTC" }).format(new Date(t));
+  const minDate = fmtUtc(todayT + 21 * 86400000);
+  const defaultDate = fmtUtc(todayT + 112 * 86400000);
 
   const field =
     "w-full bg-field-sunken border border-hairline px-3 py-2.5 font-mono text-sm text-bone focus:border-bone outline-none";

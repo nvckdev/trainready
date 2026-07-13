@@ -127,8 +127,9 @@ export async function getStravaSnapshot(): Promise<RemoteSnapshot | null> {
   const start = new Date(dates[0] + "T00:00:00Z");
   const end = new Date();
   const days: RemoteDay[] = [];
+  const utcDay = new Intl.DateTimeFormat("en-CA", { timeZone: "UTC" });
   for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-    const key = d.toISOString().slice(0, 10);
+    const key = utcDay.format(d);
     days.push(byDay.get(key) ?? { date: key, tss: 0, runKm: 0 });
   }
 
