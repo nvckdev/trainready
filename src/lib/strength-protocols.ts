@@ -9,6 +9,73 @@ import { AREA_PRIORITY, INJURY_LABEL, activeInjuryAreas } from "./athlete-contex
  * week, injury-matched first, general durability as filler.
  */
 
+/* ——— Stateful protocol layer (docs/strength-module.md §1) ——————————
+ * A Protocol is an instantiated, schedulable strength session: day-level
+ * placement (strength-schedule.ts), completion state (strength-io.ts), and
+ * later per-exercise progression all hang off these types. The templated
+ * StrengthBlock library below remains the zero-state default path. */
+
+export type LoadRule =
+  | { kind: "bodyweight" } // progress via reps only
+  | { kind: "band"; ladder: string[]; index: number }
+  | { kind: "external"; unit: "kg"; increment: 2.5 };
+
+export interface ProtocolBlock {
+  /** Stable identity — progression state keys on `${protocolId}␟${exercise}`. */
+  exercise: string;
+  /** Prescribed sets at full (non-deload) dose. */
+  sets: number;
+  /** e.g. [6, 10]; top of range drives progression. */
+  repRange: [number, number];
+  /** e.g. "3-1-1" — eccentric emphasis carried over from template cues. */
+  tempo?: string;
+  loadRule: LoadRule;
+  /** 1–7; 7 only meaningful when the protocol is rehab. */
+  freqPerWeek: number;
+}
+
+export interface Protocol {
+  id: string; // slug, e.g. "rehab-calf"
+  name: string;
+  blocks: ProtocolBlock[];
+  /** Rehab protocols are daily-eligible and exempt from the 24h quality-run
+   *  constraint (docs/strength-module.md §3). */
+  rehab?: boolean;
+  /** Approximate session length, for display. */
+  minutes?: number;
+  /** One-line why, for display. */
+  why?: string;
+  /** Injury areas this protocol addresses; rehab protocols activate only
+   *  when one of these is on file. Empty/absent = general. */
+  targets?: InjuryArea[];
+  /** Strength-access levels this protocol suits; absent = any (not "none"). */
+  access?: StrengthAccess[];
+}
+
+export interface ProgressionState {
+  /** Keyed in storage by `${protocolId}␟${exercise}`. */
+  exercise: string;
+  currentLoad:
+    | { kind: "bodyweight"; addedReps: number }
+    | { kind: "band"; index: number }
+    | { kind: "external"; kg: number };
+  /** Consecutive completions with ALL sets at the TOP of repRange. */
+  topStreak: number;
+  /** Consecutive completions with any missed set. */
+  missStreak: number;
+  lastResult?: "top" | "made" | "missed";
+  updatedAt: string; // ISO timestamp, machine-facing
+}
+
+/** A strength completion is keyed (date, protocolId) — protocol ids are
+ *  unique, so the pair is unambiguous (same spirit as the plan's
+ *  (date, title) convention). */
+export interface StrengthCompletion {
+  date: string; // YYYY-MM-DD, athlete-local
+  protocolId: string;
+  results: Array<{ exercise: string; setsDone: number; allSetsAtTop: boolean }>;
+}
+
 export interface StrengthExercise {
   name: string;
   dose: string; // sets × reps / time

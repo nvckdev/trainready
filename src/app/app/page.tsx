@@ -2,8 +2,18 @@ import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stra
 import { readAthleteContext } from "@/lib/athlete-context";
 import { supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
-import { briefForWeek } from "@/lib/week-insights";
-import { EmptyState, SessionCard, StatChip, SupplementalCard, WeekBriefStrip } from "@/components/app/bits";
+import { readProtocolsState, isStrengthDone } from "@/lib/strength-io";
+import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
+import { briefForWeek, currentWeek } from "@/lib/week-insights";
+import {
+  DayStrengthChecklist,
+  EmptyState,
+  SessionCard,
+  StatChip,
+  SupplementalCard,
+  WeekBriefStrip,
+  type StrengthItemView,
+} from "@/components/app/bits";
 import { WeatherHint } from "@/components/app/weather-hint";
 
 export const dynamic = "force-dynamic";
@@ -89,9 +99,34 @@ export default async function TodayPage() {
     : null;
   const weekBrief = stored ? briefForWeek(stored.plan, today, stored.plan.meta.raceName) : null;
   const tsb = latest ? latest.tsb : null;
-  // Supplemental strength — driven by intake answers in athlete-context.json,
-  // empty when no context is recorded or strength access is "none".
-  const supplemental = supplementalForContext(readAthleteContext());
+
+  // Strength layer — scheduled per-day around the plan week when protocols
+  // are active (intake context + optional protocols-state.json), falling
+  // back to the stateless weekly SupplementalCard otherwise. Both render
+  // nothing without recorded context; strength never enters plan.json.
+  const ctx = readAthleteContext();
+  const strengthState = readProtocolsState();
+  const protocols = activeProtocols(ctx, strengthState);
+  const found = stored ? currentWeek(stored.plan, today) : null;
+  let strengthItems: StrengthItemView[] = [];
+  let strengthNotes: string[] = [];
+  if (found && protocols.length > 0) {
+    const schedule = scheduleStrengthWeek(
+      found.week,
+      stored!.plan.weeks[found.index + 1] ?? null,
+      protocols,
+      today
+    );
+    strengthItems = schedule.days.map((d) => ({
+      date: d.date,
+      weekday: d.weekday,
+      protocol: d.protocol,
+      deload: d.deload,
+      done: isStrengthDone(strengthState, d.date, d.protocol.id),
+    }));
+    strengthNotes = schedule.notes;
+  }
+  const supplemental = strengthItems.length > 0 ? [] : supplementalForContext(ctx);
 
   return (
     <div>
@@ -138,6 +173,11 @@ export default async function TodayPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+      {strengthItems.length > 0 && (
+        <div className="mt-8">
+          <DayStrengthChecklist items={strengthItems} notes={strengthNotes} today={today} />
         </div>
       )}
       {supplemental.length > 0 && (

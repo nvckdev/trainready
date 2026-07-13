@@ -9,7 +9,7 @@ import type { Plan, PlannedSessionOut, PlanWeek } from "../../engine/plan.ts";
 /** Rough km estimate for a run session: duration at zone-blended speed.
  *  Quality sessions blend tempo work with easy running; easy/long days sit
  *  at easy pace. Labeled an estimate wherever shown. */
-const QUALITY = /tempo|interval|threshold|vo2|strides/i;
+export const QUALITY = /tempo|interval|threshold|vo2|strides/i;
 export function estimateRunKm(s: PlannedSessionOut): number {
   if (s.discipline !== "run") return 0;
   const kmh = QUALITY.test(s.title) ? 12.4 : 11.6; // ~4:50–5:10/km blended

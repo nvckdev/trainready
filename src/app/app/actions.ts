@@ -13,6 +13,8 @@ import {
   writeIntake,
   type IntakeData,
 } from "@/lib/athlete-context";
+import { setStrengthDone } from "@/lib/strength-io";
+import { SEED_PROTOCOLS } from "@/lib/strength-seed";
 
 function buildAndSave(request: PlanRequest): void {
   const athlete = getAthlete();
@@ -90,6 +92,30 @@ export async function replanAction(): Promise<void> {
   buildAndSave({ ...stored!.request, startDate: localToday() });
   revalidatePath("/app", "layout");
   redirect("/app/plan");
+}
+
+/**
+ * Done-toggle for a scheduled strength day, keyed (date, protocolId).
+ * Persists to data/app/protocols-state.json (gitignored) via the
+ * strength-io gateway. Input is untrusted: the date must be a calendar
+ * date and the protocol must exist in the library, else this is a no-op.
+ * A plain toggle records every block's sets as done at prescribed dose
+ * ("made", not "top") — per-set logging arrives with progression.
+ */
+export async function toggleStrengthDoneAction(formData: FormData): Promise<void> {
+  const date = String(formData.get("date") || "");
+  const protocolId = String(formData.get("protocolId") || "");
+  const markDone = String(formData.get("current") || "") !== "done";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  const protocol = SEED_PROTOCOLS.find((p) => p.id === protocolId);
+  if (!protocol) return;
+  setStrengthDone(
+    date,
+    protocolId,
+    markDone,
+    protocol.blocks.map((b) => ({ exercise: b.exercise, setsDone: b.sets, allSetsAtTop: false }))
+  );
+  revalidatePath("/app", "layout");
 }
 
 export async function toggleSessionAction(formData: FormData): Promise<void> {

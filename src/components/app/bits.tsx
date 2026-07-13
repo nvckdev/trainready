@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { SERIES } from "./charts";
 import type { PlannedSessionOut } from "../../../engine/plan.ts";
-import { toggleSessionAction } from "@/app/app/actions";
+import { toggleSessionAction, toggleStrengthDoneAction } from "@/app/app/actions";
 import { sessionAdjustments, type WeekBrief } from "@/lib/week-insights";
-import type { SelectedBlock } from "@/lib/strength-protocols";
+import type { Protocol, ProtocolBlock, SelectedBlock } from "@/lib/strength-protocols";
+import { deloadSets } from "@/lib/strength-schedule";
 
 export function StatChip({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
@@ -143,6 +144,136 @@ export function SupplementalCard({ blocks }: { blocks: SelectedBlock[] }) {
       <p className="px-4 pb-3 label-mono text-bone-faint">
         Twice this week, any easy day. These sit outside the engine plan and add no training load.
       </p>
+    </div>
+  );
+}
+
+/* ——— Scheduled strength checklist ——————————————————————————— */
+
+/** One scheduled strength day, ready to render (done-state resolved). */
+export interface StrengthItemView {
+  date: string;
+  weekday: string;
+  protocol: Protocol;
+  deload: boolean;
+  done: boolean;
+}
+
+function blockDose(b: ProtocolBlock, deload: boolean): string {
+  const sets = deload ? deloadSets(b.sets) : b.sets;
+  const [lo, hi] = b.repRange;
+  return `${sets}×${lo === hi ? lo : `${lo}–${hi}`}`;
+}
+
+/** Not a plan session: no discipline dot — a hairline-bordered "S" glyph in
+ *  bone-muted marks strength rows as layered outside the engine plan. */
+function StrengthGlyph() {
+  return (
+    <span
+      className="w-5 h-5 border border-hairline flex items-center justify-center label-mono text-bone-muted shrink-0"
+      aria-hidden="true"
+    >
+      S
+    </span>
+  );
+}
+
+/**
+ * This week's scheduled strength days, placed around the engine plan by
+ * strength-schedule.ts — never written into plan.json, never counted as
+ * load. Today's session shows its full prescription; the rest of the week
+ * renders as compact rows. Callers render nothing when `items` is empty.
+ */
+export function DayStrengthChecklist({
+  items,
+  notes,
+  today,
+}: {
+  items: StrengthItemView[];
+  notes: string[];
+  today: string;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="border border-hairline">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
+        <span className="label-mono text-bone-faint">Strength · this week</span>
+        <span className="label-mono text-bone-faint">outside the plan · no TSS</span>
+      </div>
+      {items.map((item) => {
+        const expanded = item.date === today;
+        const { protocol } = item;
+        return (
+          <div
+            key={item.date + protocol.id}
+            className={`border-b border-hairline last:border-b-0 ${item.done ? "opacity-55" : ""}`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <StrengthGlyph />
+                <span className="label-mono text-bone-faint">
+                  {expanded ? "Today" : item.weekday} {item.date.slice(5)}
+                </span>
+                <span className={`font-semibold ${item.done ? "line-through" : ""}`}>
+                  {protocol.name}
+                </span>
+                {protocol.rehab && <span className="label-mono text-bone-faint">rehab · daily</span>}
+                {item.deload && (
+                  <span className="label-mono text-signal-bright">race week · sets halved</span>
+                )}
+              </div>
+              <div className="flex items-center gap-4">
+                {protocol.minutes && (
+                  <span className="font-mono text-sm tabular text-bone-muted">
+                    ~{protocol.minutes} min
+                  </span>
+                )}
+                <form action={toggleStrengthDoneAction}>
+                  <input type="hidden" name="date" value={item.date} />
+                  <input type="hidden" name="protocolId" value={protocol.id} />
+                  <input type="hidden" name="current" value={item.done ? "done" : ""} />
+                  <button className="label-mono border border-hairline px-3 py-1.5 hover:border-bone transition-colors duration-150">
+                    {item.done ? "Undo" : "Done"}
+                  </button>
+                </form>
+              </div>
+            </div>
+            {expanded && (
+              <div className="px-4 pb-4">
+                <ul className="space-y-1.5">
+                  {protocol.blocks.map((b) => (
+                    <li key={b.exercise} className="flex items-baseline justify-between gap-3 text-[13px]">
+                      <span className="text-bone-muted">
+                        {b.exercise}
+                        {b.tempo && <span className="text-bone-faint"> — {b.tempo}</span>}
+                      </span>
+                      <span className="font-mono tabular text-bone shrink-0">
+                        {blockDose(b, item.deload)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {protocol.why && (
+                  <div className="mt-3 pt-3 border-t border-hairline">
+                    <span className="label-mono text-signal-bright">Why</span>
+                    <p className="text-[12.5px] leading-relaxed text-bone-muted mt-1">{protocol.why}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div className="px-4 py-3 space-y-1 border-t border-hairline">
+        {notes.map((n) => (
+          <p key={n} className="label-mono text-bone-faint">
+            {n}
+          </p>
+        ))}
+        <p className="label-mono text-bone-faint">
+          Placed around your plan — never within 24h of quality or racing. Adds no training load.
+        </p>
+      </div>
     </div>
   );
 }
