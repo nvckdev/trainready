@@ -16,7 +16,7 @@ import { QUALITY } from "./week-insights";
 /* ——— date helpers (calendar arithmetic on athlete-local YYYY-MM-DD
  *     strings; "today" itself always arrives from localToday()) ——— */
 
-function addDays(date: string, n: number): string {
+export function addDays(date: string, n: number): string {
   const t = Date.parse(`${date}T00:00:00Z`) + n * 86400000;
   return new Date(t).toISOString().slice(0, 10);
 }

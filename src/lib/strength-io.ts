@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ProgressionState, StrengthCompletion } from "./strength-protocols";
+import type { PainEntry, ProgressionState, StrengthCompletion } from "./strength-protocols";
 
 /**
  * Strength protocol state gateway (data/app/protocols-state.json, sibling of
@@ -64,4 +64,36 @@ export function isStrengthDone(
   protocolId: string
 ): boolean {
   return !!state?.completions.some((c) => c.date === date && c.protocolId === protocolId);
+}
+
+/* ——— Pain log (data/app/pain-log.json) ————————————————————————
+ * Pain logs are HEALTH DATA (taper-rules 13): they exist only inside the
+ * gitignored data/ tree and never enter git. Same gateway contract as
+ * above — absent or corrupt file reads as an empty log. */
+
+const PAIN_PATH = join(process.cwd(), "data", "app", "pain-log.json");
+
+export function readPainLog(): PainEntry[] {
+  try {
+    if (!existsSync(PAIN_PATH)) return [];
+    const parsed = JSON.parse(readFileSync(PAIN_PATH, "utf8"));
+    if (!parsed || !Array.isArray(parsed.entries)) return [];
+    return (parsed.entries as PainEntry[]).filter(
+      (e) => typeof e?.date === "string" && typeof e?.score0to10 === "number"
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Append one entry to the time series. One entry per (date, region,
+ *  context): a re-log the same day overwrites (docs/strength-module.md §1). */
+export function logPain(entry: PainEntry): void {
+  const entries = readPainLog().filter(
+    (e) => !(e.date === entry.date && e.region === entry.region && e.context === entry.context)
+  );
+  entries.push(entry);
+  entries.sort((a, b) => a.date.localeCompare(b.date));
+  mkdirSync(dirname(PAIN_PATH), { recursive: true });
+  writeFileSync(PAIN_PATH, JSON.stringify({ entries }, null, 1));
 }

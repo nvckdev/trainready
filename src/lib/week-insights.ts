@@ -105,6 +105,40 @@ export function briefForWeek(plan: Plan, today: string, raceName: string): WeekB
   };
 }
 
+/* ---------------- Pain-guarded quality → easy conversion ----------------- */
+
+/** Easy-effort IF per discipline (matches the engine's easy templates:
+ *  run-easy 0.67, bike-z2 0.65, swim-endurance 0.60). Display math only —
+ *  the engine itself is never consulted or altered here. */
+const EASY_IF: Record<string, number> = { run: 0.67, bike: 0.65, swim: 0.6 };
+
+export interface EasedSession {
+  title: string;
+  structure: string;
+  why: string;
+  tss: number;
+}
+
+/**
+ * What the session becomes if the athlete accepts the pain-guard suggestion:
+ * same date, same duration, all intensity removed. Returns null for anything
+ * that isn't a quality session (races are untouchable). The new title never
+ * matches QUALITY, so the suggestion self-resolves once accepted, and stays
+ * unique per date via plan-io's retitleSession.
+ */
+export function easedVersion(s: PlannedSessionOut): EasedSession | null {
+  if (s.discipline === "race" || s.discipline === "rest") return null;
+  if (!QUALITY.test(s.title)) return null;
+  const m = Math.round((s.durationHr * 60) / 5) * 5;
+  const intensity = EASY_IF[s.discipline] ?? 0.67;
+  return {
+    title: `Easy ${s.discipline} ${m} · converted`,
+    structure: `${m} min entirely easy — conversational effort, nothing hard.\nConverted from "${s.title}" while pain is surfacing.\nStop if pain sharpens beyond 3/10 during the session.`,
+    why: "Quality converted to easy while pain surfaces: the aerobic stimulus survives, the tissue risk doesn't.",
+    tss: Math.round(s.durationHr * intensity * intensity * 100),
+  };
+}
+
 /* ---------------- Feeling-based session adjustments ---------------- */
 
 export interface Adjustment {

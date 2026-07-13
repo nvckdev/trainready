@@ -1,9 +1,24 @@
 import Link from "next/link";
 import { SERIES } from "./charts";
 import type { PlannedSessionOut } from "../../../engine/plan.ts";
-import { toggleSessionAction, toggleStrengthDoneAction } from "@/app/app/actions";
+import {
+  easeQualitySessionAction,
+  logPainAction,
+  toggleSessionAction,
+  toggleStrengthDoneAction,
+} from "@/app/app/actions";
 import { sessionAdjustments, type WeekBrief } from "@/lib/week-insights";
-import type { Protocol, ProtocolBlock, SelectedBlock } from "@/lib/strength-protocols";
+import {
+  PAIN_CONTEXTS,
+  PAIN_CONTEXT_LABEL,
+  PAIN_REGIONS,
+  type PainEntry,
+  type Protocol,
+  type ProtocolBlock,
+  type SelectedBlock,
+} from "@/lib/strength-protocols";
+import { INJURY_LABEL } from "@/lib/athlete-context";
+import type { PainAlert } from "@/lib/pain-rules";
 import { deloadSets } from "@/lib/strength-schedule";
 
 export function StatChip({ label, value, unit }: { label: string; value: string; unit?: string }) {
@@ -274,6 +289,144 @@ export function DayStrengthChecklist({
           Placed around your plan — never within 24h of quality or racing. Adds no training load.
         </p>
       </div>
+    </div>
+  );
+}
+
+/* ——— Pain tracker ————————————————————————————————————————— */
+
+/** The pain-guard suggestion, ready to render: one upcoming quality
+ *  session and what it becomes if the athlete accepts. */
+export interface EaseSuggestionView {
+  date: string;
+  weekday: string;
+  title: string;
+  easedTitle: string;
+}
+
+/**
+ * Pain surface-rule banner (docs/strength-module.md §4): plain-language
+ * alerts, a load-reduction + physio recommendation, and — when an upcoming
+ * quality session exists — a one-click convert-to-easy suggestion. Same
+ * visual family as WeekBriefStrip: bone tokens on hairline borders, never
+ * a series color. Callers render nothing when `alerts` is empty.
+ */
+export function PainAlertBanner({
+  alerts,
+  suggestion,
+}: {
+  alerts: PainAlert[];
+  suggestion: EaseSuggestionView | null;
+}) {
+  if (alerts.length === 0) return null;
+  return (
+    <div className="border border-hairline">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
+        <span className="label-mono text-signal-bright">Pain surfacing</span>
+        <span className="label-mono text-bone-faint">athlete-reported · not a diagnosis</span>
+      </div>
+      <div className="px-4 py-4 space-y-2">
+        {alerts.map((a) => (
+          <p key={a.region + a.rule} className="text-[13px] leading-relaxed text-bone-muted">
+            {a.detail}
+          </p>
+        ))}
+        <p className="text-[13px] leading-relaxed text-bone max-w-[68ch]">
+          Reduce load around the affected tissue this week — ease intensity before volume.
+          If it persists, book a physio: Taper explains training, it doesn&apos;t diagnose pain.
+        </p>
+      </div>
+      {suggestion && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-hairline">
+          <p className="text-[13px] leading-relaxed text-bone-muted">
+            Suggested: convert your next quality session,{" "}
+            <span className="text-bone font-semibold">{suggestion.title}</span> ({suggestion.weekday}{" "}
+            {suggestion.date.slice(5)}), to <span className="text-bone">{suggestion.easedTitle}</span>{" "}
+            — same duration, easy effort only.
+          </p>
+          <form action={easeQualitySessionAction}>
+            <input type="hidden" name="date" value={suggestion.date} />
+            <input type="hidden" name="title" value={suggestion.title} />
+            <button className="label-mono border border-hairline px-3 py-1.5 hover:border-bone transition-colors duration-150 shrink-0">
+              Make it easy
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const painField =
+  "bg-field-sunken border border-hairline px-3 py-2 font-mono text-sm text-bone focus:border-bone outline-none";
+
+/**
+ * Daily pain quick-entry (region / score / context). Writes through
+ * logPainAction to data/app/pain-log.json — health data, gitignored,
+ * never leaves this machine. Today's entries render back as confirmation;
+ * re-logging the same region + context overwrites.
+ */
+export function PainQuickEntry({ todays }: { todays: PainEntry[] }) {
+  return (
+    <div className="border border-hairline">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
+        <span className="label-mono text-bone-faint">Pain check-in · today</span>
+        <span className="label-mono text-bone-faint">health data · stays on this machine</span>
+      </div>
+      <form action={logPainAction} className="px-4 py-4 flex flex-wrap items-end gap-4">
+        <div>
+          <label htmlFor="pain-region" className="label-mono text-bone-faint block mb-2">
+            Region
+          </label>
+          <select id="pain-region" name="region" className={painField} defaultValue={PAIN_REGIONS[0]}>
+            {PAIN_REGIONS.map((r) => (
+              <option key={r} value={r}>
+                {INJURY_LABEL[r]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="pain-score" className="label-mono text-bone-faint block mb-2">
+            Score · 0–10
+          </label>
+          <select id="pain-score" name="score" className={painField} defaultValue="0">
+            {Array.from({ length: 11 }, (_, i) => (
+              <option key={i} value={i}>
+                {i}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="pain-context" className="label-mono text-bone-faint block mb-2">
+            When
+          </label>
+          <select id="pain-context" name="context" className={painField} defaultValue="after-session">
+            {PAIN_CONTEXTS.map((c) => (
+              <option key={c} value={c}>
+                {PAIN_CONTEXT_LABEL[c]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button className="label-mono border border-hairline px-4 py-2.5 hover:border-bone transition-colors duration-150">
+          Log
+        </button>
+      </form>
+      {todays.length > 0 && (
+        <div className="px-4 pb-3 flex flex-wrap gap-x-5 gap-y-1">
+          {todays.map((e) => (
+            <span key={e.region + e.context} className="label-mono text-bone-faint">
+              {INJURY_LABEL[e.region]} {e.score0to10}/10 · {PAIN_CONTEXT_LABEL[e.context].toLowerCase()}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="px-4 pb-3 label-mono text-bone-faint">
+        0 = nothing, 10 = worst imaginable. Three hard days in a row, pain at rest, or a rising week
+        raises a flag above — nothing here changes your plan by itself.
+      </p>
     </div>
   );
 }

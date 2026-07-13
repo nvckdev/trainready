@@ -1,5 +1,5 @@
 import type { InjuryArea, StrengthAccess, AthleteContext } from "./athlete-context";
-import { AREA_PRIORITY, INJURY_LABEL, activeInjuryAreas } from "./athlete-context";
+import { AREA_PRIORITY, INJURY_AREAS, INJURY_LABEL, activeInjuryAreas } from "./athlete-context";
 
 /**
  * Supplemental strength & injury-prevention protocols. These are templated
@@ -65,6 +65,49 @@ export interface ProgressionState {
   missStreak: number;
   lastResult?: "top" | "made" | "missed";
   updatedAt: string; // ISO timestamp, machine-facing
+}
+
+/* ——— Pain log (docs/strength-module.md §1, §4) ——————————————————
+ * Pain logs are HEALTH DATA: they live only under data/ (gitignored) and
+ * are read/written exclusively through the strength-io.ts gateway. Types
+ * and untrusted-input parsers live here; surface rules in pain-rules.ts. */
+
+/** Pain regions reuse the athlete-context injury vocabulary. */
+export const PAIN_REGIONS = INJURY_AREAS;
+export type PainRegion = InjuryArea;
+
+export const PAIN_CONTEXTS = ["at-rest", "during-session", "after-session", "morning"] as const;
+export type PainContext = (typeof PAIN_CONTEXTS)[number];
+
+export const PAIN_CONTEXT_LABEL: Record<PainContext, string> = {
+  "at-rest": "At rest",
+  "during-session": "During session",
+  "after-session": "After session",
+  morning: "Morning",
+};
+
+export interface PainEntry {
+  /** YYYY-MM-DD, athlete-local (localToday — never a UTC "today"). */
+  date: string;
+  region: PainRegion;
+  /** Integer 0–10, NRS scale. */
+  score0to10: number;
+  context: PainContext;
+}
+
+// Server action input is untrusted — same pattern as athlete-context.ts.
+export function parsePainRegion(v: unknown): PainRegion | null {
+  return PAIN_REGIONS.includes(v as PainRegion) ? (v as PainRegion) : null;
+}
+
+export function parsePainScore(v: unknown): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(10, Math.max(0, Math.round(n)));
+}
+
+export function parsePainContext(v: unknown): PainContext {
+  return PAIN_CONTEXTS.includes(v as PainContext) ? (v as PainContext) : "after-session";
 }
 
 /** A strength completion is keyed (date, protocolId) — protocol ids are

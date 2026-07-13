@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
 import { getAthlete, getHistory, getLatestState, localToday } from "@/lib/athlete-data";
-import { readPlan, setSessionStatus, writePlan } from "@/lib/plan-io";
+import { readPlan, retitleSession, setSessionStatus, writePlan } from "@/lib/plan-io";
 import {
   parseDisciplineMode,
   parseExperienceLevel,
@@ -13,8 +13,15 @@ import {
   writeIntake,
   type IntakeData,
 } from "@/lib/athlete-context";
-import { setStrengthDone } from "@/lib/strength-io";
+import { logPain, readPainLog, setStrengthDone } from "@/lib/strength-io";
 import { SEED_PROTOCOLS } from "@/lib/strength-seed";
+import {
+  parsePainContext,
+  parsePainRegion,
+  parsePainScore,
+} from "@/lib/strength-protocols";
+import { surfaceAlerts } from "@/lib/pain-rules";
+import { easedVersion } from "@/lib/week-insights";
 
 function buildAndSave(request: PlanRequest): void {
   const athlete = getAthlete();
@@ -115,6 +122,50 @@ export async function toggleStrengthDoneAction(formData: FormData): Promise<void
     markDone,
     protocol.blocks.map((b) => ({ exercise: b.exercise, setsDone: b.sets, allSetsAtTop: false }))
   );
+  revalidatePath("/app", "layout");
+}
+
+/**
+ * Daily pain check-in, appended to data/app/pain-log.json (gitignored —
+ * pain logs are health data and never enter git). Input is untrusted: an
+ * unknown region is a no-op, the score clamps to an integer 0–10, and the
+ * date is always the athlete-local today — the form never supplies it.
+ * One entry per (date, region, context); a re-log overwrites.
+ */
+export async function logPainAction(formData: FormData): Promise<void> {
+  const region = parsePainRegion(formData.get("region"));
+  const score = parsePainScore(formData.get("score"));
+  if (!region || score === null) return;
+  logPain({
+    date: localToday(),
+    region,
+    score0to10: score,
+    context: parsePainContext(formData.get("context")),
+  });
+  revalidatePath("/app", "layout");
+}
+
+/**
+ * One-click accept of the pain-guard suggestion: convert an upcoming
+ * quality session to easy at the same duration, via the (date, title)-keyed
+ * plan edit (retitleSession — same matching convention as
+ * toggleSessionAction/setSessionStatus). Guarded server-side: the session
+ * must exist, still be quality, sit today-or-later, and a pain alert must
+ * actually be surfacing — a stale or forged form is a no-op.
+ */
+export async function easeQualitySessionAction(formData: FormData): Promise<void> {
+  const date = String(formData.get("date") || "");
+  const title = String(formData.get("title") || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < localToday()) return;
+  const stored = readPlan();
+  const session = stored?.plan.weeks
+    .flatMap((w) => w.sessions)
+    .find((s) => s.date === date && s.title === title);
+  if (!session || session.status === "done") return;
+  const eased = easedVersion(session);
+  if (!eased) return;
+  if (surfaceAlerts(readPainLog(), localToday()).length === 0) return;
+  retitleSession(date, title, eased);
   revalidatePath("/app", "layout");
 }
 

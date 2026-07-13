@@ -2,16 +2,21 @@ import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stra
 import { readAthleteContext } from "@/lib/athlete-context";
 import { supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
-import { readProtocolsState, isStrengthDone } from "@/lib/strength-io";
+import { readPainLog, readProtocolsState, isStrengthDone } from "@/lib/strength-io";
 import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
-import { briefForWeek, currentWeek } from "@/lib/week-insights";
+import { surfaceAlerts } from "@/lib/pain-rules";
+import { INJURY_LABEL } from "@/lib/athlete-context";
+import { QUALITY, briefForWeek, currentWeek, easedVersion } from "@/lib/week-insights";
 import {
   DayStrengthChecklist,
   EmptyState,
+  PainAlertBanner,
+  PainQuickEntry,
   SessionCard,
   StatChip,
   SupplementalCard,
   WeekBriefStrip,
+  type EaseSuggestionView,
   type StrengthItemView,
 } from "@/components/app/bits";
 import { WeatherHint } from "@/components/app/weather-hint";
@@ -100,6 +105,37 @@ export default async function TodayPage() {
   const weekBrief = stored ? briefForWeek(stored.plan, today, stored.plan.meta.raceName) : null;
   const tsb = latest ? latest.tsb : null;
 
+  // Pain layer — the log is health data (data/app/pain-log.json, gitignored)
+  // read through the strength-io gateway. Surface rules are pure functions;
+  // their consequences are advisory: a banner, a convert-to-easy suggestion
+  // on the next quality session, and a scheduler hold. The engine's plan is
+  // never altered without the athlete's click.
+  const painEntries = readPainLog();
+  const painAlerts = surfaceAlerts(painEntries, today);
+  const todaysPain = painEntries.filter((e) => e.date === today);
+  let easeSuggestion: EaseSuggestionView | null = null;
+  if (painAlerts.length > 0 && stored) {
+    const nextQuality = stored.plan.weeks
+      .flatMap((w) => w.sessions)
+      .find(
+        (s) =>
+          s.date >= today &&
+          s.status !== "done" &&
+          s.discipline !== "race" &&
+          s.discipline !== "rest" &&
+          QUALITY.test(s.title)
+      );
+    const eased = nextQuality ? easedVersion(nextQuality) : null;
+    if (nextQuality && eased) {
+      easeSuggestion = {
+        date: nextQuality.date,
+        weekday: nextQuality.weekday,
+        title: nextQuality.title,
+        easedTitle: eased.title,
+      };
+    }
+  }
+
   // Strength layer — scheduled per-day around the plan week when protocols
   // are active (intake context + optional protocols-state.json), falling
   // back to the stateless weekly SupplementalCard otherwise. Both render
@@ -107,14 +143,27 @@ export default async function TodayPage() {
   const ctx = readAthleteContext();
   const strengthState = readProtocolsState();
   const protocols = activeProtocols(ctx, strengthState);
+  // Pain hold (§4): non-rehab protocols targeting an alerted region skip
+  // scheduling until the rule clears; rehab work stays daily-eligible.
+  const alertRegions = new Set(painAlerts.map((a) => a.region));
+  const held = protocols.filter(
+    (p) => !p.rehab && (p.targets ?? []).some((t) => alertRegions.has(t))
+  );
+  const schedulable = protocols.filter((p) => !held.includes(p));
   const found = stored ? currentWeek(stored.plan, today) : null;
   let strengthItems: StrengthItemView[] = [];
-  let strengthNotes: string[] = [];
-  if (found && protocols.length > 0) {
+  let strengthNotes: string[] = held.map(
+    (p) =>
+      `${p.name} on hold — pain surfacing in ${(p.targets ?? [])
+        .filter((t) => alertRegions.has(t))
+        .map((t) => INJURY_LABEL[t].toLowerCase())
+        .join(", ")}; let the tissue settle`
+  );
+  if (found && schedulable.length > 0) {
     const schedule = scheduleStrengthWeek(
       found.week,
       stored!.plan.weeks[found.index + 1] ?? null,
-      protocols,
+      schedulable,
       today
     );
     strengthItems = schedule.days.map((d) => ({
@@ -124,9 +173,11 @@ export default async function TodayPage() {
       deload: d.deload,
       done: isStrengthDone(strengthState, d.date, d.protocol.id),
     }));
-    strengthNotes = schedule.notes;
+    strengthNotes = [...strengthNotes, ...schedule.notes];
   }
-  const supplemental = strengthItems.length > 0 ? [] : supplementalForContext(ctx);
+  // Fall back to the stateless weekly card only when the protocol layer is
+  // inactive — never when it is active but pain-held (the hold IS the message).
+  const supplemental = protocols.length > 0 && found ? [] : supplementalForContext(ctx);
 
   return (
     <div>
@@ -141,6 +192,12 @@ export default async function TodayPage() {
       </div>
       <WeatherHint />
       <div className="rule mt-5 mb-8" />
+
+      {painAlerts.length > 0 && (
+        <div className="mb-8">
+          <PainAlertBanner alerts={painAlerts} suggestion={easeSuggestion} />
+        </div>
+      )}
 
       {!stored ? (
         <EmptyState
@@ -185,6 +242,9 @@ export default async function TodayPage() {
           <SupplementalCard blocks={supplemental} />
         </div>
       )}
+      <div className="mt-8">
+        <PainQuickEntry todays={todaysPain} />
+      </div>
     </div>
   );
 }

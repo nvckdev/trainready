@@ -122,6 +122,100 @@ export function PmcChart({ rows }: { rows: PmcRow[] }) {
   );
 }
 
+/** One week of the pain-vs-load comparison: engine-side weekly TSS (null =
+ *  week beyond the derived corpus) against athlete-reported pain 7d average
+ *  (null = no entries that week — never coerced to zero). */
+export interface PainLoadRow {
+  weekStart: string;
+  tss: number | null;
+  pain: number | null;
+}
+
+/**
+ * Pain trend (7-day average per week, 0–10 NRS) against weekly training
+ * load. Colors reuse the validated slots (taper-rules 14): TSS bars wear
+ * slot 1 (the load/CTL color), the pain line wears slot 4 ("other") — no
+ * new hex, identity from the swatch labels, text in text tokens.
+ */
+export function PainVsLoadChart({ rows }: { rows: PainLoadRow[] }) {
+  const n = Math.max(1, rows.length);
+  const maxTss = Math.max(...rows.map((r) => r.tss ?? 0), 10) * 1.05;
+  const innerW = W - PAD.l - PAD.r;
+  const step = innerW / n;
+  const barW = Math.max(4, step * 0.55);
+  const yTss = (v: number) => PAD.t + ((maxTss - v) / maxTss) * (H - PAD.t - PAD.b);
+  const yPain = (v: number) => PAD.t + ((10 - v) / 10) * (H - PAD.t - PAD.b);
+  const cx = (i: number) => PAD.l + i * step + step / 2;
+
+  const painPts = rows
+    .map((r, i) => (r.pain === null ? null : ([cx(i), yPain(r.pain), r.pain] as const)))
+    .filter((p): p is readonly [number, number, number] => p !== null);
+
+  return (
+    <figure>
+      <div className="flex items-center gap-5 mb-2">
+        <span className="flex items-center gap-2 label-mono text-bone-muted">
+          <span className="w-2.5 h-2.5" style={{ background: SERIES.ctl }} />
+          weekly TSS
+        </span>
+        <span className="flex items-center gap-2 label-mono text-bone-muted">
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: SERIES.other }} />
+          pain · 7d avg (0–10, athlete-reported)
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Weekly pain average against weekly training load">
+        {[0.5, 1].map((f) => (
+          <line key={f} x1={PAD.l} x2={W - PAD.r} y1={yTss(maxTss * f)} y2={yTss(maxTss * f)} stroke="var(--hairline)" strokeWidth="0.75" />
+        ))}
+        <line x1={PAD.l} x2={W - PAD.r} y1={yTss(0)} y2={yTss(0)} stroke="var(--hairline)" strokeWidth="1.25" />
+        <text x={PAD.l - 6} y={yTss(maxTss) + 3} textAnchor="end" fontSize="10" fill="var(--bone-faint)" fontFamily="var(--font-fragment)">
+          {Math.round(maxTss)}
+        </text>
+        <text x={PAD.l - 6} y={yTss(0) + 3} textAnchor="end" fontSize="10" fill="var(--bone-faint)" fontFamily="var(--font-fragment)">
+          0
+        </text>
+        {[0, 5, 10].map((v) => (
+          <text key={v} x={W - PAD.r + 8} y={yPain(v) + 3} fontSize="10" fill="var(--bone-faint)" fontFamily="var(--font-fragment)">
+            {v}
+          </text>
+        ))}
+        {rows.map((r, i) =>
+          r.tss !== null && r.tss > 1 ? (
+            <rect
+              key={r.weekStart}
+              x={cx(i) - barW / 2}
+              y={yTss(r.tss)}
+              width={barW}
+              height={Math.max(1, yTss(0) - yTss(r.tss))}
+              fill={SERIES.ctl}
+              rx="1"
+            >
+              <title>{`wk ${r.weekStart}: ${Math.round(r.tss)} TSS${r.pain !== null ? ` · pain ${r.pain.toFixed(1)}/10` : ""}`}</title>
+            </rect>
+          ) : null
+        )}
+        {painPts.length > 1 && (
+          <path d={path(painPts.map(([x, y]) => [x, y]))} fill="none" stroke={SERIES.other} strokeWidth="2" />
+        )}
+        {painPts.map(([x, y, v], i) => (
+          <circle key={i} cx={x} cy={y} r="3" fill={SERIES.other} stroke="var(--field)" strokeWidth="1.5">
+            <title>{`pain ${v.toFixed(1)}/10 · 7d avg`}</title>
+          </circle>
+        ))}
+        {[0, Math.floor((n - 1) / 2), n - 1]
+          .filter((i, idx, arr) => arr.indexOf(i) === idx)
+          .map((i) =>
+            rows[i] ? (
+              <text key={i} x={cx(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--bone-faint)" fontFamily="var(--font-fragment)">
+                {rows[i].weekStart.slice(5)}
+              </text>
+            ) : null
+          )}
+      </svg>
+    </figure>
+  );
+}
+
 export function WeeklyVolumeChart({ rows }: { rows: WeeklyRow[] }) {
   const recent = rows.slice(-52);
   const n = recent.length;
