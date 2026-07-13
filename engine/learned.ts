@@ -410,7 +410,7 @@ export class TaperV1 implements Engine {
       weekTss: Math.round(clamped),
       sessions: Math.min(13, Math.max(3, Math.round(clamped / 62))),
       shares: ref.shares,
-      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (goalFloorLift ? `, lifted to ${Math.round(clamped)} by the goal target (race needs peak CTL ~${Math.round(state.goalPeakCtl!)}; ramping at the +13% injury-capped ceiling)` : baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
+      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (goalFloorLift ? `, lifted to ${Math.round(clamped)} by the goal target (race needs peak CTL ~${Math.round(state.goalPeakCtl!)}; ramping at the +20% ceiling, long run calf-capped)` : baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
     };
   }
 }
