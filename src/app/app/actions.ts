@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
-import { getAthlete, getHistory, getLatestState, localToday } from "@/lib/athlete-data";
+import { getAthlete, getHistory, getStateAt, localToday } from "@/lib/athlete-data";
 import { readPlan, retitleSession, setSessionStatus, writePlan } from "@/lib/plan-io";
 import {
   parseDisciplineMode,
@@ -27,7 +27,10 @@ import { easedVersion } from "@/lib/week-insights";
 
 function buildAndSave(request: PlanRequest): void {
   const athlete = getAthlete();
-  const state = getLatestState();
+  // Seed CTL/ATL/TSB from the daily PMC series rolled forward to startDate —
+  // the same state the Today header shows — never from the last weekly
+  // example alone, whose PMC numbers freeze at that week's Monday.
+  const state = getStateAt(request.startDate ?? localToday());
   if (!athlete || !state) throw new Error("no corpus: import training history first");
   const history = getHistory().map((h) => ({
     state: h.state,

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
+import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import { deriveZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
 
@@ -252,6 +253,115 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
   } catch (e) {
     check("T5/T6", "flagged-path plans generate", false, (e as Error).message);
   }
+}
+
+// ——— T7: plan seed == header state (single source of truth) ———
+// The Today header shows CTL/ATL/TSB from the DAILY pmc series
+// (data/derived/pmc.csv). generatePlan must be seeded from that same series
+// rolled forward to the plan's startDate — NOT from the last WEEKLY example,
+// whose features freeze at that week's Monday (observed staleness: plan
+// seeded CTL 22.1 / ATL 32.6 / TSB −10.4 while the header read ≈21/21/+2.5).
+//
+// Closed-form reference for the roll-forward — the exact decay the athlete's
+// spreadsheet got wrong. Holding daily load L for n days from CTL_0:
+//   CTL_n = L + (CTL_0 − L)·(1 − 1/42)^n      (ATL identical with τ = 7)
+// so across unlogged (zero-load) days, L = 0:
+//   CTL_n = CTL_0·(41/42)^n,   ATL_n = ATL_0·(6/7)^n.
+// The spreadsheet's week-of-rest constants (CTL 21→18.4, ATL 21→7.6) back
+// out to τ ≈ 53 and τ ≈ 6.6 — wrong under the pinned physiology τ = 42/7
+// (taper-rules rule 6); the true zero-week decay is 21→17.74 / 21→7.14 (T3).
+// TSB keeps the TrainingPeaks convention: the form you wake into on
+// startDate is end-of-(startDate−1) CTL − ATL, so the seed's ctl/atl are the
+// end-of-previous-day values and seed.tsb = seed.ctl − seed.atl.
+
+function loadPmcSeries(): DailyPmcPoint[] | null {
+  if (!existsSync("data/derived/pmc.csv")) return null;
+  const [, ...lines] = readFileSync("data/derived/pmc.csv", "utf8").trim().split("\n");
+  return lines.map((l) => {
+    const [date, , ctl, atl] = l.split(",");
+    return { date, ctl: +ctl, atl: +atl };
+  });
+}
+
+/** Independent reference: what the header's daily series implies for the
+ * morning of `date` — last row strictly before `date`, then closed-form
+ * zero-load decay across the unlogged gap up to end-of-(date−1). */
+function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; atl: number; tsb: number } | null {
+  let last: DailyPmcPoint | null = null;
+  for (const r of series) {
+    if (r.date >= date) break;
+    last = r;
+  }
+  if (!last) return null;
+  const gap = Math.round((Date.parse(date + "T12:00:00Z") - Date.parse(last.date + "T12:00:00Z")) / DAY) - 1;
+  const ctl = closed(last.ctl, 0, gap, kCtl);
+  const atl = closed(last.atl, 0, gap, kAtl);
+  return { ctl, atl, tsb: ctl - atl };
+}
+
+{
+  const series = loadPmcSeries();
+  const { state: base, history, zones, corpus } = loadFixture();
+  if (!series || !corpus) {
+    console.log("  T7 SKIP — corpus absent (data/derived/pmc.csv), seed-vs-header tests need real data");
+  } else {
+    // Several dates: inside the series, the day right after its last row,
+    // the audited plan start (2026-07-13), and a far-future start.
+    const dates = ["2026-07-01", "2026-07-05", "2026-07-13", "2026-08-01"];
+    for (const d of dates) {
+      const want = headerStateAt(series, d)!;
+      const got = seedStateAt(base, series, d);
+      check(
+        `T7a[${d}]`,
+        `planSeed(${d}) === headerState(${d}) (±0.1)`,
+        near(got.ctl, want.ctl, 0.1) && near(got.atl, want.atl, 0.1) && near(got.tsb, want.tsb, 0.1),
+        `seed ${got.ctl.toFixed(2)}/${got.atl.toFixed(2)}/${got.tsb.toFixed(2)} vs header ${want.ctl.toFixed(2)}/${want.atl.toFixed(2)}/${want.tsb.toFixed(2)}`
+      );
+    }
+    const seeded = seedStateAt(base, series, "2026-07-13");
+    check(
+      "T7b",
+      "seed keeps the non-PMC features from the weekly example (learned-layer inputs)",
+      JSON.stringify(seeded.last4WeeksTss) === JSON.stringify(base.last4WeeksTss) &&
+        seeded.weeksSinceStart === base.weeksSinceStart &&
+        JSON.stringify(seeded.last4Shares) === JSON.stringify(base.last4Shares)
+    );
+    try {
+      const plan = generatePlan(REQ, seeded, history, zones);
+      const want = headerStateAt(series, "2026-07-13")!;
+      check(
+        "T7c",
+        "plan generated from the seeded state carries the header CTL as startCtl (±0.1)",
+        near(plan.meta.startCtl, want.ctl, 0.1),
+        `startCtl ${plan.meta.startCtl} vs header ${want.ctl.toFixed(2)}`
+      );
+    } catch (e) {
+      check("T7c", "seeded plan generates", false, (e as Error).message);
+    }
+  }
+}
+
+// ——— T8: maintenance property — daily load == starting CTL keeps TSB ~0 ———
+// From a (near-)steady start, holding the daily load at exactly the starting
+// CTL for a week must land end-of-week TSB within ±1 of 0: fitness is
+// maintained, no phantom freshness or fatigue. Closed form agrees: CTL is a
+// fixed point (CTL_n = L when CTL_0 = L), and any ATL offset shrinks by
+// (6/7)^7 ≈ 0.34 across the week.
+{
+  let lcg = 20260713; // deterministic pseudo-random sweep
+  const rand = () => ((lcg = (lcg * 48271) % 2147483647) / 2147483647);
+  const ctls = [5, 10, 21, 34, 55, 89, ...Array.from({ length: 20 }, () => 5 + rand() * 115)];
+  let worst = 0;
+  let ctlDrift = 0;
+  for (const c of ctls) {
+    for (const off of [-2, 0, 2]) {
+      const { ctl, atl } = stepWeek(c, c + off, Array(7).fill(c));
+      worst = Math.max(worst, Math.abs(ctl - atl));
+      ctlDrift = Math.max(ctlDrift, Math.abs(ctl - closed(c, c, 7, kCtl)));
+    }
+  }
+  check("T8a", "PROPERTY: 7 days @ load == starting CTL → end-week TSB within ±1 of 0 (78 cases)", worst <= 1, `worst |TSB| ${worst.toFixed(3)}`);
+  check("T8b", "PROPERTY: CTL is the recursion's fixed point (matches closed form)", ctlDrift <= 1e-9, `drift ${ctlDrift.toExponential(1)}`);
 }
 
 console.log(`\nPMC + projection tests (${existsSync("data") ? "real corpus" : "synthetic"})\n`);

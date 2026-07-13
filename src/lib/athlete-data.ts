@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { seedStateAt } from "../../engine/seed.ts";
 import type { AthleteState } from "../../engine/types.ts";
 import { deriveZones, type Thresholds, type Zones } from "../../engine/zones.ts";
 
@@ -99,6 +100,24 @@ export function getPmc(): PmcRow[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Athlete state as of the morning of `startDate` — the SINGLE source of
+ * truth for seeding plan generation. CTL/ATL/TSB come from the same daily
+ * PMC series the Today header shows (getPmc), rolled forward day-by-day to
+ * startDate: logged activity TSS is already baked into the series rows, and
+ * unlogged days decay at zero load (engine/seed.ts, the exact plan.ts /
+ * derive.ts recursion). Non-PMC features (last4WeeksTss, shares, …) still
+ * come from the last weekly example. Seeding from getLatestState() alone is
+ * the bug this replaces: those features freeze at the last example's Monday,
+ * so a plan started two weeks later inherited a TSB the athlete no longer
+ * had (seed −10.4 vs header +2.5, verified 2026-07-13).
+ */
+export function getStateAt(startDate: string): AthleteState | null {
+  const base = getLatestState();
+  if (!base) return null;
+  return seedStateAt(base, getPmc(), startDate);
 }
 
 export interface WeeklyRow {
