@@ -4,6 +4,7 @@ import type { PlannedSessionOut } from "../../../engine/plan.ts";
 import {
   easeQualitySessionAction,
   logPainAction,
+  logStrengthSetsAction,
   toggleSessionAction,
   toggleStrengthDoneAction,
 } from "@/app/app/actions";
@@ -13,10 +14,13 @@ import {
   PAIN_CONTEXT_LABEL,
   PAIN_REGIONS,
   type PainEntry,
+  type ProgressionState,
   type Protocol,
   type ProtocolBlock,
   type SelectedBlock,
+  type StrengthCompletion,
 } from "@/lib/strength-protocols";
+import { effectiveRepRange, progressionKey, suggestionFor } from "@/lib/strength-progression";
 import { INJURY_LABEL } from "@/lib/athlete-context";
 import type { PainAlert } from "@/lib/pain-rules";
 import { deloadSets } from "@/lib/strength-schedule";
@@ -172,11 +176,13 @@ export interface StrengthItemView {
   protocol: Protocol;
   deload: boolean;
   done: boolean;
+  /** Per-exercise results already logged for this (date, protocolId), if any. */
+  logged?: StrengthCompletion["results"];
 }
 
-function blockDose(b: ProtocolBlock, deload: boolean): string {
+function blockDose(b: ProtocolBlock, deload: boolean, state?: ProgressionState | null): string {
   const sets = deload ? deloadSets(b.sets) : b.sets;
-  const [lo, hi] = b.repRange;
+  const [lo, hi] = effectiveRepRange(b, state);
   return `${sets}×${lo === hi ? lo : `${lo}–${hi}`}`;
 }
 
@@ -196,17 +202,23 @@ function StrengthGlyph() {
 /**
  * This week's scheduled strength days, placed around the engine plan by
  * strength-schedule.ts — never written into plan.json, never counted as
- * load. Today's session shows its full prescription; the rest of the week
- * renders as compact rows. Callers render nothing when `items` is empty.
+ * load. Today's session expands into a set-logging form whose results feed
+ * the progression machine (strength-progression.ts): per exercise, sets
+ * completed plus a top-of-range toggle, with the machine's current load and
+ * nudge rendered beside each exercise. The rest of the week renders as
+ * compact rows. Callers render nothing when `items` is empty.
  */
 export function DayStrengthChecklist({
   items,
   notes,
   today,
+  progression = null,
 }: {
   items: StrengthItemView[];
   notes: string[];
   today: string;
+  /** Stored progression map keyed `${protocolId}␟${exercise}`. */
+  progression?: Record<string, ProgressionState> | null;
 }) {
   if (items.length === 0) return null;
   return (
@@ -247,6 +259,7 @@ export function DayStrengthChecklist({
                   <input type="hidden" name="date" value={item.date} />
                   <input type="hidden" name="protocolId" value={protocol.id} />
                   <input type="hidden" name="current" value={item.done ? "done" : ""} />
+                  <input type="hidden" name="deload" value={item.deload ? "1" : ""} />
                   <button className="label-mono border border-hairline px-3 py-1.5 hover:border-bone transition-colors duration-150">
                     {item.done ? "Undo" : "Done"}
                   </button>
@@ -255,19 +268,74 @@ export function DayStrengthChecklist({
             </div>
             {expanded && (
               <div className="px-4 pb-4">
-                <ul className="space-y-1.5">
-                  {protocol.blocks.map((b) => (
-                    <li key={b.exercise} className="flex items-baseline justify-between gap-3 text-[13px]">
-                      <span className="text-bone-muted">
-                        {b.exercise}
-                        {b.tempo && <span className="text-bone-faint"> — {b.tempo}</span>}
-                      </span>
-                      <span className="font-mono tabular text-bone shrink-0">
-                        {blockDose(b, item.deload)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <form action={logStrengthSetsAction}>
+                  <input type="hidden" name="date" value={item.date} />
+                  <input type="hidden" name="protocolId" value={protocol.id} />
+                  <input type="hidden" name="deload" value={item.deload ? "1" : ""} />
+                  <ul>
+                    {protocol.blocks.map((b, i) => {
+                      const state = progression?.[progressionKey(protocol.id, b.exercise)] ?? null;
+                      const sugg = suggestionFor(b, state, item.deload);
+                      const prescribed = item.deload ? deloadSets(b.sets) : b.sets;
+                      const logged = item.logged?.find((r) => r.exercise === b.exercise);
+                      return (
+                        <li
+                          key={b.exercise}
+                          className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2 border-t border-hairline first:border-t-0 text-[13px]"
+                        >
+                          <div className="min-w-0">
+                            <span className="text-bone-muted">
+                              {b.exercise}
+                              {b.tempo && <span className="text-bone-faint"> — {b.tempo}</span>}
+                            </span>
+                            <span className="font-mono tabular text-bone ml-3">
+                              {blockDose(b, item.deload, state)}
+                              {sugg.load && <span className="text-bone-muted"> · {sugg.load}</span>}
+                            </span>
+                            {sugg.hint && (
+                              <p className="label-mono text-signal-bright mt-1">{sugg.hint}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-4 shrink-0">
+                            <label className="flex items-center gap-2 label-mono text-bone-faint">
+                              sets
+                              <select
+                                name={`sets-${i}`}
+                                defaultValue={String(logged?.setsDone ?? prescribed)}
+                                className="bg-field-sunken border border-hairline px-2 py-1 font-mono text-sm text-bone focus:border-bone outline-none"
+                              >
+                                {Array.from({ length: prescribed + 1 }, (_, n) => (
+                                  <option key={n} value={n}>
+                                    {n}/{prescribed}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="flex items-center gap-2 label-mono text-bone-faint cursor-pointer">
+                              <input
+                                type="checkbox"
+                                name={`top-${i}`}
+                                defaultChecked={logged?.allSetsAtTop ?? false}
+                                className="accent-current"
+                              />
+                              top of range
+                            </label>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="flex flex-wrap items-center gap-4 mt-2 pt-3 border-t border-hairline">
+                    <button className="label-mono border border-hairline px-4 py-2 hover:border-bone transition-colors duration-150">
+                      {item.done ? "Update sets" : "Log sets"}
+                    </button>
+                    <p className="label-mono text-bone-faint">
+                      {item.deload
+                        ? "Race week — deload dose; progression is frozen."
+                        : "Two top-of-range sessions move a load up; two misses step it back."}
+                    </p>
+                  </div>
+                </form>
                 {protocol.why && (
                   <div className="mt-3 pt-3 border-t border-hairline">
                     <span className="label-mono text-signal-bright">Why</span>
@@ -431,8 +499,23 @@ export function PainQuickEntry({ todays }: { todays: PainEntry[] }) {
   );
 }
 
+/** Display-only strength load beside the week target (docs §6): scheduled
+ *  non-rehab sessions × the configured per-session TSS. Never summed into
+ *  targetTss — that stays the engine's number. */
+export interface StrengthWeekView {
+  scheduled: number;
+  done: number;
+  tss: number;
+}
+
 /** Current-week volume + the reasoning behind it. */
-export function WeekBriefStrip({ brief }: { brief: WeekBrief }) {
+export function WeekBriefStrip({
+  brief,
+  strength = null,
+}: {
+  brief: WeekBrief;
+  strength?: StrengthWeekView | null;
+}) {
   const remainTss = Math.max(0, brief.targetTss - brief.doneTss);
   return (
     <div className="border border-hairline">
@@ -442,6 +525,7 @@ export function WeekBriefStrip({ brief }: { brief: WeekBrief }) {
         </span>
         <span className="label-mono text-bone-faint">
           {brief.doneCount}/{brief.sessionCount} sessions done
+          {strength && strength.scheduled > 0 && ` · ${strength.done}/${strength.scheduled} strength`}
         </span>
       </div>
       <div className="px-4 py-4 grid md:grid-cols-[1fr_1fr] gap-5">
@@ -451,6 +535,11 @@ export function WeekBriefStrip({ brief }: { brief: WeekBrief }) {
             <div className="font-mono text-xl tabular mt-0.5">
               {brief.targetTss} <span className="label-mono text-bone-faint">TSS</span>
             </div>
+            {strength && strength.tss > 0 && (
+              <div className="label-mono text-bone-faint mt-1">
+                +{strength.tss} TSS strength · display only
+              </div>
+            )}
           </div>
           <div>
             <div className="label-mono text-bone-faint">Volume</div>

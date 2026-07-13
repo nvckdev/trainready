@@ -1,6 +1,6 @@
 import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readAthleteContext } from "@/lib/athlete-context";
-import { supplementalForContext } from "@/lib/strength-protocols";
+import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
 import { readPainLog, readProtocolsState, isStrengthDone } from "@/lib/strength-io";
 import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
@@ -172,9 +172,25 @@ export default async function TodayPage() {
       protocol: d.protocol,
       deload: d.deload,
       done: isStrengthDone(strengthState, d.date, d.protocol.id),
+      logged: strengthState?.completions.find(
+        (c) => c.date === d.date && c.protocolId === d.protocol.id
+      )?.results,
     }));
     strengthNotes = [...strengthNotes, ...schedule.notes];
   }
+  // Display-only strength TSS beside the week target (docs §6): scheduled
+  // non-rehab sessions × the configured per-session value. Rehab work is
+  // therapeutic dose, not training stress — it never counts. The engine's
+  // targetTss is never touched.
+  const nonRehabItems = strengthItems.filter((i) => !i.protocol.rehab);
+  const strengthWeek =
+    nonRehabItems.length > 0
+      ? {
+          scheduled: nonRehabItems.length,
+          done: nonRehabItems.filter((i) => i.done).length,
+          tss: nonRehabItems.length * strengthTssPerSession(ctx),
+        }
+      : null;
   // Fall back to the stateless weekly card only when the protocol layer is
   // inactive — never when it is active but pain-held (the hold IS the message).
   const supplemental = protocols.length > 0 && found ? [] : supplementalForContext(ctx);
@@ -213,7 +229,7 @@ export default async function TodayPage() {
         />
       ) : (
         <div className="space-y-8">
-          {weekBrief && <WeekBriefStrip brief={weekBrief} />}
+          {weekBrief && <WeekBriefStrip brief={weekBrief} strength={strengthWeek} />}
           <div>
             <p className="label-mono text-bone-muted mb-3">
               {next.date === today ? "Today's session" : `Next session · ${next.weekday} ${next.date.slice(5)}`}
@@ -234,7 +250,12 @@ export default async function TodayPage() {
       )}
       {strengthItems.length > 0 && (
         <div className="mt-8">
-          <DayStrengthChecklist items={strengthItems} notes={strengthNotes} today={today} />
+          <DayStrengthChecklist
+            items={strengthItems}
+            notes={strengthNotes}
+            today={today}
+            progression={strengthState?.progression ?? null}
+          />
         </div>
       )}
       {supplemental.length > 0 && (

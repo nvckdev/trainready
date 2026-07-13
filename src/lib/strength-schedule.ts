@@ -21,6 +21,12 @@ export function addDays(date: string, n: number): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+/** Monday of the week containing `date` — the weekly.csv weekStart convention. */
+export function mondayOf(date: string): string {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay(); // 0 Sun … 6 Sat
+  return addDays(date, dow === 0 ? -6 : 1 - dow);
+}
+
 export function weekdayLabel(date: string): string {
   return new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(
     new Date(`${date}T00:00:00Z`)

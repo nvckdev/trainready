@@ -64,6 +64,8 @@ export interface ProgressionState {
   /** Consecutive completions with any missed set. */
   missStreak: number;
   lastResult?: "top" | "made" | "missed";
+  /** Set when the most recent completion moved the load (strength-progression.ts). */
+  lastEvent?: "advanced" | "decremented";
   updatedAt: string; // ISO timestamp, machine-facing
 }
 
@@ -117,6 +119,27 @@ export interface StrengthCompletion {
   date: string; // YYYY-MM-DD, athlete-local
   protocolId: string;
   results: Array<{ exercise: string; setsDone: number; allSetsAtTop: boolean }>;
+  /** Race-week deload session: halved dose, never feeds progression (§3/§5). */
+  deload?: boolean;
+}
+
+/* ——— Strength TSS (docs/strength-module.md §6) ————————————————
+ * Display-only load accounting: a fixed per-session TSS shown beside weekly
+ * totals. The engine, plan.json, and the PMC derivation never see it. */
+
+export const DEFAULT_STRENGTH_TSS = 20;
+
+/** Clamp an untrusted/stored value into the 5–60 display range. */
+export function clampStrengthTss(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_STRENGTH_TSS;
+  return Math.min(60, Math.max(5, Math.round(n)));
+}
+
+/** Per-session display TSS from the stored intake (default 20). */
+export function strengthTssPerSession(ctx: AthleteContext | null): number {
+  const v = ctx?.intake?.strengthTss;
+  return v === undefined ? DEFAULT_STRENGTH_TSS : clampStrengthTss(v);
 }
 
 export interface StrengthExercise {

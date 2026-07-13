@@ -40,6 +40,9 @@ export interface IntakeData {
   injuries: InjuryArea[];
   injuryNotes?: string;
   experienceLevel: ExperienceLevel;
+  /** Display-only TSS per completed strength session (5–60, default 20).
+   *  Never enters the engine, plan.json, or the PMC derivation. */
+  strengthTss?: number;
   updatedAt: string; // ISO timestamp, machine-facing
 }
 

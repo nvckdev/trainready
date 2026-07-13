@@ -1,7 +1,10 @@
 import { getAthlete, getPmc, getWeekly, hasCorpus, localToday } from "@/lib/athlete-data";
-import { readPainLog } from "@/lib/strength-io";
+import { readAthleteContext } from "@/lib/athlete-context";
+import { readPainLog, readProtocolsState } from "@/lib/strength-io";
+import { strengthTssPerSession } from "@/lib/strength-protocols";
+import { SEED_PROTOCOLS } from "@/lib/strength-seed";
 import { weeklyPainAverages } from "@/lib/pain-rules";
-import { addDays } from "@/lib/strength-schedule";
+import { addDays, mondayOf } from "@/lib/strength-schedule";
 import { PainVsLoadChart, PmcChart, WeeklyVolumeChart, type PainLoadRow } from "@/components/app/charts";
 import { EmptyState, StatChip } from "@/components/app/bits";
 
@@ -36,6 +39,39 @@ export default function FitnessPage() {
     painRows.forEach((r, i) => (r.pain = avgs[i]));
   }
 
+  // Strength in the weekly bars (docs §6) — DISPLAY ONLY. Completed
+  // non-rehab strength sessions (protocols-state.json, gitignored) add a
+  // fixed per-session TSS into the "other" stack segment; rehab work is
+  // therapeutic dose, not training stress. The derived corpus, PMC rows,
+  // and the engine are untouched — this recolors bars, nothing upstream.
+  const strengthTssPer = strengthTssPerSession(readAthleteContext());
+  const strengthByWeek = new Map<string, number>();
+  for (const c of readProtocolsState()?.completions ?? []) {
+    const protocol = SEED_PROTOCOLS.find((p) => p.id === c.protocolId);
+    if (!protocol || protocol.rehab) continue;
+    const ws = mondayOf(c.date);
+    strengthByWeek.set(ws, (strengthByWeek.get(ws) ?? 0) + strengthTssPer);
+  }
+  const strengthTotal = [...strengthByWeek.values()].reduce((a, b) => a + b, 0);
+  let volumeRows = weekly;
+  if (strengthTotal > 0 && weekly.length > 0) {
+    const rows = weekly.map((w) => ({ ...w }));
+    // Completions can postdate the last corpus extraction — extend with
+    // zero-load weeks up to today so current strength work still shows.
+    const today = localToday();
+    for (let next = addDays(rows[rows.length - 1].weekStart, 7); next <= today; next = addDays(next, 7)) {
+      rows.push({ weekStart: next, tss: 0, hours: 0, swim: 0, bike: 0, run: 0, other: 0 });
+    }
+    for (const r of rows) {
+      const add = strengthByWeek.get(r.weekStart);
+      if (add) {
+        r.other += add;
+        r.tss += add;
+      }
+    }
+    volumeRows = rows;
+  }
+
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-6">
@@ -61,7 +97,14 @@ export default function FitnessPage() {
 
       <section>
         <h2 className="label-mono text-bone-muted mb-4">Weekly load by discipline · last 52 weeks</h2>
-        <WeeklyVolumeChart rows={weekly} />
+        <WeeklyVolumeChart rows={volumeRows} otherLabel={strengthTotal > 0 ? "other / strength" : "other"} />
+        {strengthTotal > 0 && (
+          <p className="text-[13px] text-bone-muted leading-relaxed mt-3 max-w-[68ch]">
+            Completed strength sessions count {strengthTssPer} TSS each here (set on the intake
+            form) and stack into the other/strength segment — display only: CTL, ATL, TSB, and
+            the plan engine never see strength load.
+          </p>
+        )}
       </section>
 
       {painRows.length > 0 && (

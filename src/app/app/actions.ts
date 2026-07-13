@@ -16,10 +16,12 @@ import {
 import { logPain, readPainLog, setStrengthDone } from "@/lib/strength-io";
 import { SEED_PROTOCOLS } from "@/lib/strength-seed";
 import {
+  clampStrengthTss,
   parsePainContext,
   parsePainRegion,
   parsePainScore,
 } from "@/lib/strength-protocols";
+import { deloadSets } from "@/lib/strength-schedule";
 import { surfaceAlerts } from "@/lib/pain-rules";
 import { easedVersion } from "@/lib/week-insights";
 
@@ -71,6 +73,8 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     injuries: parseInjuryAreas(formData.getAll("injuries")),
     ...(notes ? { injuryNotes: notes } : {}),
     experienceLevel: parseExperienceLevel(formData.get("experienceLevel")),
+    // Display-only strength TSS (docs/strength-module.md §6) — clamped 5–60.
+    strengthTss: clampStrengthTss(formData.get("strengthTss")),
     updatedAt: new Date().toISOString(),
   };
   writeIntake(intake);
@@ -113,6 +117,7 @@ export async function toggleStrengthDoneAction(formData: FormData): Promise<void
   const date = String(formData.get("date") || "");
   const protocolId = String(formData.get("protocolId") || "");
   const markDone = String(formData.get("current") || "") !== "done";
+  const deload = String(formData.get("deload") || "") === "1";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
   const protocol = SEED_PROTOCOLS.find((p) => p.id === protocolId);
   if (!protocol) return;
@@ -120,8 +125,43 @@ export async function toggleStrengthDoneAction(formData: FormData): Promise<void
     date,
     protocolId,
     markDone,
-    protocol.blocks.map((b) => ({ exercise: b.exercise, setsDone: b.sets, allSetsAtTop: false }))
+    protocol.blocks.map((b) => ({
+      exercise: b.exercise,
+      setsDone: deload ? deloadSets(b.sets) : b.sets,
+      allSetsAtTop: false,
+    })),
+    deload
   );
+  revalidatePath("/app", "layout");
+}
+
+/**
+ * Per-set logging for today's strength session — the progression machine's
+ * input (docs/strength-module.md §5). Input is untrusted: the date must be
+ * a calendar date, the protocol must exist, sets clamp into [0, prescribed]
+ * (deload dose in a race week), and "top of range" only counts when every
+ * prescribed set was completed. Persisting recomputes progression from the
+ * full completion log, so re-logging a day overwrites rather than
+ * double-feeding the machine; deload sessions never feed it at all.
+ */
+export async function logStrengthSetsAction(formData: FormData): Promise<void> {
+  const date = String(formData.get("date") || "");
+  const protocolId = String(formData.get("protocolId") || "");
+  const deload = String(formData.get("deload") || "") === "1";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  const protocol = SEED_PROTOCOLS.find((p) => p.id === protocolId);
+  if (!protocol) return;
+  const results = protocol.blocks.map((b, i) => {
+    const prescribed = deload ? deloadSets(b.sets) : b.sets;
+    const n = Number(formData.get(`sets-${i}`));
+    const setsDone = Number.isFinite(n) ? Math.min(prescribed, Math.max(0, Math.round(n))) : 0;
+    return {
+      exercise: b.exercise,
+      setsDone,
+      allSetsAtTop: setsDone >= prescribed && formData.get(`top-${i}`) === "on",
+    };
+  });
+  setStrengthDone(date, protocolId, true, results, deload);
   revalidatePath("/app", "layout");
 }
 

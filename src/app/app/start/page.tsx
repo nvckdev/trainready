@@ -97,6 +97,25 @@ export default function StartPage() {
             </select>
           </div>
         </div>
+        <div>
+          <label htmlFor="strengthTss" className="label-mono text-bone-faint block mb-2">
+            Strength session load · TSS
+          </label>
+          <input
+            id="strengthTss"
+            name="strengthTss"
+            type="number"
+            min={5}
+            max={60}
+            step={5}
+            defaultValue={intake?.strengthTss ?? 20}
+            className={field}
+          />
+          <p className="label-mono text-bone-faint mt-2">
+            Shown beside weekly totals for completed strength work. Display only — the plan
+            engine and your fitness numbers never count it.
+          </p>
+        </div>
         <fieldset className="border border-hairline p-4">
           <legend className="label-mono text-bone-faint px-2">Injury history · check what applies</legend>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">

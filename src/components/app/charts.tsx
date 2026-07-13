@@ -216,7 +216,10 @@ export function PainVsLoadChart({ rows }: { rows: PainLoadRow[] }) {
   );
 }
 
-export function WeeklyVolumeChart({ rows }: { rows: WeeklyRow[] }) {
+/** `otherLabel` lets the caller relabel slot 4 ("other / strength") when
+ *  display-only strength TSS is stacked into that bucket — same validated
+ *  hex, no new series (taper-rules 14). */
+export function WeeklyVolumeChart({ rows, otherLabel = "other" }: { rows: WeeklyRow[]; otherLabel?: string }) {
   const recent = rows.slice(-52);
   const n = recent.length;
   const maxY = Math.max(...recent.map((r) => r.tss), 10) * 1.05;
@@ -238,7 +241,7 @@ export function WeeklyVolumeChart({ rows }: { rows: WeeklyRow[] }) {
         {order.map(([k, c]) => (
           <span key={k} className="flex items-center gap-2 label-mono text-bone-muted">
             <span className="w-2.5 h-2.5" style={{ background: c }} />
-            {k}
+            {k === "other" ? otherLabel : k}
           </span>
         ))}
       </div>
@@ -252,7 +255,7 @@ export function WeeklyVolumeChart({ rows }: { rows: WeeklyRow[] }) {
           let acc = 0;
           return (
             <g key={r.weekStart}>
-              <title>{`wk ${r.weekStart}: ${Math.round(r.tss)} TSS (run ${Math.round(r.run)}, bike ${Math.round(r.bike)}, swim ${Math.round(r.swim)})`}</title>
+              <title>{`wk ${r.weekStart}: ${Math.round(r.tss)} TSS (run ${Math.round(r.run)}, bike ${Math.round(r.bike)}, swim ${Math.round(r.swim)}${r.other > 1 ? `, ${otherLabel} ${Math.round(r.other)}` : ""})`}</title>
               {order.map(([k, c]) => {
                 const v = r[k as "run" | "bike" | "swim" | "other"];
                 if (v <= 1) return null;

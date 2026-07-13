@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { PainEntry, ProgressionState, StrengthCompletion } from "./strength-protocols";
+import { replayProgression } from "./strength-progression";
+import { SEED_PROTOCOLS } from "./strength-seed";
 
 /**
  * Strength protocol state gateway (data/app/protocols-state.json, sibling of
@@ -43,18 +45,26 @@ export function writeProtocolsState(state: ProtocolsState): void {
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 1));
 }
 
-/** Mark a strength session (keyed date + protocolId) done or not-done. */
+/**
+ * Mark a strength session (keyed date + protocolId) done or not-done, then
+ * rebuild the progression map from the full completion log (progression is
+ * a projection of completions — strength-progression.ts): re-logging never
+ * double-feeds the machine, and an undo rewinds it. Race-week completions
+ * carry `deload: true` and are skipped by the replay (§3/§5).
+ */
 export function setStrengthDone(
   date: string,
   protocolId: string,
   done: boolean,
-  results: StrengthCompletion["results"]
+  results: StrengthCompletion["results"],
+  deload = false
 ): void {
   const state = readProtocolsState() ?? { ...EMPTY, progression: {}, completions: [] };
   state.completions = state.completions.filter(
     (c) => !(c.date === date && c.protocolId === protocolId)
   );
-  if (done) state.completions.push({ date, protocolId, results });
+  if (done) state.completions.push({ date, protocolId, results, ...(deload ? { deload } : {}) });
+  state.progression = replayProgression(SEED_PROTOCOLS, state.completions);
   writeProtocolsState(state);
 }
 
