@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { referenceEngine } from "./reference.ts";
 import type { AthleteState, Engine, WeekPrescription } from "./types.ts";
 
@@ -10,12 +12,72 @@ import type { AthleteState, Engine, WeekPrescription } from "./types.ts";
  * derived from the reference engine's periodization rules, so the learned
  * layer personalizes *within* the safety scaffold (PRD §6: priors as the
  * backbone, learned components on top).
+ *
+ * Era weighting: when data/app/athlete-context.json declares trainingEras,
+ * training samples are weighted era_weight × recency_decay so that CAPABILITY
+ * (what load the athlete has demonstrated they can absorb, i.e. the learned
+ * state→load mapping) anchors on the primary/peak era instead of being
+ * dragged down by a recent reduced-volume era. STATE stays current: the
+ * features fed at prescription time are today's CTL/ATL/TSB, and the phase
+ * bounds + ramp caps still govern the path back up — era weighting never
+ * lets the engine jump to peak-era load. With no context file (or an
+ * unparseable one) sample weights are not applied at all and behavior is
+ * bit-for-bit the previous unweighted regression.
  */
 
-type Example = { state: AthleteState; actualTss: number };
+type Example = { state: AthleteState; actualTss: number; weekStart?: string };
 
 const LAMBDA = 12; // ridge strength
 const MIN_TRAIN = 24; // weeks of history before the learned layer activates
+const PEAK_ERA_WEIGHT = 2; // primary-era weeks count double for capability
+const RECENCY_HALF_LIFE_WEEKS = 156; // gentle decay; eras carry the signal
+
+interface Era {
+  span: string; // as written in athlete-context.json, for rationale text
+  startMonth: string; // "YYYY-MM"
+  endMonth: string | null; // null = present
+  weight: number;
+}
+
+/**
+ * Reads trainingEras from data/app/athlete-context.json (gitignored corpus).
+ * Returns null — meaning "no era weighting, legacy behavior exactly" — when
+ * the file is absent, unreadable, or any span fails to parse. Never throws:
+ * the corpus-less CI path must stay deterministic.
+ */
+function loadEras(): Era[] | null {
+  try {
+    const path = join(process.cwd(), "data", "app", "athlete-context.json");
+    if (!existsSync(path)) return null;
+    const ctx = JSON.parse(readFileSync(path, "utf8")) as {
+      trainingEras?: Array<{ span?: string; weight?: string }>;
+    };
+    if (!Array.isArray(ctx.trainingEras) || ctx.trainingEras.length === 0) return null;
+    const eras: Era[] = [];
+    for (const e of ctx.trainingEras) {
+      const span = String(e.span ?? "").trim();
+      const m = /^(\d{4}-\d{2})\s*(?:→|->)\s*(\d{4}-\d{2}|present)$/.exec(span);
+      if (!m) return null; // one bad span disables the feature, not the engine
+      eras.push({
+        span,
+        startMonth: m[1],
+        endMonth: m[2] === "present" ? null : m[2],
+        weight: String(e.weight ?? "").startsWith("primary") ? PEAK_ERA_WEIGHT : 1,
+      });
+    }
+    return eras;
+  } catch {
+    return null;
+  }
+}
+
+function eraWeightFor(eras: Era[], weekStart: string): number {
+  const month = weekStart.slice(0, 7);
+  for (const e of eras) {
+    if (month >= e.startMonth && (e.endMonth === null || month <= e.endMonth)) return e.weight;
+  }
+  return 1;
+}
 
 function featurize(s: AthleteState): number[] {
   const last4 = s.last4WeeksTss;
@@ -93,15 +155,40 @@ export class TaperV1 implements Engine {
   name = "taper-v1";
   private history: Example[] = [];
   private weights: number[] | null = null;
+  private eras: Era[] | null = loadEras();
 
   /** Walk-forward learning: record what actually happened, refit. */
-  observe(state: AthleteState, actualTss: number): void {
-    this.history.push({ state, actualTss });
+  observe(state: AthleteState, actualTss: number, weekStart?: string): void {
+    this.history.push({ state, actualTss, weekStart });
     if (this.history.length >= MIN_TRAIN) {
       const X = this.history.map((e) => featurize(e.state));
       const y = this.history.map((e) => e.actualTss);
+      const w = this.sampleWeights();
+      if (w) {
+        // Weighted least squares via row scaling: XᵀWX = (√W·X)ᵀ(√W·X).
+        for (let i = 0; i < X.length; i++) {
+          const s = Math.sqrt(w[i]);
+          X[i] = X[i].map((v) => v * s);
+          y[i] *= s;
+        }
+      }
       this.weights = ridge(X, y, LAMBDA);
     }
+  }
+
+  /**
+   * weight = era_weight × recency_decay. Null (no weighting at all) unless
+   * trainingEras are configured — keeping the era-less path byte-identical
+   * to the pre-era engine. Weeks without a known start date get era weight 1.
+   */
+  private sampleWeights(): number[] | null {
+    if (!this.eras) return null;
+    const n = this.history.length;
+    return this.history.map((e, i) => {
+      const eraW = e.weekStart ? eraWeightFor(this.eras!, e.weekStart) : 1;
+      const decay = Math.pow(0.5, (n - 1 - i) / RECENCY_HALF_LIFE_WEEKS);
+      return eraW * decay;
+    });
   }
 
   prescribeWeek(state: AthleteState): WeekPrescription {
@@ -123,12 +210,13 @@ export class TaperV1 implements Engine {
     const clamped = Math.max(60, Math.min(trailingMean * hi, Math.max(trailingMean * lo, raw)));
     const guarded = raw !== clamped;
 
+    const peakEra = this.eras?.find((e) => e.weight > 1);
     return {
       phase: ref.phase,
       weekTss: Math.round(clamped),
       sessions: Math.min(13, Math.max(3, Math.round(clamped / 62))),
       shares: ref.shares,
-      rationale: `Learned from ${this.history.length} weeks of your history: ${Math.round(raw)} TSS${guarded ? `, held to ${Math.round(clamped)} by the ${ref.phase} guardrail` : ""}. ${ref.rationale}`,
+      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? `, held to ${Math.round(clamped)} by the ${ref.phase} guardrail` : ""}. ${ref.rationale}`,
     };
   }
 }

@@ -21,7 +21,7 @@ const examples = readFileSync(join(ROOT, "data/datasets/weekly-examples.jsonl"),
 
 const engine = new TaperV1();
 const latest = examples[examples.length - 1];
-for (const ex of examples.slice(0, -1)) engine.observe(ex.features, ex.targets.weekTss);
+for (const ex of examples.slice(0, -1)) engine.observe(ex.features, ex.targets.weekTss, ex.weekStart);
 
 const p = engine.prescribeWeek(latest.features);
 const f = latest.features;
