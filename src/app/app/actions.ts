@@ -10,7 +10,11 @@ function buildAndSave(request: PlanRequest): void {
   const athlete = getAthlete();
   const state = getLatestState();
   if (!athlete || !state) throw new Error("no corpus: import training history first");
-  const history = getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss }));
+  const history = getHistory().map((h) => ({
+    state: h.state,
+    actualTss: h.actualTss,
+    weekStart: h.weekStart,
+  }));
   const plan = generatePlan(request, state, history, athlete.zones);
   writePlan({ request, plan });
 }

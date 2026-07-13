@@ -45,7 +45,7 @@ const rows: Row[] = examples.map((ex) => {
     byEngine[e.name] = { phase: p.phase, predicted: p.weekTss };
   }
   // Learned engines see the outcome only after prescribing (no look-ahead).
-  v1.observe(ex.features, ex.targets.weekTss);
+  v1.observe(ex.features, ex.targets.weekTss, ex.weekStart);
   return {
     week: ex.weekStart,
     executed: ex.targets.weekTss,

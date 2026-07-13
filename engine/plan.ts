@@ -254,11 +254,11 @@ function mondayOnOrAfter(dateStr: string): number {
 export function generatePlan(
   req: PlanRequest,
   initialState: AthleteState,
-  history: Array<{ state: AthleteState; actualTss: number }>,
+  history: Array<{ state: AthleteState; actualTss: number; weekStart?: string }>,
   zones: Zones
 ): Plan {
   const engine = new TaperV1();
-  for (const h of history) engine.observe(h.state, h.actualTss);
+  for (const h of history) engine.observe(h.state, h.actualTss, h.weekStart);
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
   const start = mondayOnOrAfter(req.startDate ?? iso(Date.now()));
