@@ -14,6 +14,51 @@ const PHASE_LABEL: Record<string, string> = {
   offseason: "Return",
 };
 
+/** Static, phase-keyed season copy: what each block does and why it sits
+ *  where it does. Presentation only — the engine's numbers are the plan. */
+const PHASE_ORDER = ["offseason", "base", "build", "recovery", "taper", "race"] as const;
+const PHASE_EXPLAIN: Record<(typeof PHASE_ORDER)[number], string> = {
+  offseason:
+    "Re-entry. Easy, mostly unstructured volume re-establishes the habit before load numbers mean anything.",
+  base:
+    "Raises the aerobic floor. Long, mostly easy weeks lift CTL without spiking fatigue — mitochondria, capillaries, tendon tolerance. Everything later is built on this, which is why it comes first.",
+  build:
+    "Converts base into race-specific fitness. Volume holds while intensity moves toward race demands, sharpening toward a peak — work that only sticks on top of an aerobic base.",
+  recovery:
+    "Scheduled absorption. Every few weeks load drops so the previous block's work becomes fitness. Cutbacks are planned, not earned — skipping them is how overuse starts.",
+  taper:
+    "Trades a little fitness for a lot of freshness. Load falls hard while intensity stays; CTL gives up a few points and form (TSB) climbs positive into race morning. The taper is protocol — the engine does not negotiate it.",
+  race:
+    "Protocol week. Nothing left to build, only to protect — short touches with a few race-pace efforts keep the system awake without adding fatigue.",
+};
+
+function SeasonExplainer({ phases }: { phases: Set<string> }) {
+  const present = PHASE_ORDER.filter((p) => phases.has(p));
+  if (present.length === 0) return null;
+  return (
+    <details open className="border border-hairline mb-8">
+      <summary className="flex items-center justify-between gap-4 px-4 py-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <span className="label-mono text-bone-faint">How the season is built</span>
+        <span className="label-mono text-bone-faint">{present.map((p) => PHASE_LABEL[p]).join(" → ")}</span>
+      </summary>
+      <div className="border-t border-hairline px-4 py-4 space-y-3">
+        <p className="text-[13px] leading-relaxed text-bone-muted max-w-[72ch]">
+          Blocks run in this order because each converts the previous one&apos;s adaptation:
+          capacity first, specificity on top of it, then freshness for the day it counts.
+        </p>
+        {present.map((p) => (
+          <div key={p} className="grid grid-cols-[80px_1fr] gap-4">
+            <span className={`label-mono ${p === "taper" || p === "race" ? "text-signal-bright" : "text-bone"}`}>
+              {PHASE_LABEL[p]}
+            </span>
+            <p className="text-[13px] leading-relaxed text-bone-muted max-w-[72ch]">{PHASE_EXPLAIN[p]}</p>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function PlanPage() {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
@@ -55,6 +100,8 @@ export default function PlanPage() {
         </div>
       </div>
       <div className="rule mt-5 mb-8" />
+
+      <SeasonExplainer phases={new Set(plan.weeks.map((w) => w.phase))} />
 
       <div className="space-y-3">
         {plan.weeks.map((w) => {

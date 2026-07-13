@@ -1,7 +1,9 @@
 import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
+import { readAthleteContext } from "@/lib/athlete-context";
+import { supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
 import { briefForWeek } from "@/lib/week-insights";
-import { EmptyState, SessionCard, StatChip, WeekBriefStrip } from "@/components/app/bits";
+import { EmptyState, SessionCard, StatChip, SupplementalCard, WeekBriefStrip } from "@/components/app/bits";
 import { WeatherHint } from "@/components/app/weather-hint";
 
 export const dynamic = "force-dynamic";
@@ -87,6 +89,9 @@ export default async function TodayPage() {
     : null;
   const weekBrief = stored ? briefForWeek(stored.plan, today, stored.plan.meta.raceName) : null;
   const tsb = latest ? latest.tsb : null;
+  // Supplemental strength — driven by intake answers in athlete-context.json,
+  // empty when no context is recorded or strength access is "none".
+  const supplemental = supplementalForContext(readAthleteContext());
 
   return (
     <div>
@@ -133,6 +138,11 @@ export default async function TodayPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+      {supplemental.length > 0 && (
+        <div className="mt-8">
+          <SupplementalCard blocks={supplemental} />
         </div>
       )}
     </div>

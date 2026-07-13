@@ -3,6 +3,7 @@ import { SERIES } from "./charts";
 import type { PlannedSessionOut } from "../../../engine/plan.ts";
 import { toggleSessionAction } from "@/app/app/actions";
 import { sessionAdjustments, type WeekBrief } from "@/lib/week-insights";
+import type { SelectedBlock } from "@/lib/strength-protocols";
 
 export function StatChip({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
@@ -100,6 +101,48 @@ export function SessionCard({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** This week's supplemental strength blocks — outside the engine plan, no
+ *  TSS. Callers render nothing when the selection is empty. */
+export function SupplementalCard({ blocks }: { blocks: SelectedBlock[] }) {
+  if (blocks.length === 0) return null;
+  return (
+    <div className="border border-hairline">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
+        <span className="label-mono text-bone-faint">Supplemental · injury prevention</span>
+        <span className="label-mono text-bone-faint">outside the plan · no TSS</span>
+      </div>
+      <div className="grid md:grid-cols-2">
+        {blocks.map(({ block, why }, i) => (
+          <div key={block.id} className={`px-4 py-4 ${i > 0 ? "border-t md:border-t-0 md:border-l border-hairline" : ""}`}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="font-semibold text-[15px]">{block.title}</span>
+              <span className="font-mono text-sm tabular text-bone-muted shrink-0">~{block.minutes} min</span>
+            </div>
+            <ul className="mt-3 space-y-1.5">
+              {block.exercises.map((ex) => (
+                <li key={ex.name} className="flex items-baseline justify-between gap-3 text-[13px]">
+                  <span className="text-bone-muted">
+                    {ex.name}
+                    {ex.cue && <span className="text-bone-faint"> — {ex.cue}</span>}
+                  </span>
+                  <span className="font-mono tabular text-bone shrink-0">{ex.dose}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 pt-3 border-t border-hairline">
+              <span className="label-mono text-signal-bright">Why</span>
+              <p className="text-[12.5px] leading-relaxed text-bone-muted mt-1">{why}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="px-4 pb-3 label-mono text-bone-faint">
+        Twice this week, any easy day. These sit outside the engine plan and add no training load.
+      </p>
     </div>
   );
 }
