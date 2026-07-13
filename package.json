@@ -11,6 +11,7 @@
     "engine:backtest": "tsx engine/backtest.ts",
     "engine:today": "tsx engine/today.ts",
     "engine:invariants": "tsx engine/invariants.ts",
+    "engine:tests": "tsx engine/pmc.test.ts",
     "prepare": "git config core.hooksPath .githooks || true",
     "verify": "bash scripts/verify.sh"
   },

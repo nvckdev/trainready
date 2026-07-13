@@ -134,6 +134,43 @@ function ridge(X: number[][], y: number[], lambda: number): number[] {
   return w;
 }
 
+// ——— anchor-v2 (flagged, default OFF) ————————————————————————————
+//
+// The default upper clamp is trailing-month mean × phase fraction, which a
+// single outlier week can drag around (one 334-TSS week among ~50-TSS weeks
+// pulled the "mean" to 125). Anchor-v2, explicitly proposed by the human
+// (documented sign-off per taper-rules rule 4) and shipped DEFAULT OFF,
+// replaces that ceiling for base/build/offseason weeks with
+//   anchor = max(maintenance CTL×7, recent peak week × 0.95^(weeks since peak))
+//   capped at +20% over the previous non-zero week (approved range 20–25%,
+//   shipping 20).
+// Rails still apply after: the TSB floor (−25 forces the recovery phase
+// upstream in the reference engine) and the weekly floor of 60 TSS.
+// Taper/race weeks never reach this code (protocol lock, rule 2).
+
+const ANCHOR_V2_PEAK_DECAY = 0.95; // per week since the peak week
+const ANCHOR_V2_RAMP_CAP = 1.2; // ≤ +20% over the previous non-zero week
+
+function anchorV2Ceiling(state: AthleteState): number {
+  const maintenance = state.ctl * 7; // weekly TSS that holds CTL steady
+  const weeks = state.last4WeeksTss; // oldest → newest
+  let peak = 0;
+  for (let i = 0; i < weeks.length; i++) {
+    const weeksSincePeak = weeks.length - 1 - i; // newest completed week = 0
+    peak = Math.max(peak, weeks[i] * Math.pow(ANCHOR_V2_PEAK_DECAY, weeksSincePeak));
+  }
+  let anchor = Math.max(maintenance, peak);
+  const prevNonZero = [...weeks].reverse().find((v) => v > 0);
+  if (prevNonZero !== undefined) anchor = Math.min(anchor, prevNonZero * ANCHOR_V2_RAMP_CAP);
+  return anchor;
+}
+
+export interface TaperV1Options {
+  /** Anchor-v2 ceiling for non-taper weeks. Default OFF; also switchable via
+   *  env TAPER_ANCHOR_V2=1. Flag off is byte-identical to the legacy path. */
+  anchorV2?: boolean;
+}
+
 /** Phase-dependent bounds (fractions of trailing-month mean) the learned
  *  output may not leave. The scaffold, not the pilot. */
 function bounds(state: AthleteState, phase: WeekPrescription["phase"]): [number, number] {
@@ -156,6 +193,11 @@ export class TaperV1 implements Engine {
   private history: Example[] = [];
   private weights: number[] | null = null;
   private eras: Era[] | null = loadEras();
+  private anchorV2: boolean;
+
+  constructor(opts: TaperV1Options = {}) {
+    this.anchorV2 = opts.anchorV2 ?? process.env.TAPER_ANCHOR_V2 === "1";
+  }
 
   /** Walk-forward learning: record what actually happened, refit. */
   observe(state: AthleteState, actualTss: number, weekStart?: string): void {
@@ -207,7 +249,15 @@ export class TaperV1 implements Engine {
       state.last4WeeksTss.reduce((s, v) => s + v, 0) /
       Math.max(1, state.last4WeeksTss.length);
     const [lo, hi] = bounds(state, ref.phase);
-    const clamped = Math.max(60, Math.min(trailingMean * hi, Math.max(trailingMean * lo, raw)));
+    // Flag OFF (default): the legacy trailing-mean ceiling, byte-identical.
+    // Flag ON, base/build/offseason only: the anchor-v2 ceiling replaces
+    // trailingMean × hi (the +20% ramp cap is baked into the anchor itself,
+    // so hi is not applied on top). Recovery weeks keep the legacy bounds —
+    // the TSB floor already routed them there, and rails are rails.
+    const useAnchor =
+      this.anchorV2 && (ref.phase === "base" || ref.phase === "build" || ref.phase === "offseason");
+    const ceiling = useAnchor ? anchorV2Ceiling(state) : trailingMean * hi;
+    const clamped = Math.max(60, Math.min(ceiling, Math.max(trailingMean * lo, raw)));
     const guarded = raw !== clamped;
 
     const peakEra = this.eras?.find((e) => e.weight > 1);
@@ -216,7 +266,7 @@ export class TaperV1 implements Engine {
       weekTss: Math.round(clamped),
       sessions: Math.min(13, Math.max(3, Math.round(clamped / 62))),
       shares: ref.shares,
-      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? `, held to ${Math.round(clamped)} by the ${ref.phase} guardrail` : ""}. ${ref.rationale}`,
+      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail` : ""}. ${ref.rationale}`,
     };
   }
 }

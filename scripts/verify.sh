@@ -38,6 +38,9 @@ step "tsc pipeline" npx tsc -p pipeline --noEmit
 # ── 3. Lint ──
 step "eslint" npm run -s lint
 
+# ── 3b. PMC recursion + plan-projection tests (engine/pmc.test.ts) ──
+step "engine tests" npm run -s engine:tests
+
 # ── 4. Plan invariants vs committed baseline ──
 # Known failures live in scripts/invariants-baseline.txt (the hardening work
 # order). NEW failures block; fixed ones prompt a baseline shrink.

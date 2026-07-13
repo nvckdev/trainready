@@ -26,6 +26,13 @@ export interface PlanRequest {
   daysPerWeek: number; // 4–7
   longDay: "saturday" | "sunday";
   startDate?: string; // defaults to today
+  /** Hard cap on training sessions per week (the race itself is protocol and
+   *  does not count). Defaults to 5; dropped-slot volume redistributes over
+   *  the surviving slots by weight, so the long session keeps its share. */
+  maxSessions?: number;
+  /** Anchor-v2 load ceiling (see engine/learned.ts). Default OFF; env
+   *  TAPER_ANCHOR_V2=1 also enables it. Off = byte-identical legacy path. */
+  anchorV2?: boolean;
 }
 
 export interface PlannedSessionOut {
@@ -238,10 +245,22 @@ function capToDays(slots: Slot[], daysPerWeek: number): Slot[] {
   return out;
 }
 
+const DEFAULT_MAX_SESSIONS = 5;
+
 function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
   const longIdx = req.longDay === "saturday" ? 5 : 6;
   const otherWeekend = req.longDay === "saturday" ? 6 : 5;
   const quality: Kind = phase === "base" || phase === "offseason" ? "run-tempo" : "run-vo2";
+  // Sessions/week is the tighter of the athlete's available days and the
+  // maxSessions cap (default 5). Applies to TRAINING slots only: the race
+  // session is protocol, appended downstream, and exempt from the count.
+  // capToDays drops lowest-priority slots and the fixed weekly TSS then
+  // redistributes over the survivors' weights, so the long session keeps
+  // its (largest) share of the volume.
+  const cap = Math.min(
+    req.daysPerWeek,
+    Math.max(3, Math.round(req.maxSessions ?? DEFAULT_MAX_SESSIONS))
+  );
 
   if (!isTri(req.raceType)) {
     const slots: Slot[] = [
@@ -253,7 +272,7 @@ function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
     if (req.daysPerWeek >= 5) slots.push({ weekdayIdx: 2, kind: "run-easy", weight: 0.8 });
     if (req.daysPerWeek >= 6) slots.push({ weekdayIdx: otherWeekend, kind: "run-easy", weight: 0.85 });
     if (req.daysPerWeek >= 7) slots.push({ weekdayIdx: 0, kind: "bike-z2", weight: 0.6 });
-    return capToDays(slots, req.daysPerWeek);
+    return capToDays(slots, cap);
   }
 
   const slots: Slot[] = [
@@ -265,7 +284,7 @@ function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
   ];
   if (req.daysPerWeek >= 6) slots.push({ weekdayIdx: 4, kind: "swim-endurance", weight: 0.55 });
   if (req.daysPerWeek >= 7) slots.push({ weekdayIdx: 0, kind: "run-easy", weight: 0.6 });
-  return capToDays(slots, req.daysPerWeek);
+  return capToDays(slots, cap);
 }
 
 // ——— date helpers ————————————————————————————————————————————
@@ -294,7 +313,7 @@ export function generatePlan(
   history: Array<{ state: AthleteState; actualTss: number; weekStart?: string }>,
   zones: Zones
 ): Plan {
-  const engine = new TaperV1();
+  const engine = new TaperV1(req.anchorV2 === undefined ? {} : { anchorV2: req.anchorV2 });
   for (const h of history) engine.observe(h.state, h.actualTss, h.weekStart);
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
@@ -390,7 +409,6 @@ export function generatePlan(
 
     // Simulate PMC through the week, day by day.
     const tssByDate = new Map(sessions.map((s) => [s.date, s.tss] as [string, number]));
-    const projected = { ctl: r1(ctl), atl: r1(atl), tsb: r1(ctl - atl) };
     for (let d = 0; d < 7; d++) {
       const dayIso = iso(wStart + d * DAY);
       if (dayIso === req.raceDate) {
@@ -400,6 +418,12 @@ export function generatePlan(
       ctl = ctl + (dayTss - ctl) / 42;
       atl = atl + (dayTss - atl) / 7;
     }
+    // Projected = the state at the week's END, i.e. after the loop has
+    // absorbed the week's sessions. (Snapshotting before the loop shipped
+    // every card one week stale: week 1 showed the untouched seed.) TSB keeps
+    // the yesterday-CTL−ATL convention: Sunday night's CTL/ATL are exactly
+    // "yesterday" to the Monday morning the athlete wakes into.
+    const projected = { ctl: r1(ctl), atl: r1(atl), tsb: r1(ctl - atl) };
 
     // A plan may start mid-week (see the mondayOnOrBefore fallback): the PMC
     // simulation above still runs the full Monday-anchored week, but sessions
