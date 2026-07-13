@@ -364,6 +364,85 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
   check("T8b", "PROPERTY: CTL is the recursion's fixed point (matches closed form)", ctlDrift <= 1e-9, `drift ${ctlDrift.toExponential(1)}`);
 }
 
+// ——— T9: anchor-v2 outlier smoothing — no week-over-week target cliffs ———
+// A synthetic athlete shaped like the audited one: ~25 weeks around 70 TSS,
+// then the observed tail 45, 90, 334 (outlier), 40, 90 right before the plan
+// starts. Under anchor-v2 the outlier must not whipsaw the plan: when the
+// 334 leaves the 4-week lookback its influence has to DECAY (ramp-cap
+// reference max(previous non-zero week, 0.7 × best week in trailing 6))
+// rather than vanish. Acceptance: consecutive pre-taper weekly targets never
+// jump more than +20% or fall more than −35% (±3 TSS per-session rounding
+// allowance, same as T5c/T6d — targetTss sums rounded sessions). Observed
+// pre-fix cliff on this exact fixture: 75 → 129 (+72%) → 71 (−45%).
+{
+  let lcg = 20260713;
+  const rand = () => ((lcg = (lcg * 48271) % 2147483647) / 2147483647);
+  const weekly: number[] = [];
+  for (let i = 0; i < 25; i++) weekly.push(Math.round(70 * (0.7 + 0.6 * rand())));
+  weekly.push(45, 90, 334, 40, 90); // the audited athlete's recent shape
+
+  // Walk the synthetic history through the real recursion (load spread over
+  // 6 days/week) so states are self-consistent with the executed weeks.
+  let ctl = 10;
+  let atl = 10;
+  const synthHistory: Array<{ state: AthleteState; actualTss: number }> = [];
+  const last8: number[] = [];
+  const mkState = (i: number): AthleteState => ({
+    ctl,
+    atl,
+    tsb: ctl - atl,
+    last4WeeksTss: last8.length >= 4 ? last8.slice(-4) : [70, 70, 70, 70],
+    last4Shares: { swim: 0.1, bike: 0.3, run: 0.6 },
+    daysToNextRace: null,
+    weeksSinceStart: i,
+    breakRatio: 1,
+    daysSinceLastSession: 1,
+  });
+  for (let i = 0; i < weekly.length; i++) {
+    synthHistory.push({ state: mkState(i), actualTss: weekly[i] });
+    for (let d = 0; d < 7; d++) {
+      const tss = d < 6 ? weekly[i] / 6 : 0;
+      ctl = ctl + (tss - ctl) / 42;
+      atl = atl + (tss - atl) / 7;
+    }
+    last8.push(weekly[i]);
+    if (last8.length > 8) last8.shift();
+  }
+  const synthSeed = mkState(weekly.length); // last4 = [90, 334, 40, 90]
+  const synthZones = deriveZones({ ftpWatts: 250, lthrBpm: 170, runThresholdSpeedMps: 4.0, swimCssMps: 1.1 });
+
+  try {
+    const plan = generatePlan({ ...REQ, anchorV2: true }, synthSeed, synthHistory, synthZones);
+    const pre = plan.weeks.filter((w) => w.phase !== "taper" && w.phase !== "race");
+    let worstUp = 0;
+    let worstDown = 0;
+    let firstBad = "";
+    for (let i = 1; i < pre.length; i++) {
+      const [a, b] = [pre[i - 1].targetTss, pre[i].targetTss];
+      const d = (b - a) / a;
+      worstUp = Math.max(worstUp, d);
+      worstDown = Math.min(worstDown, d);
+      if ((b > a * 1.2 + 3 || b < a * 0.65 - 3) && !firstBad) {
+        firstBad = `${pre[i - 1].weekStart}→${pre[i].weekStart}: ${a}→${b} (${(d * 100).toFixed(1)}%)`;
+      }
+    }
+    check(
+      "T9a",
+      "anchor-v2 + outlier history: consecutive weekly targets within [+20%, −35%]",
+      firstBad === "",
+      firstBad || `worst +${(worstUp * 100).toFixed(1)}% / ${(worstDown * 100).toFixed(1)}%, targets ${pre.map((w) => w.targetTss).join(",")}`
+    );
+    check(
+      "T9b",
+      "anchor-v2 + outlier history: targets stay inside physiology rails (60 ≤ full weeks, ≤ outlier)",
+      pre.every((w) => w.targetTss >= 60 && w.targetTss <= 334),
+      `range ${Math.min(...pre.map((w) => w.targetTss))}–${Math.max(...pre.map((w) => w.targetTss))}`
+    );
+  } catch (e) {
+    check("T9", "anchor-v2 outlier plan generates", false, (e as Error).message);
+  }
+}
+
 console.log(`\nPMC + projection tests (${existsSync("data") ? "real corpus" : "synthetic"})\n`);
 for (const l of [...passes, ...failures].sort()) console.log("  " + l);
 console.log(`\n${passes.length} pass, ${failures.length} fail`);

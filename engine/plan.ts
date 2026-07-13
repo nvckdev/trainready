@@ -330,6 +330,7 @@ export function generatePlan(
   const last8: number[] = [...initialState.last4WeeksTss];
   let weeksSinceStart = initialState.weeksSinceStart;
   let raceMorning: { ctl: number; tsb: number } | null = null;
+  let prevPrescribed: number | undefined; // week 1 has none (see AthleteState)
 
   const weeks: PlanWeek[] = [];
 
@@ -341,6 +342,8 @@ export function generatePlan(
       atl,
       tsb: ctl - atl,
       last4WeeksTss: last4,
+      trailingWeeksTss: [...last8],
+      prevPrescribedTss: prevPrescribed,
       last4Shares: initialState.last4Shares,
       daysToNextRace: daysToRace,
       weeksSinceStart,
@@ -440,6 +443,7 @@ export function generatePlan(
 
     last8.push(p.weekTss);
     if (last8.length > 8) last8.shift();
+    prevPrescribed = p.weekTss;
     weeksSinceStart++;
   }
 

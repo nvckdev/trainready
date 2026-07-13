@@ -142,14 +142,29 @@ function ridge(X: number[][], y: number[], lambda: number): number[] {
 // (documented sign-off per taper-rules rule 4) and shipped DEFAULT OFF,
 // replaces that ceiling for base/build/offseason weeks with
 //   anchor = max(maintenance CTL×7, recent peak week × 0.95^(weeks since peak))
-//   capped at +20% over the previous non-zero week (approved range 20–25%,
+//   capped at +20% over the ramp-cap reference (approved range 20–25%,
 //   shipping 20).
+// Ramp-cap reference (audit round 2 smoothing): max(previous non-zero week,
+// 0.7 × best week in the trailing 6). With the reference pinned to just the
+// previous non-zero week, one small week right after an outlier collapsed
+// the cap (observed: ..., 334, 40 → cap 40×1.2 = 48 → weekly floor), so an
+// outlier's influence VANISHED the moment it stopped being the previous
+// week. The 0.7 × best-of-6 term lets that influence decay across the
+// window instead.
 // Rails still apply after: the TSB floor (−25 forces the recovery phase
 // upstream in the reference engine) and the weekly floor of 60 TSS.
 // Taper/race weeks never reach this code (protocol lock, rule 2).
 
 const ANCHOR_V2_PEAK_DECAY = 0.95; // per week since the peak week
-const ANCHOR_V2_RAMP_CAP = 1.2; // ≤ +20% over the previous non-zero week
+const ANCHOR_V2_RAMP_CAP = 1.2; // ≤ +20% over the ramp-cap reference
+const ANCHOR_V2_BEST_WINDOW = 6; // trailing weeks scanned for the best week
+const ANCHOR_V2_BEST_FRACTION = 0.7; // outlier influence decays to 70%, not to 0
+const ANCHOR_V2_MAX_CUT = 0.65; // consecutive prescriptions may fall ≤ 35%
+
+/** Newest non-zero executed/prescribed week — the classic ramp base. */
+function prevNonZeroWeek(state: AthleteState): number | undefined {
+  return [...state.last4WeeksTss].reverse().find((v) => v > 0);
+}
 
 function anchorV2Ceiling(state: AthleteState): number {
   const maintenance = state.ctl * 7; // weekly TSS that holds CTL steady
@@ -160,8 +175,9 @@ function anchorV2Ceiling(state: AthleteState): number {
     peak = Math.max(peak, weeks[i] * Math.pow(ANCHOR_V2_PEAK_DECAY, weeksSincePeak));
   }
   let anchor = Math.max(maintenance, peak);
-  const prevNonZero = [...weeks].reverse().find((v) => v > 0);
-  if (prevNonZero !== undefined) anchor = Math.min(anchor, prevNonZero * ANCHOR_V2_RAMP_CAP);
+  const trailing = (state.trailingWeeksTss ?? state.last4WeeksTss).slice(-ANCHOR_V2_BEST_WINDOW);
+  const capRef = Math.max(prevNonZeroWeek(state) ?? 0, ANCHOR_V2_BEST_FRACTION * Math.max(0, ...trailing));
+  if (capRef > 0) anchor = Math.min(anchor, capRef * ANCHOR_V2_RAMP_CAP);
   return anchor;
 }
 
@@ -256,8 +272,32 @@ export class TaperV1 implements Engine {
     // the TSB floor already routed them there, and rails are rails.
     const useAnchor =
       this.anchorV2 && (ref.phase === "base" || ref.phase === "build" || ref.phase === "offseason");
-    const ceiling = useAnchor ? anchorV2Ceiling(state) : trailingMean * hi;
-    const clamped = Math.max(60, Math.min(ceiling, Math.max(trailingMean * lo, raw)));
+    let ceiling = useAnchor ? anchorV2Ceiling(state) : trailingMean * hi;
+    // Anchor-v2 smoothing extends to recovery weeks' CEILING only (floors and
+    // phase routing stay legacy — rails are rails): the legacy trailing-mean
+    // ceiling is outlier-inflatable (a 334-TSS week keeps the mean high for a
+    // month), which whipsawed targets +72% INTO a cutback week. Under the
+    // flag a recovery week may not exceed +20% over the previous non-zero
+    // week; tightening a cutback's upper bound only ever lowers load.
+    if (this.anchorV2 && ref.phase === "recovery") {
+      const prev = prevNonZeroWeek(state);
+      if (prev !== undefined) ceiling = Math.min(ceiling, prev * ANCHOR_V2_RAMP_CAP);
+    }
+    let value = Math.min(ceiling, Math.max(trailingMean * lo, raw));
+    // Anchor-v2 week-over-week smoothing band: within a simulated plan (the
+    // caller tells us its own previous prescription), consecutive targets
+    // move at most +20% / −35%. The band deliberately does NOT apply to the
+    // first plan week — there the ramp-cap reference above (max(prev
+    // non-zero week, 0.7 × best of trailing 6)) is what keeps one small
+    // post-outlier week from collapsing the ceiling to the weekly floor.
+    // Taper/race weeks never reach this code (protocol lock, rule 2).
+    if (this.anchorV2 && state.prevPrescribedTss !== undefined) {
+      value = Math.min(
+        Math.max(value, state.prevPrescribedTss * ANCHOR_V2_MAX_CUT),
+        state.prevPrescribedTss * ANCHOR_V2_RAMP_CAP
+      );
+    }
+    const clamped = Math.max(60, value);
     const guarded = raw !== clamped;
 
     const peakEra = this.eras?.find((e) => e.weight > 1);

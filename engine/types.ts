@@ -13,6 +13,16 @@ export interface AthleteState {
   tsb: number;
   /** Executed weekly TSS, oldest → newest (4 weeks). */
   last4WeeksTss: number[];
+  /** Optional richer window: executed (or in-plan prescribed) weekly TSS,
+   *  oldest → newest, up to 8 weeks when the caller has them (the plan
+   *  simulation does). A superset of last4WeeksTss; today only anchor-v2's
+   *  ramp-cap reference reads it, falling back to last4WeeksTss. */
+  trailingWeeksTss?: number[];
+  /** What the engine itself prescribed for the immediately preceding week,
+   *  when this state sits inside a simulated plan (plan.ts sets it from week
+   *  2 on). Only anchor-v2's week-over-week smoothing band reads it; absent
+   *  (real history, backtest, week 1) the band is inactive. */
+  prevPrescribedTss?: number;
   /** Trailing discipline mix of executed load. */
   last4Shares: { swim: number; bike: number; run: number };
   /** Days from the week's start to the next A-race, if one is scheduled. */
