@@ -131,6 +131,19 @@ export function getWeekly(): WeeklyRow[] {
   }
 }
 
+/** Optional athlete context (data/app/athlete-context.json, gitignored).
+ *  Currently just a home location for the weather hint. Absent → null. */
+export function getAthleteLocation(): { lat: number; lon: number } | null {
+  try {
+    const ctx = JSON.parse(readFileSync(p("app", "athlete-context.json"), "utf8"));
+    const { lat, lon } = ctx?.location ?? {};
+    if (typeof lat !== "number" || typeof lon !== "number") return null;
+    return { lat, lon };
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------- Remote source (deployed site, no local corpus) --------
  * Rule: pages read athlete data through this module only. When data/ is
  * absent, Strava (OAuth cookie) can stand in for the corpus with an
@@ -141,3 +154,9 @@ export {
   stravaConfigured,
   type RemoteSnapshot,
 } from "./strava-data";
+
+/* ---------------- File imports (data/app/imports.json, gitignored) ------ */
+export { readImports, type ImportBatch, type ImportedActivity } from "./imports-io";
+
+/* ---------------- intervals.icu (env-gated remote source) --------------- */
+export { getIntervalsActivities, intervalsConfigured } from "./intervals-data";
