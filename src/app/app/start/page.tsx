@@ -1,25 +1,17 @@
 import { getLatestState, hasCorpus } from "@/lib/athlete-data";
+import { INJURY_AREAS, INJURY_LABEL, readAthleteContext } from "@/lib/athlete-context";
 import { EmptyState } from "@/components/app/bits";
+import { RaceDisciplineFields } from "@/components/app/intake-fields";
 import { generatePlanAction } from "../actions";
 
 export const dynamic = "force-dynamic";
-
-const RACE_TYPES = [
-  ["run-5k", "5K"],
-  ["run-10k", "10K"],
-  ["run-half", "Half marathon"],
-  ["run-marathon", "Marathon"],
-  ["sprint", "Sprint tri"],
-  ["olympic", "Olympic tri"],
-  ["half-ironman", "70.3"],
-  ["ironman", "Ironman"],
-] as const;
 
 export default function StartPage() {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
   const state = getLatestState();
+  const intake = readAthleteContext()?.intake ?? null;
   // Server component, force-dynamic: rendered per request, so "now" is stable
   // for the lifetime of this render.
   // eslint-disable-next-line react-hooks/purity
@@ -53,14 +45,21 @@ export default function StartPage() {
             <input id="raceDate" name="raceDate" type="date" required min={minDate} defaultValue={defaultDate} className={field} />
           </div>
           <div>
-            <label htmlFor="raceType" className="label-mono text-bone-faint block mb-2">Distance</label>
-            <select id="raceType" name="raceType" className={field} defaultValue="run-half">
-              {RACE_TYPES.map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
+            <label htmlFor="weeklyHours" className="label-mono text-bone-faint block mb-2">Hours available / week</label>
+            <input
+              id="weeklyHours"
+              name="weeklyHours"
+              type="number"
+              min={2}
+              max={30}
+              step={0.5}
+              required
+              defaultValue={intake?.weeklyHours ?? 8}
+              className={field}
+            />
           </div>
         </div>
+        <RaceDisciplineFields fieldClass={field} defaultMode={intake?.disciplineMode ?? "running-only"} />
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label htmlFor="daysPerWeek" className="label-mono text-bone-faint block mb-2">Days per week</label>
@@ -78,6 +77,55 @@ export default function StartPage() {
             </select>
           </div>
         </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="strengthAccess" className="label-mono text-bone-faint block mb-2">Strength access</label>
+            <select id="strengthAccess" name="strengthAccess" className={field} defaultValue={intake?.strengthAccess ?? "bodyweight"}>
+              <option value="none">None</option>
+              <option value="bodyweight">Bodyweight only</option>
+              <option value="full-gym">Full gym</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="experienceLevel" className="label-mono text-bone-faint block mb-2">Experience</label>
+            <select id="experienceLevel" name="experienceLevel" className={field} defaultValue={intake?.experienceLevel ?? "intermediate"}>
+              <option value="beginner">Newer to structure (&lt;2 yrs)</option>
+              <option value="intermediate">Consistent (2–5 yrs)</option>
+              <option value="advanced">Long history (5+ yrs)</option>
+            </select>
+          </div>
+        </div>
+        <fieldset className="border border-hairline p-4">
+          <legend className="label-mono text-bone-faint px-2">Injury history · check what applies</legend>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+            {INJURY_AREAS.map((area) => (
+              <label key={area} className="flex items-center gap-2.5 text-[13px] text-bone-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  name="injuries"
+                  value={area}
+                  defaultChecked={intake?.injuries.includes(area) ?? false}
+                  className="accent-current"
+                />
+                {INJURY_LABEL[area]}
+              </label>
+            ))}
+          </div>
+          <div className="mt-4">
+            <label htmlFor="injuryNotes" className="label-mono text-bone-faint block mb-2">Notes · anything else Taper should know</label>
+            <textarea
+              id="injuryNotes"
+              name="injuryNotes"
+              rows={2}
+              placeholder="e.g. left achilles flares past 60 km/week"
+              defaultValue={intake?.injuryNotes ?? ""}
+              className={field}
+            />
+          </div>
+          <p className="label-mono text-bone-faint mt-3">
+            Drives the supplemental prevention work on Today. Stays local (data/, never in git).
+          </p>
+        </fieldset>
         <button className="label-mono bg-signal text-field px-8 py-4 hover:bg-bone transition-colors duration-150">
           Draft the season
         </button>

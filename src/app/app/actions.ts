@@ -5,6 +5,14 @@ import { revalidatePath } from "next/cache";
 import { generatePlan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
 import { getAthlete, getHistory, getLatestState } from "@/lib/athlete-data";
 import { readPlan, setSessionStatus, writePlan } from "@/lib/plan-io";
+import {
+  parseDisciplineMode,
+  parseExperienceLevel,
+  parseInjuryAreas,
+  parseStrengthAccess,
+  writeIntake,
+  type IntakeData,
+} from "@/lib/athlete-context";
 
 function buildAndSave(request: PlanRequest): void {
   const athlete = getAthlete();
@@ -16,6 +24,21 @@ function buildAndSave(request: PlanRequest): void {
 }
 
 export async function generatePlanAction(formData: FormData): Promise<void> {
+  // Persist intake answers first — they extend data/app/athlete-context.json
+  // (merge, never clobber) and are useful even if generation fails.
+  const notes = String(formData.get("injuryNotes") || "").trim();
+  const hours = Number(formData.get("weeklyHours"));
+  const intake: IntakeData = {
+    disciplineMode: parseDisciplineMode(formData.get("disciplineMode")),
+    weeklyHours: Number.isFinite(hours) ? Math.min(30, Math.max(1, hours)) : 8,
+    strengthAccess: parseStrengthAccess(formData.get("strengthAccess")),
+    injuries: parseInjuryAreas(formData.getAll("injuries")),
+    ...(notes ? { injuryNotes: notes } : {}),
+    experienceLevel: parseExperienceLevel(formData.get("experienceLevel")),
+    updatedAt: new Date().toISOString(),
+  };
+  writeIntake(intake);
+
   const request: PlanRequest = {
     raceName: String(formData.get("raceName") || "A race"),
     raceDate: String(formData.get("raceDate")),
