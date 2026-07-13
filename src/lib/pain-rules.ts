@@ -100,6 +100,24 @@ export function surfaceAlerts(entries: PainEntry[], today: string): PainAlert[] 
 }
 
 /**
+ * Scheduler hold (docs/strength-module.md §4): a non-rehab protocol whose
+ * targets intersect an alerted region is held until the rule clears; rehab
+ * work is exempt (daily-eligible). Shared by the Today page (skip
+ * scheduling) and the strength server actions — "pain-held sessions do not
+ * feed the machine" must hold server-side too, so a stale form (pain logged
+ * in another tab after render) or crafted POST cannot record a completion
+ * that replayProgression would count.
+ */
+export function isPainHeld(
+  protocol: { rehab?: boolean; targets?: PainRegion[] },
+  alerts: PainAlert[]
+): boolean {
+  if (protocol.rehab) return false;
+  const regions = new Set(alerts.map((a) => a.region));
+  return (protocol.targets ?? []).some((t) => regions.has(t));
+}
+
+/**
  * Weekly pain averages for charting against weekly TSS: for each week
  * (Monday `weekStart`, 7 days), the mean of daily max scores across all
  * regions — i.e. the 7-day average pain for that week. Weeks with no

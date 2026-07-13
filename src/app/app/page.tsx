@@ -4,7 +4,7 @@ import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-pr
 import { readPlan } from "@/lib/plan-io";
 import { readPainLog, readProtocolsState, isStrengthDone } from "@/lib/strength-io";
 import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
-import { surfaceAlerts } from "@/lib/pain-rules";
+import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
 import { INJURY_LABEL } from "@/lib/athlete-context";
 import { QUALITY, briefForWeek, currentWeek, easedVersion } from "@/lib/week-insights";
 import {
@@ -145,10 +145,9 @@ export default async function TodayPage() {
   const protocols = activeProtocols(ctx, strengthState);
   // Pain hold (§4): non-rehab protocols targeting an alerted region skip
   // scheduling until the rule clears; rehab work stays daily-eligible.
+  // Same predicate the strength actions re-check server-side (pain-rules).
   const alertRegions = new Set(painAlerts.map((a) => a.region));
-  const held = protocols.filter(
-    (p) => !p.rehab && (p.targets ?? []).some((t) => alertRegions.has(t))
-  );
+  const held = protocols.filter((p) => isPainHeld(p, painAlerts));
   const schedulable = protocols.filter((p) => !held.includes(p));
   const found = stored ? currentWeek(stored.plan, today) : null;
   let strengthItems: StrengthItemView[] = [];

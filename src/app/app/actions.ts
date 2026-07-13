@@ -22,7 +22,7 @@ import {
   parsePainScore,
 } from "@/lib/strength-protocols";
 import { deloadSets } from "@/lib/strength-schedule";
-import { surfaceAlerts } from "@/lib/pain-rules";
+import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
 import { easedVersion } from "@/lib/week-insights";
 
 function buildAndSave(request: PlanRequest): void {
@@ -112,6 +112,8 @@ export async function replanAction(): Promise<void> {
  * date and the protocol must exist in the library, else this is a no-op.
  * A plain toggle records every block's sets as done at prescribed dose
  * ("made", not "top") — per-set logging arrives with progression.
+ * Pain holds are re-checked here, not just at render (docs §4): marking a
+ * held protocol done via a stale form is a no-op; un-marking stays allowed.
  */
 export async function toggleStrengthDoneAction(formData: FormData): Promise<void> {
   const date = String(formData.get("date") || "");
@@ -121,6 +123,7 @@ export async function toggleStrengthDoneAction(formData: FormData): Promise<void
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
   const protocol = SEED_PROTOCOLS.find((p) => p.id === protocolId);
   if (!protocol) return;
+  if (markDone && isPainHeld(protocol, surfaceAlerts(readPainLog(), localToday()))) return;
   setStrengthDone(
     date,
     protocolId,
@@ -143,6 +146,9 @@ export async function toggleStrengthDoneAction(formData: FormData): Promise<void
  * prescribed set was completed. Persisting recomputes progression from the
  * full completion log, so re-logging a day overwrites rather than
  * double-feeding the machine; deload sessions never feed it at all.
+ * Pain holds are re-checked here, not just at render (docs §4): logging a
+ * held protocol via a stale form or crafted POST is a no-op, so a hold can
+ * never extend a progression streak.
  */
 export async function logStrengthSetsAction(formData: FormData): Promise<void> {
   const date = String(formData.get("date") || "");
@@ -151,6 +157,7 @@ export async function logStrengthSetsAction(formData: FormData): Promise<void> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
   const protocol = SEED_PROTOCOLS.find((p) => p.id === protocolId);
   if (!protocol) return;
+  if (isPainHeld(protocol, surfaceAlerts(readPainLog(), localToday()))) return;
   const results = protocol.blocks.map((b, i) => {
     const prescribed = deload ? deloadSets(b.sets) : b.sets;
     const n = Number(formData.get(`sets-${i}`));

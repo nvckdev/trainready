@@ -21,6 +21,7 @@ import type {
   ProtocolBlock,
   StrengthCompletion,
 } from "../src/lib/strength-protocols";
+import { isPainHeld } from "../src/lib/pain-rules";
 
 let passed = 0;
 const failures: string[] = [];
@@ -171,6 +172,25 @@ console.log("— replayProgression (projection of the completion log)");
   const undone = replayProgression([protocol], completions.slice(1));
   eq("undo rewinds the machine", undone[key]?.currentLoad, { kind: "external", kg: 0 });
   eq("remaining top keeps streak 1", undone[key]?.topStreak, 1);
+}
+
+console.log("— isPainHeld (server-side hold predicate, docs §4)");
+{
+  const alert = { region: "calf-achilles" as const, rule: "at-rest" as const, detail: "" };
+  check(
+    "non-rehab protocol targeting alerted region is held",
+    isPainHeld({ targets: ["calf-achilles"] }, [alert])
+  );
+  check(
+    "rehab protocol is exempt even when targeting the region",
+    !isPainHeld({ rehab: true, targets: ["calf-achilles"] }, [alert])
+  );
+  check(
+    "protocol targeting other regions is not held",
+    !isPainHeld({ targets: ["shoulder"] }, [alert])
+  );
+  check("no active alerts → nothing held", !isPainHeld({ targets: ["calf-achilles"] }, []));
+  check("targetless protocol is never held", !isPainHeld({}, [alert]));
 }
 
 console.log("");
