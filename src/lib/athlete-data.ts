@@ -120,3 +120,14 @@ export function getWeekly(): WeeklyRow[] {
     return [];
   }
 }
+
+/* ---------------- Remote source (deployed site, no local corpus) --------
+ * Rule: pages read athlete data through this module only. When data/ is
+ * absent, Strava (OAuth cookie) can stand in for the corpus with an
+ * estimated PMC — clearly labeled an estimate in the UI. */
+export {
+  getStravaSnapshot,
+  readTokens as getStravaTokens,
+  stravaConfigured,
+  type RemoteSnapshot,
+} from "./strava-data";

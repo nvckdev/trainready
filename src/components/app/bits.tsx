@@ -2,6 +2,7 @@ import Link from "next/link";
 import { SERIES } from "./charts";
 import type { PlannedSessionOut } from "../../../engine/plan.ts";
 import { toggleSessionAction } from "@/app/app/actions";
+import { sessionAdjustments, type WeekBrief } from "@/lib/week-insights";
 
 export function StatChip({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
@@ -37,8 +38,17 @@ export const DISC_COLOR: Record<string, string> = {
   rest: "var(--bone-faint)",
 };
 
-export function SessionCard({ s, compact = false }: { s: PlannedSessionOut; compact?: boolean }) {
+export function SessionCard({
+  s,
+  compact = false,
+  tsb = null,
+}: {
+  s: PlannedSessionOut;
+  compact?: boolean;
+  tsb?: number | null;
+}) {
   const done = s.status === "done";
+  const adj = compact ? null : sessionAdjustments(s, tsb);
   return (
     <div className={`border border-hairline ${done ? "opacity-55" : ""}`}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-hairline">
@@ -64,14 +74,89 @@ export function SessionCard({ s, compact = false }: { s: PlannedSessionOut; comp
         </div>
       </div>
       {!compact && (
-        <div className="px-4 py-4 grid md:grid-cols-[1fr_240px] gap-5">
-          <pre className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-bone-muted">{s.structure}</pre>
-          <div className="border-l border-hairline pl-5">
-            <div className="label-mono text-signal-bright mb-1.5">Why</div>
-            <p className="text-[13px] leading-relaxed text-bone-muted">{s.why}</p>
+        <>
+          <div className="px-4 py-4 grid md:grid-cols-[1fr_240px] gap-5">
+            <pre className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-bone-muted">{s.structure}</pre>
+            <div className="border-l border-hairline pl-5">
+              <div className="label-mono text-signal-bright mb-1.5">Why</div>
+              <p className="text-[13px] leading-relaxed text-bone-muted">{s.why}</p>
+            </div>
+          </div>
+          {adj && adj.options.length > 0 && (
+            <div className="px-4 py-4 border-t border-hairline">
+              <div className="label-mono text-bone-faint mb-3">Acceptable adjustments · match the session to the day</div>
+              {adj.nudge && (
+                <p className="text-[13px] leading-relaxed text-signal-bright mb-3">{adj.nudge}</p>
+              )}
+              <div className="grid md:grid-cols-3 gap-4">
+                {adj.options.map((o) => (
+                  <div key={o.feeling}>
+                    <div className="label-mono text-bone mb-1">{o.feeling}</div>
+                    <p className="text-[12.5px] leading-relaxed text-bone-muted">{o.advice}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Current-week volume + the reasoning behind it. */
+export function WeekBriefStrip({ brief }: { brief: WeekBrief }) {
+  const remainTss = Math.max(0, brief.targetTss - brief.doneTss);
+  return (
+    <div className="border border-hairline">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
+        <span className="label-mono text-bone-faint">
+          This week · {brief.weekStart.slice(5)} · {brief.phase} · week {brief.index}/{brief.total}
+        </span>
+        <span className="label-mono text-bone-faint">
+          {brief.doneCount}/{brief.sessionCount} sessions done
+        </span>
+      </div>
+      <div className="px-4 py-4 grid md:grid-cols-[1fr_1fr] gap-5">
+        <div className="flex flex-wrap gap-6">
+          <div>
+            <div className="label-mono text-bone-faint">Target load</div>
+            <div className="font-mono text-xl tabular mt-0.5">
+              {brief.targetTss} <span className="label-mono text-bone-faint">TSS</span>
+            </div>
+          </div>
+          <div>
+            <div className="label-mono text-bone-faint">Volume</div>
+            <div className="font-mono text-xl tabular mt-0.5">
+              {brief.plannedHours.toFixed(1)} <span className="label-mono text-bone-faint">hrs</span>
+            </div>
+          </div>
+          {brief.plannedRunKm > 0 && (
+            <div>
+              <div className="label-mono text-bone-faint">Run mileage</div>
+              <div className="font-mono text-xl tabular mt-0.5">
+                ≈{Math.round(brief.plannedRunKm)} <span className="label-mono text-bone-faint">km</span>
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="label-mono text-bone-faint">Remaining</div>
+            <div className="font-mono text-xl tabular mt-0.5">
+              {remainTss} <span className="label-mono text-bone-faint">TSS</span>
+            </div>
           </div>
         </div>
-      )}
+        <div className="md:border-l md:border-hairline md:pl-5">
+          <div className="label-mono text-signal-bright mb-1.5">Why this volume</div>
+          <ul className="space-y-1">
+            {brief.why.map((line, i) => (
+              <li key={i} className="text-[12.5px] leading-relaxed text-bone-muted">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }
