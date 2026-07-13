@@ -10,6 +10,7 @@ const tabs = [
   { href: "/app", label: "Today" },
   { href: "/app/plan", label: "Plan" },
   { href: "/app/fitness", label: "Fitness" },
+  { href: "/app/import", label: "Import" },
   { href: "/app/start", label: "New goal" },
 ];
 

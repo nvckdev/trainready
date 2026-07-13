@@ -2,6 +2,7 @@ import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, stravaConfigured
 import { readPlan } from "@/lib/plan-io";
 import { briefForWeek } from "@/lib/week-insights";
 import { EmptyState, SessionCard, StatChip, WeekBriefStrip } from "@/components/app/bits";
+import { WeatherHint } from "@/components/app/weather-hint";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +99,7 @@ export default async function TodayPage() {
           {daysToRace !== null && <StatChip label="Race in" value={String(daysToRace)} unit="days" />}
         </div>
       </div>
+      <WeatherHint />
       <div className="rule mt-5 mb-8" />
 
       {!stored ? (
