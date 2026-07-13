@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taper — Adaptive Endurance Training</title>
+<meta name="description" content="Tell Taper the race. It builds your season from your training history, then re-plans every morning as life happens.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wght@0,100..900;1,100..900&family=Fragment+Mono:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0b0a09;
+  --ink-2: #12100e;
+  --bone: #f0ede6;
+  --bone-muted: #beb7aa;
+  --bone-faint: #857e72;
+  --hairline: rgba(240, 237, 230, 0.12);
+  --signal: #d96a35;
+  --signal-bright: #eb8850;
+  --heading: 'Archivo', -apple-system, sans-serif;
+  --mono: 'Fragment Mono', ui-monospace, monospace;
+  --shadow-text: 0 2px 30px rgba(0, 0, 0, 0.65);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--heading);
+  font-weight: 300;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--signal); color: var(--ink); }
+
+.label-mono {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-weight: 400;
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 6vw; }
+@media (min-width: 1400px) { .wrap { padding-inline: 44px; } }
+
+/* Ambient — static, cheap on mobile */
+.grain {
+  position: fixed; inset: 0; z-index: 100; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+}
+.vignette {
+  position: fixed; inset: 0; z-index: 99; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(11, 10, 9, 0.42) 100%);
+}
+
+/* Reveals — transform + opacity only */
+.rv {
+  opacity: 0; transform: translateY(22px);
+  transition: opacity 0.75s ease, transform 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rv.in { opacity: 1; transform: translateY(0); }
+.rv-d1 { transition-delay: 0.09s; }
+.rv-d2 { transition-delay: 0.18s; }
+.rv-d3 { transition-delay: 0.27s; }
+@media (prefers-reduced-motion: reduce) {
+  .rv { opacity: 1; transform: none; transition: none; }
+}
+
+/* ---------- Header ---------- */
+header {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 6vw;
+  background: linear-gradient(180deg, rgba(11,10,9,0.88), transparent);
+}
+.brand { font-family: var(--mono); font-size: 13px; letter-spacing: 0.5em; text-transform: uppercase; color: var(--bone); text-decoration: none; }
+.hdr-links { display: flex; align-items: center; gap: 10px; }
+.hdr-ghost {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--bone); text-decoration: none; padding: 11px 16px;
+  border: 1px solid rgba(240,237,230,0.25);
+  transition: border-color 0.2s ease;
+}
+.hdr-ghost:hover { border-color: var(--bone); }
+.hdr-cta {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink); background: var(--signal); text-decoration: none;
+  padding: 12px 18px;
+  transition: background 0.2s ease;
+}
+.hdr-cta:hover { background: var(--bone); }
+@media (max-width: 560px) { .hdr-ghost { display: none; } }
+
+/* ---------- Video sections (shared) ---------- */
+.vid { position: relative; overflow: hidden; }
+.vid video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  transform: scale(1.06);
+  transition: transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.vid.in-view video { transform: scale(1); }
+.vid .shade { position: absolute; inset: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .vid video { transform: none; transition: none; }
+}
+
+/* ---------- Hero ---------- */
+.hero { min-height: 100svh; display: flex; align-items: flex-end; }
+.hero .shade {
+  background: linear-gradient(90deg, rgba(11,10,9,0.82) 0%, rgba(11,10,9,0.45) 50%, rgba(11,10,9,0.18) 100%),
+              linear-gradient(180deg, rgba(11,10,9,0.42) 0%, transparent 32%, transparent 55%, rgba(11,10,9,0.94) 100%);
+}
+.hero-inner {
+  position: relative; z-index: 2; width: 100%;
+  padding-top: 108px; padding-bottom: clamp(36px, 6vh, 72px);
+}
+.hero .kick { display: flex; gap: 24px; flex-wrap: wrap; color: var(--bone-muted); text-shadow: var(--shadow-text); }
+.hero .kick .k1 { color: var(--signal-bright); }
+.hero .kick .k3 { color: var(--bone-faint); }
+.hero h1 {
+  margin-top: 26px;
+  font-size: clamp(64px, 12.5vw, 168px);
+  font-weight: 200; line-height: 0.96; letter-spacing: -0.02em;
+  text-transform: uppercase;
+  text-shadow: var(--shadow-text);
+}
+.hero h1 .w { display: block; }
+.hero h1 .w1 { color: var(--bone-faint); }
+.hero h1 .w2 { color: var(--signal); font-weight: 300; }
+.hero h1 .w3 { color: var(--bone); }
+.hero h1 .ch {
+  display: inline-block; opacity: 0; transform: translateY(0.3em);
+  transition: opacity 0.55s ease, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hero h1.split-in .ch { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .hero h1 .ch { opacity: 1; transform: none; transition: none; }
+}
+.hero .sub {
+  margin-top: 26px; max-width: 54ch;
+  font-size: clamp(15px, 1.4vw, 19px); line-height: 1.7; color: var(--bone);
+  text-shadow: var(--shadow-text);
+}
+.hero .sub strong { font-weight: 500; color: var(--signal-bright); }
+.hero .ctas { margin-top: 32px; display: flex; gap: 12px; flex-wrap: wrap; }
+.btn {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.26em;
+  text-transform: uppercase; text-decoration: none;
+  padding: 17px 30px; display: inline-block;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.btn-primary { background: var(--signal); color: var(--ink); }
+.btn-primary:hover { background: var(--bone); }
+.btn-ghost { border: 1px solid rgba(240,237,230,0.35); color: var(--bone); background: rgba(11,10,9,0.35); }
+.btn-ghost:hover { border-color: var(--bone); }
+.hero-stats {
+  margin-top: 46px;
+  display: flex; border: 1px solid var(--hairline);
+  background: rgba(11, 10, 9, 0.62);
+  max-width: 780px;
+}
+.hstat { flex: 1; padding: 16px 20px; border-right: 1px solid var(--hairline); }
+.hstat:last-child { border-right: none; }
+.hstat .n { font-family: var(--mono); font-size: clamp(17px, 1.9vw, 25px); color: var(--bone); }
+.hstat .n em { font-style: normal; color: var(--signal-bright); }
+.hstat .l { margin-top: 5px; font-family: var(--mono); font-size: 8px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--bone-faint); }
+@media (max-width: 700px) {
+  .hero-stats { flex-wrap: wrap; }
+  .hstat { flex: 1 1 50%; border-bottom: 1px solid var(--hairline); }
+  .hstat:nth-child(3), .hstat:nth-child(4) { border-bottom: none; }
+}
+
+/* ---------- Shared typography ---------- */
+.overline {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.35em;
+  text-transform: uppercase; color: var(--signal-bright);
+  display: flex; align-items: center; gap: 14px;
+}
+.overline::before { content: ''; width: 34px; height: 1px; background: var(--signal); flex-shrink: 0; }
+h2.title {
+  margin-top: 20px;
+  font-size: clamp(36px, 5vw, 68px);
+  font-weight: 200; line-height: 1.04; letter-spacing: -0.015em;
+  max-width: 18ch;
+  text-shadow: var(--shadow-text);
+}
+h2.title em { font-style: italic; color: var(--signal-bright); font-weight: 250; }
+.lede {
+  margin-top: 20px; font-size: clamp(15px, 1.3vw, 17px); line-height: 1.75;
+  color: var(--bone-muted); max-width: 50ch; text-shadow: var(--shadow-text);
+}
+
+/* ---------- Quote ---------- */
+#method { padding: clamp(90px, 14vh, 160px) 0; border-top: 1px solid var(--hairline); }
+#method .qmark { font-size: 100px; line-height: 0.55; color: var(--signal); font-weight: 200; height: 44px; }
+#method blockquote {
+  font-size: clamp(28px, 3.6vw, 48px); font-weight: 250; line-height: 1.3;
+  letter-spacing: 0.002em; max-width: 24ch;
+}
+#method blockquote em { font-style: italic; color: var(--signal-bright); }
+#method .divider { width: 56px; height: 1px; background: var(--signal); margin: 32px 0 16px; }
+#method .attr { font-family: var(--mono); font-size: 9px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--bone-faint); }
+
+/* ---------- How it works ---------- */
+#how { padding: clamp(80px, 12vh, 140px) 0; }
+.steps {
+  margin-top: 54px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+  background: var(--hairline); border: 1px solid var(--hairline);
+}
+.step { background: var(--ink); padding: 30px 26px 34px; }
+.step .s-num { font-family: var(--mono); font-size: 10px; color: var(--signal); letter-spacing: 0.15em; }
+.step h3 { margin-top: 16px; font-size: 21px; font-weight: 400; }
+.step p { margin-top: 10px; font-size: 14px; line-height: 1.7; color: var(--bone-muted); }
+@media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+
+/* ---------- Immersive video sections ---------- */
+.vid-sec { min-height: 92svh; display: flex; align-items: center; }
+.vid-sec .shade {
+  background: linear-gradient(90deg, rgba(11,10,9,0.88) 0%, rgba(11,10,9,0.58) 46%, rgba(11,10,9,0.22) 100%),
+              linear-gradient(180deg, rgba(11,10,9,0.8) 0%, transparent 30%, transparent 68%, rgba(11,10,9,0.85) 100%);
+}
+.vid-sec .vs-inner { position: relative; z-index: 2; width: 100%; padding-block: clamp(80px, 12vh, 130px); }
+.vid-sec .vs-content { max-width: 640px; }
+.vid-sec .vs-tag {
+  position: absolute; right: 6vw; bottom: 22px; z-index: 2;
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.25em;
+  text-transform: uppercase; color: rgba(240, 237, 230, 0.5);
+}
+
+/* Floating feature list — hairlines only, no boxes */
+.feat-list { margin-top: 34px; }
+.feat {
+  display: flex; align-items: baseline; gap: 18px;
+  padding: 15px 0; border-top: 1px solid var(--hairline);
+}
+.feat:last-child { border-bottom: 1px solid var(--hairline); }
+.feat .idx { font-family: var(--mono); font-size: 9px; color: var(--signal); letter-spacing: 0.1em; }
+.feat .name { font-size: 16px; color: var(--bone); font-weight: 400; min-width: 172px; text-shadow: var(--shadow-text); }
+.feat .desc { font-size: 13px; color: var(--bone-muted); text-shadow: var(--shadow-text); }
+@media (max-width: 640px) { .feat .desc { display: none; } }
+
+/* Disciplines — floating rows, mono tags */
+.disc-list { margin-top: 34px; }
+.disc {
+  display: grid; grid-template-columns: 76px 1fr; gap: 18px; align-items: baseline;
+  padding: 17px 0; border-top: 1px solid var(--hairline);
+}
+.disc:last-child { border-bottom: 1px solid var(--hairline); }
+.disc .d-tag { font-family: var(--mono); font-size: 9px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--signal-bright); }
+.disc .d-name { font-size: 17px; font-weight: 400; text-shadow: var(--shadow-text); }
+.disc .d-sub { margin-top: 5px; font-size: 13px; color: var(--bone-muted); text-shadow: var(--shadow-text); }
+
+/* ---------- Sync ---------- */
+#sync { border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 56px 0; }
+.sync-row { display: flex; align-items: baseline; justify-content: space-between; gap: 26px; flex-wrap: wrap; }
+.sync-items { display: flex; gap: clamp(24px, 4vw, 56px); flex-wrap: wrap; }
+.sync-item { display: flex; flex-direction: column; gap: 5px; }
+.sync-item .sv { font-size: 15px; font-weight: 400; color: var(--bone); }
+.sync-item .sl { font-family: var(--mono); font-size: 8px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--bone-faint); }
+
+/* ---------- Race band ---------- */
+.race { min-height: 96svh; display: flex; align-items: flex-end; }
+.race .shade {
+  background: linear-gradient(90deg, rgba(11,10,9,0.85) 0%, rgba(11,10,9,0.5) 52%, rgba(11,10,9,0.25) 100%),
+              linear-gradient(180deg, rgba(11,10,9,0.75) 0%, transparent 34%, transparent 58%, rgba(11,10,9,0.94) 100%);
+}
+.race .vs-inner { padding-bottom: clamp(60px, 10vh, 110px); }
+.race h2.race-title {
+  margin-top: 20px;
+  font-size: clamp(52px, 9vw, 128px);
+  font-weight: 200; line-height: 0.98; letter-spacing: -0.02em;
+  text-shadow: var(--shadow-text);
+}
+.race h2.race-title em { font-style: italic; color: var(--signal-bright); font-weight: 250; }
+
+/* ---------- Footer ---------- */
+footer {
+  padding: 46px 6vw;
+  display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 16px;
+  background: var(--ink-2);
+}
+footer .f-legal { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2em; color: var(--bone-faint); text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<div class="grain"></div>
+<div class="vignette"></div>
+
+<header>
+  <a class="brand" href="#">Taper</a>
+  <div class="hdr-links">
+    <a class="hdr-ghost" href="https://trainready-taupe.vercel.app/app">Open dashboard</a>
+    <a class="hdr-cta" href="#join">Join the beta</a>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="vid hero">
+  <video autoplay muted loop playsinline poster="posters/hero.jpg" src="videos/taper-hero.mp4"></video>
+  <div class="shade"></div>
+  <div class="hero-inner wrap">
+    <div class="kick label-mono">
+      <span class="k1">Taper</span>
+      <span class="k2">Adaptive endurance training</span>
+      <span class="k3">Beta · Rev 2026.07</span>
+    </div>
+    <h1 id="hero-title">
+      <span class="w w1" data-split>Train</span>
+      <span class="w w2" data-split>Taper</span>
+      <span class="w w3" data-split>Race</span>
+    </h1>
+    <p class="sub rv in rv-d2"><strong>Training plans that re-plan themselves.</strong> Tell Taper the race — it builds your season from your training history, then re-plans every morning as life happens.</p>
+    <div class="ctas rv in rv-d3">
+      <a class="btn btn-primary" href="#join">Join the beta</a>
+      <a class="btn btn-ghost" href="https://trainready-taupe.vercel.app/app">Open dashboard</a>
+    </div>
+    <div class="hero-stats rv in rv-d3">
+      <div class="hstat"><div class="n">183</div><div class="l">Weeks backtested</div></div>
+      <div class="hstat"><div class="n">3</div><div class="l">Disciplines</div></div>
+      <div class="hstat"><div class="n">Daily</div><div class="l">Morning re-plans</div></div>
+      <div class="hstat"><div class="n"><em>1</em></div><div class="l">Race day</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ METHOD QUOTE ============ -->
+<section id="method">
+  <div class="wrap">
+    <div class="qmark rv">“</div>
+    <blockquote class="rv rv-d1">Tell Taper the race. It builds your season <em>backwards</em> from that morning.</blockquote>
+    <div class="divider rv rv-d2"></div>
+    <div class="attr rv rv-d2">The method · Goal-backed periodization</div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section id="how">
+  <div class="wrap">
+    <div class="overline rv">How it works</div>
+    <h2 class="title rv rv-d1">The race defines the season — <em>not the other way round.</em></h2>
+    <div class="steps rv rv-d2">
+      <div class="step">
+        <div class="s-num">01</div>
+        <h3>Tell it the race</h3>
+        <p>Pick the day. Import the course file — Taper learns its climbs, surface, and heat.</p>
+      </div>
+      <div class="step">
+        <div class="s-num">02</div>
+        <h3>It builds your season</h3>
+        <p>Backwards from race morning, out of your training history and the hours you actually have.</p>
+      </div>
+      <div class="step">
+        <div class="s-num">03</div>
+        <h3>It re-plans every morning</h3>
+        <p>Missed Thursday's run? It flows to Friday. Zones re-derive from what you actually do.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ENGINE — text floating on swim video ============ -->
+<section class="vid vid-sec">
+  <video muted loop playsinline preload="metadata" poster="posters/swim.jpg" src="videos/taper-swim.mp4"></video>
+  <div class="shade"></div>
+  <div class="vs-inner wrap">
+    <div class="vs-content">
+      <div class="overline rv">The engine</div>
+      <h2 class="title rv rv-d1">Every session names its purpose.</h2>
+      <p class="lede rv rv-d2">No black boxes. Each workout carries the adaptation it targets and the evidence behind it — "raise threshold before build 2 closes."</p>
+      <div class="feat-list rv rv-d3">
+        <div class="feat"><span class="idx">01</span><span class="name">Goal-backed season</span><span class="desc">Periodization aimed at one specific morning</span></div>
+        <div class="feat"><span class="idx">02</span><span class="name">Zones, re-derived</span><span class="desc">Thresholds tracked from what you actually do</span></div>
+        <div class="feat"><span class="idx">03</span><span class="name">Daily re-flow</span><span class="desc">Life happens; the plan absorbs it</span></div>
+        <div class="feat"><span class="idx">04</span><span class="name">Course match</span><span class="desc">Long days rehearse the race's actual terrain</span></div>
+      </div>
+    </div>
+  </div>
+  <span class="vs-tag">First light · Open water</span>
+</section>
+
+<!-- ============ DISCIPLINES — text floating on climb video ============ -->
+<section class="vid vid-sec">
+  <video muted loop playsinline preload="metadata" poster="posters/climb.jpg" src="videos/taper-climb.mp4"></video>
+  <div class="shade"></div>
+  <div class="vs-inner wrap">
+    <div class="vs-content">
+      <div class="overline rv">Three disciplines</div>
+      <h2 class="title rv rv-d1">One instrument, <em>tuned per sport.</em></h2>
+      <div class="disc-list rv rv-d2">
+        <div class="disc">
+          <span class="d-tag">Swim</span>
+          <div><div class="d-name">Stroke work, prescribed per length</div><div class="d-sub">Pace /100m · stroke rate, lane by lane</div></div>
+        </div>
+        <div class="disc">
+          <span class="d-tag">Bike</span>
+          <div><div class="d-name">Intervals built from your power curve</div><div class="d-sub">Norm. power · 2 × 20' @ FTP when it counts</div></div>
+        </div>
+        <div class="disc">
+          <span class="d-tag">Run</span>
+          <div><div class="d-name">Splits planned negative, on purpose</div><div class="d-sub">Pace /km · vert. gain, built to finish faster</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <span class="vs-tag">Course match · 1 847 m</span>
+</section>
+
+<!-- ============ SYNC ============ -->
+<section id="sync">
+  <div class="wrap sync-row">
+    <div>
+      <div class="overline rv">Your data, in</div>
+      <p class="lede rv rv-d1" style="margin-top: 12px; max-width: 34ch;">History in, plan out. Taper reads what you've done and writes what's next.</p>
+    </div>
+    <div class="sync-items rv rv-d2">
+      <div class="sync-item"><span class="sv">Garmin</span><span class="sl">FIT · Connect</span></div>
+      <div class="sync-item"><span class="sv">TrainingPeaks</span><span class="sl">Full history</span></div>
+      <div class="sync-item"><span class="sv">WKO</span><span class="sl">WKO · TCX</span></div>
+      <div class="sync-item"><span class="sv">Strava · COROS</span><span class="sl">Activities</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ RACE DAY ============ -->
+<section class="vid race" id="join">
+  <video muted loop playsinline preload="metadata" poster="posters/raceday.jpg" src="videos/taper-raceday.mp4"></video>
+  <div class="shade"></div>
+  <div class="vs-inner wrap">
+    <div class="overline rv">Race day</div>
+    <h2 class="race-title rv rv-d1">Trust <em>the taper.</em></h2>
+    <p class="lede rv rv-d2">The season was built backwards from this morning. Nothing left to decide — just the final sheet, and the gun.</p>
+    <div class="ctas rv rv-d3" style="margin-top: 32px; display: flex; gap: 12px; flex-wrap: wrap;">
+      <a class="btn btn-primary" href="https://trainready-taupe.vercel.app/app/start">Join the beta</a>
+      <a class="btn btn-ghost" href="https://trainready-taupe.vercel.app/app">Open dashboard</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span class="brand">Taper</span>
+  <span class="f-legal">© 2026 Taper · Beta Rev 2026.07 · Trained on real racing data</span>
+</footer>
+
+<script>
+/* Letter-split hero — CSS transitions with per-char delays */
+document.querySelectorAll('[data-split]').forEach(el => {
+  const text = el.textContent;
+  el.textContent = '';
+  [...text].forEach((c, i) => {
+    const s = document.createElement('span');
+    s.className = 'ch';
+    s.style.transitionDelay = `${120 + i * 60}ms`;
+    s.textContent = c;
+    el.appendChild(s);
+  });
+});
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  document.getElementById('hero-title').classList.add('split-in');
+}));
+
+/* Scroll reveals */
+const io = new IntersectionObserver(entries => {
+  entries.forEach(en => {
+    if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+  });
+}, { threshold: 0.18, rootMargin: '0px 0px -6% 0px' });
+document.querySelectorAll('.rv:not(.in)').forEach(el => io.observe(el));
+
+/* Videos play only while visible; gentle scale-in per section */
+const vio = new IntersectionObserver(entries => {
+  entries.forEach(en => {
+    const v = en.target.querySelector('video');
+    if (!v) return;
+    if (en.isIntersecting) {
+      en.target.classList.add('in-view');
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  });
+}, { threshold: 0.12 });
+document.querySelectorAll('.vid').forEach(s => vio.observe(s));
+
+/* Reduced motion: posters only */
+if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  document.querySelectorAll('video').forEach(v => { v.removeAttribute('autoplay'); v.pause(); });
+}
+</script>
+</body>
+</html>
