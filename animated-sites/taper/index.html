@@ -301,7 +301,7 @@ footer .f-legal { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2e
 
 <!-- ============ HERO ============ -->
 <section class="vid hero">
-  <video autoplay muted loop playsinline poster="posters/hero.jpg" src="videos/taper-hero.mp4"></video>
+  <video autoplay muted loop playsinline poster="posters/hero.jpg" src="videos/taper-hero.mp4" data-hd="videos/taper-hero-hd.mp4"></video>
   <div class="shade"></div>
   <div class="hero-inner wrap">
     <div class="kick label-mono">
@@ -365,7 +365,7 @@ footer .f-legal { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2e
 
 <!-- ============ ENGINE — text floating on swim video ============ -->
 <section class="vid vid-sec">
-  <video muted loop playsinline preload="metadata" poster="posters/swim.jpg" src="videos/taper-swim.mp4"></video>
+  <video muted loop playsinline preload="metadata" poster="posters/swim.jpg" src="videos/taper-swim.mp4" data-hd="videos/taper-swim-hd.mp4"></video>
   <div class="shade"></div>
   <div class="vs-inner wrap">
     <div class="vs-content">
@@ -385,7 +385,7 @@ footer .f-legal { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2e
 
 <!-- ============ DISCIPLINES — text floating on climb video ============ -->
 <section class="vid vid-sec">
-  <video muted loop playsinline preload="metadata" poster="posters/climb.jpg" src="videos/taper-climb.mp4"></video>
+  <video muted loop playsinline preload="metadata" poster="posters/climb.jpg" src="videos/taper-climb.mp4" data-hd="videos/taper-climb-hd.mp4"></video>
   <div class="shade"></div>
   <div class="vs-inner wrap">
     <div class="vs-content">
@@ -428,7 +428,7 @@ footer .f-legal { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2e
 
 <!-- ============ RACE DAY ============ -->
 <section class="vid race" id="join">
-  <video muted loop playsinline preload="metadata" poster="posters/raceday.jpg" src="videos/taper-raceday.mp4"></video>
+  <video muted loop playsinline preload="metadata" poster="posters/raceday.jpg" src="videos/taper-raceday.mp4" data-hd="videos/taper-raceday-hd.mp4"></video>
   <div class="shade"></div>
   <div class="vs-inner wrap">
     <div class="overline rv">Race day</div>
@@ -447,6 +447,18 @@ footer .f-legal { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2e
 </footer>
 
 <script>
+/* Two-tier video delivery: desktop gets near-source HD variants, small
+   screens keep the bitrate-capped mobile files. Runs before any playback. */
+(function () {
+  const wantHD =
+    window.matchMedia('(min-width: 1024px)').matches &&
+    !(navigator.connection && navigator.connection.saveData);
+  if (!wantHD) return;
+  document.querySelectorAll('video[data-hd]').forEach(v => {
+    v.src = v.dataset.hd; // triggers reload; autoplay/observer restart playback
+  });
+})();
+
 /* Letter-split hero — CSS transitions with per-char delays */
 document.querySelectorAll('[data-split]').forEach(el => {
   const text = el.textContent;
