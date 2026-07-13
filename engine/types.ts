@@ -23,6 +23,15 @@ export interface AthleteState {
    *  2 on). Only anchor-v2's week-over-week smoothing band reads it; absent
    *  (real history, backtest, week 1) the band is inactive. */
   prevPrescribedTss?: number;
+  /** True ONLY for the opening week of a freshly generated plan — generatePlan
+   *  sets it on week index 0. It is the sole trigger for the anchor-v2 week-1
+   *  base floor. It is NEVER set on the backtest replay path (engine/backtest.ts
+   *  prescribes from dataset features that lack it), so the floor cannot fire
+   *  there. This replaces the old `prevPrescribedTss === undefined` proxy, which
+   *  was also true for every backtest week and leaked the floor onto ~47
+   *  base/build weeks — regressing the pinned baselines once anchor-v2 became
+   *  the default. Absent everywhere except a real plan's first week. */
+  isFirstPlanWeek?: boolean;
   /** Trailing discipline mix of executed load. */
   last4Shares: { swim: number; bike: number; run: number };
   /** Days from the week's start to the next A-race, if one is scheduled. */

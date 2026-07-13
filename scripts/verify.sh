@@ -76,18 +76,21 @@ if [ -f data/datasets/weekly-examples.jsonl ]; then
     const t = process.argv[1];
     const j = JSON.parse(t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1));
     const v = j.taperV1;
-    // Pinned baselines (taper-verify skill). Re-pinned 2026-07-12 after
-    // protocol-locking the taper: executed-week MAE worsened by design
-    // (the engine no longer mimics under-tapering; I5b guards correctness).
+    // Pinned baselines (taper-verify skill). Re-pinned 2026-07-13 when
+    // anchor-v2 (demonstrated-capacity anchoring) became the DEFAULT: the
+    // replay-fit regression is intended (targets anchor on demonstrated peak
+    // capacity, not the trailing mean) and the legacy path stays
+    // byte-reachable via ANCHOR_LEGACY=1 — same category as the 2026-07-12
+    // taper protocol-lock re-pin. Prior pins: 88.2 / 0.80 / 74.
     // Changing these requires updating the skill AND a commit-message reason.
-    const ok = v.maeConsistent <= 88.2 && v.corr >= 0.80 && v.dir >= 74;
+    const ok = v.maeConsistent <= 89.4 && v.corr >= 0.79 && v.dir >= 74;
     console.log(JSON.stringify(v));
     process.exit(ok ? 0 : 1);
   ' "$BT" >/tmp/taper-bt.log 2>&1
   if [ $? -eq 0 ]; then
     echo "  ${GRN}PASS${RST} backtest baselines $(cat /tmp/taper-bt.log)"
   else
-    echo "  ${RED}FAIL${RST} backtest regressed vs pinned (mae ≤ 88.2, corr ≥ 0.80, dir ≥ 74): $(cat /tmp/taper-bt.log)"
+    echo "  ${RED}FAIL${RST} backtest regressed vs pinned (mae ≤ 89.4, corr ≥ 0.79, dir ≥ 74): $(cat /tmp/taper-bt.log)"
     FAILURES=$((FAILURES+1))
   fi
 else

@@ -120,6 +120,27 @@ export function getStateAt(startDate: string): AthleteState | null {
   return seedStateAt(base, getPmc(), startDate);
 }
 
+export interface SeedProvenance {
+  /** Last day backed by real logged activity the seed is anchored on. */
+  anchorDate: string | null;
+  /** Zero-load days rolled forward across the unlogged tail to startDate. */
+  zeroLoadDays: number;
+}
+
+/**
+ * Provenance for the seed / Today header: where CTL/ATL/TSB are anchored as of
+ * the morning of `startDate`. Same daily-PMC roll-forward as getStateAt
+ * (engine/seed.ts is the single source): anchorDate is the last logged day,
+ * zeroLoadDays how many unlogged days decayed forward to reach startDate.
+ * null with no corpus/state — the Today page renders the line only when set.
+ */
+export function getSeedProvenance(startDate: string): SeedProvenance | null {
+  const base = getLatestState();
+  if (!base) return null;
+  const seeded = seedStateAt(base, getPmc(), startDate);
+  return { anchorDate: seeded.anchorDate, zeroLoadDays: seeded.zeroLoadDays };
+}
+
 export interface WeeklyRow {
   weekStart: string;
   tss: number;

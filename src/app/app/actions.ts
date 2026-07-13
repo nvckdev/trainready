@@ -82,6 +82,12 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   };
   writeIntake(intake);
 
+  // Start-page toggle "Use demonstrated-capacity anchoring (recommended)",
+  // default checked → anchor-v2 (the default path). An UNCHECKED checkbox is
+  // absent from FormData, so it threads anchorLegacy=true, routing generation
+  // back to the legacy trailing-mean ceiling (engine/learned.ts escape hatch).
+  const demonstratedCapacityAnchoring = formData.get("demonstratedCapacityAnchoring") !== null;
+
   const request: PlanRequest = {
     raceName: String(formData.get("raceName") || "A race"),
     raceDate: String(formData.get("raceDate")),
@@ -93,6 +99,7 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     // Engine layering keeps engine/plan.ts free of src/ imports, so its
     // default "today" is UTC — always pass the athlete-local date explicitly.
     startDate: localToday(),
+    anchorLegacy: !demonstratedCapacityAnchoring,
   };
   buildAndSave(request);
   revalidatePath("/app", "layout");

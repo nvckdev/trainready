@@ -42,11 +42,17 @@ day's TSS is missing; do NOT touch the PMC constants (42/7) to fix it.
 ```bash
 npm run engine:backtest
 ```
-Pinned baselines (183-week corpus, re-pinned 2026-07-12 after the taper
-protocol-lock deliberately traded executed-week MAE for race-week
-correctness — invariant I5b guards that side):
-- taper-v1 maeConsistent ≤ 88.2, corr ≥ 0.80, directionAgreement ≥ 74
+Pinned baselines (183-week corpus, re-pinned 2026-07-13 when anchor-v2
+[demonstrated-capacity anchoring] became the default; the earlier 2026-07-12
+re-pin traded executed-week MAE for race-week correctness — invariant I5b
+guards that side):
+- taper-v1 maeConsistent ≤ 89.4, corr ≥ 0.79, directionAgreement ≥ 74
 - reference maeConsistent ≤ 91.0 (it may drift ±1 with corpus refreshes)
+Reason for the 2026-07-13 re-pin: anchor-v2 promoted to default
+(demonstrated-capacity anchoring); intended replay-fit regression, legacy
+byte-reachable via ANCHOR_LEGACY=1; same category as the 2026-07-12 taper
+protocol-lock re-pin. (Measured at the re-pin: taper-v1 89.4 / 0.79 / 75,
+reference 90.9.)
 Any engine change that worsens taper-v1 on two or more of its three numbers
 is a regression: revert or fix before committing.
 

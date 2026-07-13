@@ -17,6 +17,23 @@ export interface DailyPmcPoint {
   atl: number;
 }
 
+/**
+ * A seeded athlete state plus provenance: WHERE the PMC numbers are anchored.
+ * The provenance drives the Today-page "Fitness anchored to …" line so the
+ * athlete can see how much of their current form is real logged data vs
+ * zero-load roll-forward across a scheduling gap.
+ */
+export interface SeededState extends AthleteState {
+  /** The last daily PMC row strictly before startDate — the last day backed
+   *  by real logged activity that the seed is anchored on. null when the
+   *  series is empty or begins on/after startDate (no real data to anchor). */
+  anchorDate: string | null;
+  /** Count of zero-load days the recursion rolled forward from anchorDate to
+   *  the morning of startDate (the unlogged tail). 0 when startDate is the day
+   *  after the anchor row, or when there is no anchor. */
+  zeroLoadDays: number;
+}
+
 const DAY = 86400000;
 
 /**
@@ -40,13 +57,13 @@ export function seedStateAt(
   base: AthleteState,
   series: DailyPmcPoint[],
   startDate: string
-): AthleteState {
+): SeededState {
   let last: DailyPmcPoint | null = null;
   for (const r of series) {
     if (r.date >= startDate) break;
     last = r;
   }
-  if (!last) return { ...base };
+  if (!last) return { ...base, anchorDate: null, zeroLoadDays: 0 };
   let ctl = last.ctl;
   let atl = last.atl;
   const gap =
@@ -56,5 +73,7 @@ export function seedStateAt(
     ctl = ctl + (0 - ctl) / 42;
     atl = atl + (0 - atl) / 7;
   }
-  return { ...base, ctl, atl, tsb: ctl - atl };
+  // gap is ≥ 0 (last.date is strictly before startDate), so it is exactly the
+  // number of zero-load days the loop above rolled forward — report it as-is.
+  return { ...base, ctl, atl, tsb: ctl - atl, anchorDate: last.date, zeroLoadDays: gap };
 }

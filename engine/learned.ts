@@ -134,12 +134,15 @@ function ridge(X: number[][], y: number[], lambda: number): number[] {
   return w;
 }
 
-// ——— anchor-v2 (flagged, default OFF) ————————————————————————————
+// ——— anchor-v2 (DEFAULT ON; legacy escape hatch) ————————————————————
 //
-// The default upper clamp is trailing-month mean × phase fraction, which a
+// The legacy upper clamp is trailing-month mean × phase fraction, which a
 // single outlier week can drag around (one 334-TSS week among ~50-TSS weeks
 // pulled the "mean" to 125). Anchor-v2, explicitly proposed by the human
-// (documented sign-off per taper-rules rule 4) and shipped DEFAULT OFF,
+// (documented sign-off per taper-rules rule 4), is now the DEFAULT (flipped
+// 2026-07-13 with the human's sign-off, once the week-1 base-floor leak below
+// was root-caused — see isFirstPlanWeek). The legacy trailing-mean path is
+// still reachable via opts.anchorLegacy or env ANCHOR_LEGACY=1. Anchor-v2
 // replaces that ceiling for base/build/offseason weeks with
 //   anchor = max(maintenance CTL×7, recent peak week × 0.95^(weeks since peak))
 //   capped at +20% over the ramp-cap reference (approved range 20–25%,
@@ -195,9 +198,17 @@ function anchorV2Ceiling(state: AthleteState): number {
 }
 
 export interface TaperV1Options {
-  /** Anchor-v2 ceiling for non-taper weeks. Default OFF; also switchable via
-   *  env TAPER_ANCHOR_V2=1. Flag off is byte-identical to the legacy path. */
+  /** Anchor-v2 ceiling for non-taper weeks. NOW THE DEFAULT (flipped
+   *  2026-07-13, human sign-off). Kept only as a harmless no-op alias — it
+   *  no longer toggles anything, since anchor-v2 is standard. Existing callers
+   *  and scripts that pass it (or set env TAPER_ANCHOR_V2=1) keep working. To
+   *  turn anchor-v2 OFF, use `anchorLegacy` below, not `anchorV2: false`. */
   anchorV2?: boolean;
+  /** Escape hatch back to the pre-anchor-v2 legacy path (trailing-mean ×
+   *  phase ceiling, no week-1 base floor, no smoothing band). Byte-identical
+   *  to the old flag-off behavior. Also switchable via env ANCHOR_LEGACY=1.
+   *  Default false → anchor-v2 is on. */
+  anchorLegacy?: boolean;
 }
 
 /** Phase-dependent bounds (fractions of trailing-month mean) the learned
@@ -225,7 +236,13 @@ export class TaperV1 implements Engine {
   private anchorV2: boolean;
 
   constructor(opts: TaperV1Options = {}) {
-    this.anchorV2 = opts.anchorV2 ?? process.env.TAPER_ANCHOR_V2 === "1";
+    // Anchor-v2 + smoothing is the standard path (default flipped 2026-07-13,
+    // human sign-off). The ONLY way back to the legacy trailing-mean ceiling
+    // is the explicit escape hatch: opts.anchorLegacy or env ANCHOR_LEGACY=1.
+    // opts.anchorV2 / env TAPER_ANCHOR_V2 are still accepted but are now no-ops
+    // (anchor-v2 is already on) — kept so existing callers don't break.
+    const legacy = opts.anchorLegacy ?? process.env.ANCHOR_LEGACY === "1";
+    this.anchorV2 = !legacy;
   }
 
   /** Walk-forward learning: record what actually happened, refit. */
@@ -297,20 +314,26 @@ export class TaperV1 implements Engine {
       if (prev !== undefined) ceiling = Math.min(ceiling, prev * ANCHOR_V2_RAMP_CAP);
     }
     let value = Math.min(ceiling, Math.max(trailingMean * lo, raw));
-    // Anchor-v2 week-1 base floor: first plan week (prevPrescribedTss absent),
-    // base/build only, race ≤ 14 weeks out — lift the opening week to 1.15 ×
-    // maintenance (CTL×7) so a short runway starts with an overload instead
-    // of a hold. The floor may raise the value past the anchor CEILING (a
-    // preference, not a rail) but never past the rule-4 rails: +20% over the
-    // trailing-month mean AND over the smoothed ramp-cap reference. Weeks 2+
-    // ramp from it under the normal anchor rules (WoW band below). Taper/race
-    // weeks never reach this code (protocol lock, rule 2); recovery keeps its
-    // legacy bounds — rails are rails.
+    // Anchor-v2 week-1 base floor: the FIRST plan week only (isFirstPlanWeek —
+    // generatePlan sets it on week 0), base/build, race ≤ 14 weeks out — lift
+    // the opening week to 1.15 × maintenance (CTL×7) so a short runway starts
+    // with an overload instead of a hold. The trigger is the EXPLICIT
+    // first-plan-week signal, NOT `prevPrescribedTss === undefined`: that proxy
+    // is also true for every backtest week, so it leaked the floor onto ~47
+    // base/build backtest weeks and regressed the pinned baselines when
+    // anchor-v2 became the default (measured 89.3/0.78/73). engine/backtest.ts
+    // never sets isFirstPlanWeek, so the floor cannot fire in the backtest.
+    // The floor may raise the value past the anchor CEILING (a preference, not
+    // a rail) but never past the rule-4 rails: +20% over the trailing-month
+    // mean AND over the smoothed ramp-cap reference. Weeks 2+ ramp from it
+    // under the normal anchor rules (WoW band below). Taper/race weeks never
+    // reach this code (protocol lock, rule 2); recovery keeps its legacy
+    // bounds — rails are rails.
     let baseFloorLift = false;
     if (
       this.anchorV2 &&
       (ref.phase === "base" || ref.phase === "build") &&
-      state.prevPrescribedTss === undefined &&
+      state.isFirstPlanWeek === true &&
       state.daysToNextRace !== null &&
       state.daysToNextRace <= ANCHOR_V2_BASE_FLOOR_RUNWAY_DAYS
     ) {

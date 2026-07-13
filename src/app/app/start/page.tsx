@@ -79,6 +79,21 @@ export default function StartPage() {
             </select>
           </div>
         </div>
+        <div className="border border-hairline p-4">
+          <label className="flex items-center gap-2.5 text-[13px] text-bone-muted cursor-pointer">
+            <input
+              type="checkbox"
+              name="demonstratedCapacityAnchoring"
+              value="1"
+              defaultChecked
+              className="accent-current"
+            />
+            Use demonstrated-capacity anchoring (recommended)
+          </label>
+          <p className="label-mono text-bone-faint mt-2">
+            Weights your recent peak weeks over the trailing average, so scheduling gaps don&apos;t suppress your targets.
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label htmlFor="strengthAccess" className="label-mono text-bone-faint block mb-2">Strength access</label>

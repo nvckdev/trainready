@@ -39,10 +39,12 @@ preferences.
    Check: `grep -n "42\|/ 7" pipeline/lib/derive.ts` unchanged, and the
    phase0 gate stays PASS.
 7. **Backtest baselines never regress** (taper-v1: consistent-week MAE
-   ≤ 88.2, corr ≥ 0.80, direction ≥ 74; single source of truth is
+   ≤ 89.4, corr ≥ 0.79, direction ≥ 74; single source of truth is
    scripts/verify.sh). Run `npm run engine:backtest` after any engine
    change. Re-pinning is allowed only with a stated reason in the commit
-   message (precedent: 2026-07-12 taper protocol-lock).
+   message (precedents: 2026-07-12 taper protocol-lock; 2026-07-13 anchor-v2
+   promoted to default [demonstrated-capacity anchoring] — intended
+   replay-fit regression, legacy byte-reachable via ANCHOR_LEGACY=1).
 
 ## Pipeline (pipeline/)
 

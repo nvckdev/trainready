@@ -1,4 +1,4 @@
-import { getPmc, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
+import { getPmc, getSeedProvenance, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readAthleteContext } from "@/lib/athlete-context";
 import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
@@ -22,6 +22,16 @@ import {
 import { WeatherHint } from "@/components/app/weather-hint";
 
 export const dynamic = "force-dynamic";
+
+/** "2026-07-04" → "Jul 04". A bare calendar date formatted at noon UTC so it
+ *  never shifts a day regardless of the server's zone. */
+function fmtAnchorDate(date: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    timeZone: "UTC",
+  }).format(Date.parse(date + "T12:00:00Z"));
+}
 
 export default async function TodayPage() {
   if (!hasCorpus()) {
@@ -91,6 +101,10 @@ export default async function TodayPage() {
   const latest = pmc[pmc.length - 1];
   const stored = readPlan();
   const today = localToday();
+  // Where the fitness numbers are anchored: the last logged day, plus any
+  // zero-load days rolled forward across a scheduling gap (engine/seed.ts,
+  // via the src/lib gateway). Null-safe — absent with no corpus/state.
+  const provenance = getSeedProvenance(today);
 
   const upcoming = stored
     ? stored.plan.weeks
@@ -205,6 +219,13 @@ export default async function TodayPage() {
           {daysToRace !== null && <StatChip label="Race in" value={String(daysToRace)} unit="days" />}
         </div>
       </div>
+      {provenance && (
+        <p className="label-mono text-bone-faint mt-2">
+          {provenance.zeroLoadDays > 0 && provenance.anchorDate
+            ? `Fitness anchored to ${fmtAnchorDate(provenance.anchorDate)} · ${provenance.zeroLoadDays} zero-load days rolled forward`
+            : "Fitness logged through today"}
+        </p>
+      )}
       <WeatherHint />
       <div className="rule mt-5 mb-8" />
 

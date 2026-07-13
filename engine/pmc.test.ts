@@ -499,15 +499,20 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
 
 // ——— T11: anchor-v2 week-1 base floor (runway ≤ 14 weeks, base/build) ———
 // With the seed fix in, week 1 of a plan opens ≈ maintenance (CTL×7), which
-// holds fitness but cannot build it. Under the anchor-v2 flag, when the race
-// is ≤ 14 weeks out and the week is base/build, the FIRST plan week is
-// floored at 1.15 × maintenance — still under the rule-4 ramp rails (≤ +20%
-// over the trailing-month mean AND over the anchor ramp-cap reference).
-// Flag off stays byte-identical; later weeks ramp via the anchor rules.
+// holds fitness but cannot build it. Under anchor-v2 (now the default), when
+// the race is ≤ 14 weeks out and the week is base/build, the FIRST plan week
+// is floored at 1.15 × maintenance — still under the rule-4 ramp rails
+// (≤ +20% over the trailing-month mean AND over the anchor ramp-cap
+// reference). The floor now fires on the EXPLICIT isFirstPlanWeek signal
+// (generatePlan sets it on week 0 only), never on the prevPrescribedTss
+// proxy that leaked onto backtest weeks (see T12). Legacy path stays below
+// the floor; later weeks ramp via the anchor rules.
 {
   // A steady athlete: 26 weeks at 70 TSS → CTL ≈ 10, maintenance ≈ CTL×7.
   const mkEngine = (anchorV2: boolean) => {
-    const eng = new TaperV1({ anchorV2 });
+    // anchorV2 true = the flipped default (anchor-v2 on); false = the legacy
+    // escape hatch (anchorLegacy). anchorV2:false alone is now a no-op alias.
+    const eng = new TaperV1(anchorV2 ? { anchorV2: true } : { anchorLegacy: true });
     let ctl = 10;
     let atl = 10;
     const last8: number[] = [70, 70, 70, 70];
@@ -537,6 +542,7 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
       daysToNextRace: 90, // 12.9 weeks of runway → base phase, inside 14 weeks
       weeksSinceStart: 26, // 26 % 4 = 2: not a cutback slot
       breakRatio: 1, daysSinceLastSession: 1,
+      isFirstPlanWeek: true, // this state models a real plan's opening week
     };
     return { eng, state };
   };
@@ -556,8 +562,8 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
   check("T11c", "flag ON but runway > 14 weeks: floor inactive (target ≈ maintenance, < floor)",
     farRace.weekTss < floor - 1, `target ${farRace.weekTss}, floor ${floor.toFixed(1)}`);
 
-  const week2 = engOn.prescribeWeek({ ...state, prevPrescribedTss: 70 });
-  check("T11d", "flag ON but not week 1 (prevPrescribedTss set): floor inactive",
+  const week2 = engOn.prescribeWeek({ ...state, prevPrescribedTss: 70, isFirstPlanWeek: false });
+  check("T11d", "anchor ON but not the first plan week (isFirstPlanWeek false): floor inactive",
     week2.weekTss < floor - 1, `target ${week2.weekTss}`);
 
   const cutback = engOn.prescribeWeek({ ...state, weeksSinceStart: 27 }); // 27 % 4 = 3 → recovery
@@ -567,8 +573,150 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
 
   const { eng: engOff, state: stateOff } = mkEngine(false);
   const off = engOff.prescribeWeek(stateOff);
-  check("T11f", "flag OFF: week 1 stays on the legacy path, below the floor",
+  check("T11f", "legacy escape hatch: week 1 stays on the legacy path, below the floor",
     off.weekTss < floor - 1, `target ${off.weekTss}, floor ${floor.toFixed(1)}`);
+}
+
+// ——— T12: first-plan-week signal replaces the prevPrescribedTss proxy ———
+// Root-cause fix for the anchor-v2 default flip. The week-1 base floor must
+// fire ONLY on a real plan's opening week (generatePlan sets isFirstPlanWeek
+// on week 0), NEVER on a backtest-style prescribe — the dataset features
+// carry no such signal. Gating the floor on prevPrescribedTss===undefined
+// leaked it onto ~47 base/build backtest weeks and regressed the pins
+// (measured default-on: 89.3 / 0.78 / 73). T12 also pins the flipped default
+// (anchor-v2 + smoothing is standard) and the anchorLegacy / ANCHOR_LEGACY
+// escape hatch. Pre-fix, (b)/(c)/(d) fail by construction.
+{
+  // Deterministic steady athlete: 26 weeks @ 70 TSS → CTL ≈ 10, maint ≈ 70.
+  const buildSteady = () => {
+    let ctl = 10;
+    let atl = 10;
+    const history: Array<{ state: AthleteState; actualTss: number; weekStart?: string }> = [];
+    const last8: number[] = [70, 70, 70, 70];
+    for (let i = 0; i < 26; i++) {
+      history.push({
+        state: {
+          ctl, atl, tsb: ctl - atl, last4WeeksTss: last8.slice(-4), trailingWeeksTss: [...last8],
+          last4Shares: { swim: 0.1, bike: 0.3, run: 0.6 },
+          daysToNextRace: null, weeksSinceStart: i, breakRatio: 1, daysSinceLastSession: 1,
+        },
+        actualTss: 70,
+      });
+      for (let d = 0; d < 7; d++) {
+        const tss = d < 6 ? 70 / 6 : 0;
+        ctl = ctl + (tss - ctl) / 42;
+        atl = atl + (tss - atl) / 7;
+      }
+      last8.push(70);
+      if (last8.length > 8) last8.shift();
+    }
+    const seed: AthleteState = {
+      ctl, atl, tsb: ctl - atl, last4WeeksTss: last8.slice(-4), trailingWeeksTss: [...last8],
+      last4Shares: { swim: 0.1, bike: 0.3, run: 0.6 },
+      daysToNextRace: 90, weeksSinceStart: 26, breakRatio: 1, daysSinceLastSession: 1,
+    };
+    return { seed, history };
+  };
+  const { seed, history } = buildSteady();
+  const z = deriveZones({ ftpWatts: 250, lthrBpm: 170, runThresholdSpeedMps: 4.0, swimCssMps: 1.1 });
+  const maint = seed.ctl * 7;
+  const tmean = seed.last4WeeksTss.reduce((s, v) => s + v, 0) / seed.last4WeeksTss.length;
+  const prevNonZero = [...seed.last4WeeksTss].reverse().find((v) => v > 0) ?? 0;
+  const rcr = Math.max(prevNonZero, 0.7 * Math.max(...(seed.trailingWeeksTss ?? seed.last4WeeksTss)));
+  const floorRef = Math.min(1.15 * maint, tmean * 1.2, rcr * 1.2); // ≈ 80.5 for this fixture
+  const strip = (p: Plan) => JSON.stringify({ ...p, meta: { ...p.meta, generatedAt: "-" } });
+
+  // (a) FORWARD PRESERVED: a real generated plan's week-1 (base, runway ≤14w)
+  //     still gets the 1.15× base floor — the season opens with an overload.
+  const genOn = generatePlan({ ...REQ, anchorV2: true }, seed, history, z);
+  const w1 = genOn.weeks[0];
+  check("T12a", "generated plan week-1 (base, runway ≤14w) still floored ≈ 1.15× maintenance",
+    w1.phase === "base" && w1.targetTss > Math.round(maint) && Math.abs(w1.targetTss - floorRef) <= 3,
+    `phase ${w1.phase}, target ${w1.targetTss}, floorRef ${floorRef.toFixed(1)}, maint ${maint.toFixed(1)}`);
+
+  // (b) LEAK FIX: a backtest-style prescribe (no isFirstPlanWeek, no
+  //     prevPrescribedTss) must NOT floor, even with anchor-v2 on.
+  const eng = new TaperV1({ anchorV2: true });
+  for (const h of history) eng.observe(h.state, h.actualTss, h.weekStart);
+  const btTarget = eng.prescribeWeek({ ...seed }).weekTss; // backtest shape
+  check("T12b", "backtest-style prescribe (no first-plan-week signal) is NOT floored",
+    btTarget < floorRef - 3,
+    `target ${btTarget}, floorRef ${floorRef.toFixed(1)} — pre-fix this leaks up to the floor`);
+  const fpwTarget = eng.prescribeWeek({ ...seed, isFirstPlanWeek: true }).weekTss;
+  check("T12b2", "same state WITH isFirstPlanWeek DOES floor (the signal is the sole trigger)",
+    Math.abs(fpwTarget - floorRef) <= 3 && fpwTarget > btTarget,
+    `floored ${fpwTarget} vs unflagged ${btTarget}, floorRef ${floorRef.toFixed(1)}`);
+
+  // (c) DEFAULT FLIPPED: the default path now equals the explicit
+  //     anchor-v2-on path for a generated plan (anchor-v2 is standard).
+  const genDefault = generatePlan({ ...REQ }, seed, history, z);
+  check("T12c", "default generatePlan == explicit anchorV2:true (default flipped to anchor-v2)",
+    strip(genDefault) === strip(genOn));
+
+  // (d) ESCAPE HATCH: anchorLegacy (field) and ANCHOR_LEGACY=1 (env) both
+  //     restore the legacy trailing-mean path, byte-identically, and differ
+  //     from the now-anchor-v2 default. Legacy week-1 sees no base floor.
+  const viaField = generatePlan({ ...REQ, anchorLegacy: true }, seed, history, z);
+  let viaEnv: Plan;
+  const savedEnv = process.env.ANCHOR_LEGACY;
+  try {
+    process.env.ANCHOR_LEGACY = "1";
+    viaEnv = generatePlan({ ...REQ }, seed, history, z);
+  } finally {
+    if (savedEnv === undefined) delete process.env.ANCHOR_LEGACY;
+    else process.env.ANCHOR_LEGACY = savedEnv;
+  }
+  check("T12d", "anchorLegacy field == ANCHOR_LEGACY=1 env (byte-identical legacy path)",
+    strip(viaField) === strip(viaEnv));
+  check("T12d2", "legacy escape hatch differs from the flipped default (default is anchor-v2)",
+    strip(viaField) !== strip(genDefault));
+  check("T12d3", "legacy week-1 is the trailing-mean path, NOT the 1.15× base floor",
+    viaField.weeks[0].targetTss < floorRef - 3,
+    `legacy week-1 ${viaField.weeks[0].targetTss}, floorRef ${floorRef.toFixed(1)}`);
+}
+
+// ——— T13: seed provenance metadata (anchorDate + zeroLoadDays) ———
+// seedStateAt also reports WHERE the seed is anchored: anchorDate is the last
+// daily PMC row strictly before startDate (the last day backed by real logged
+// activity), and zeroLoadDays is the count of zero-load days the recursion
+// rolls forward across the unlogged tail to reach the morning of startDate.
+// This drives the Today-page provenance line ("Fitness anchored to …" vs
+// "Fitness logged through today"). Deterministic: computed from the passed
+// series, independent of the corpus. The gap is (startDate − anchorDate) − 1,
+// matching the roll-forward loop (the seed is end-of-(startDate−1)).
+{
+  const base: AthleteState = {
+    ctl: 0, atl: 0, tsb: 0,
+    last4WeeksTss: [0, 0, 0, 0],
+    last4Shares: { swim: 0, bike: 0, run: 1 },
+    daysToNextRace: null, weeksSinceStart: 0, breakRatio: 1, daysSinceLastSession: 1,
+  };
+  const series: DailyPmcPoint[] = [
+    { date: "2026-06-28", ctl: 20.0, atl: 18.0 },
+    { date: "2026-06-29", ctl: 20.1, atl: 18.5 },
+    { date: "2026-07-04", ctl: 20.5, atl: 20.6 }, // last row backed by real activity
+  ];
+  // startDate 2026-07-13, last row 2026-07-04 → gap (13−4)−1 = 8 zero-load days.
+  const far = seedStateAt(base, series, "2026-07-13");
+  check("T13a", "anchorDate is the last daily row strictly before startDate",
+    far.anchorDate === "2026-07-04", `${far.anchorDate}`);
+  check("T13b", "zeroLoadDays = (startDate − anchorDate) − 1 rolled forward",
+    far.zeroLoadDays === 8, `${far.zeroLoadDays}`);
+  // Rolling 8 zero-load days from the 07-04 row must equal the seed CTL/ATL —
+  // the provenance count and the PMC recursion agree.
+  check("T13c", "seed CTL/ATL == 8 zero-load days decayed from the anchor row",
+    near(far.ctl, 20.5 * Math.pow(kCtl, 8), 1e-9) && near(far.atl, 20.6 * Math.pow(kAtl, 8), 1e-9),
+    `ctl ${far.ctl.toFixed(3)} atl ${far.atl.toFixed(3)}`);
+  // startDate the day AFTER the last row → zero days rolled forward.
+  const adjacent = seedStateAt(base, series, "2026-07-05");
+  check("T13d", "adjacent startDate anchors on the last row, rolls 0 zero-load days",
+    adjacent.anchorDate === "2026-07-04" && adjacent.zeroLoadDays === 0,
+    `${adjacent.anchorDate}/${adjacent.zeroLoadDays}`);
+  // startDate strictly before every row → no anchor, safe defaults.
+  const before = seedStateAt(base, series, "2026-06-01");
+  check("T13e", "startDate before any row → null anchor, 0 zero-load days, base unchanged",
+    before.anchorDate === null && before.zeroLoadDays === 0 && before.ctl === base.ctl,
+    `${before.anchorDate}/${before.zeroLoadDays}`);
 }
 
 console.log(`\nPMC + projection tests (${existsSync("data") ? "real corpus" : "synthetic"})\n`);

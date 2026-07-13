@@ -30,9 +30,14 @@ export interface PlanRequest {
    *  does not count). Defaults to 5; dropped-slot volume redistributes over
    *  the surviving slots by weight, so the long session keeps its share. */
   maxSessions?: number;
-  /** Anchor-v2 load ceiling (see engine/learned.ts). Default OFF; env
-   *  TAPER_ANCHOR_V2=1 also enables it. Off = byte-identical legacy path. */
+  /** Anchor-v2 load ceiling (see engine/learned.ts). NOW THE DEFAULT — kept
+   *  as a harmless no-op alias so existing callers/scripts don't break; it no
+   *  longer toggles anything. To opt out, use `anchorLegacy`. */
   anchorV2?: boolean;
+  /** Escape hatch back to the legacy trailing-mean ceiling (pre-anchor-v2).
+   *  Default false → anchor-v2 is standard. Also switchable via env
+   *  ANCHOR_LEGACY=1. */
+  anchorLegacy?: boolean;
 }
 
 export interface PlannedSessionOut {
@@ -313,7 +318,9 @@ export function generatePlan(
   history: Array<{ state: AthleteState; actualTss: number; weekStart?: string }>,
   zones: Zones
 ): Plan {
-  const engine = new TaperV1(req.anchorV2 === undefined ? {} : { anchorV2: req.anchorV2 });
+  // Anchor-v2 is the default; anchorLegacy (or env ANCHOR_LEGACY=1) opts out.
+  // anchorV2 is threaded through only as the accepted no-op alias.
+  const engine = new TaperV1({ anchorLegacy: req.anchorLegacy, anchorV2: req.anchorV2 });
   for (const h of history) engine.observe(h.state, h.actualTss, h.weekStart);
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
@@ -344,6 +351,10 @@ export function generatePlan(
       last4WeeksTss: last4,
       trailingWeeksTss: [...last8],
       prevPrescribedTss: prevPrescribed,
+      // The opening week of the plan (and only it) — the sole trigger for the
+      // anchor-v2 week-1 base floor. weeks[] is pushed at the end of each
+      // iteration, so length 0 is exactly week index 0.
+      isFirstPlanWeek: weeks.length === 0,
       last4Shares: initialState.last4Shares,
       daysToNextRace: daysToRace,
       weeksSinceStart,
