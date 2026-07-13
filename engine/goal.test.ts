@@ -91,6 +91,77 @@ const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
     g26 >= sec(1, 40) && g26 <= sec(1, 47), `${(g26 / 60).toFixed(1)} min`);
 }
 
+// ——— CAL. Personal-anchored finish calibration (docs/finish-calibration.md) —
+// The generic curve treats CTL as total fitness and predicts ~1:50 at CTL ~22 —
+// slower than a 1:31 this athlete already ran at CTL ~18. These pin the fix:
+// finish is anchored to demonstrated performance + a durable ceiling, clamped so
+// a projection is never slower than a real race at equal-or-lower CTL.
+{
+  // Real athlete race anchors {date, distanceKm, timeSec, ctlAtRace}: the 1:31
+  // (2026-05-03) and the 1:17 PR (2023-11-05). CTL looked up in data/derived/pmc.csv.
+  const ANCHORS = [
+    { date: "2023-11-05", distanceKm: 21.071, timeSec: 1.2877249717712402 * 3600, ctlAtRace: 67.3 },
+    { date: "2026-05-03", distanceKm: 21.2945390625, timeSec: 1.5284639596939087 * 3600, ctlAtRace: 17.6 },
+  ];
+  const ASOF = "2026-07-13";
+  const RECENT_SEC = 1.5284639596939087 * 3600; // 5502.5 s — the real 1:31 (91:42)
+  const fe = (c: number, d = HALF) => finishEstimate(c, d, ANCHORS, ASOF);
+
+  // equal-VDOT half time of an anchor (the clamp ceiling) via the same vdot inverse.
+  const halfEquiv = (a: { distanceKm: number; timeSec: number }) => {
+    const V = vdot(a.distanceKm, a.timeSec / 60);
+    let lo = 2.5 * HALF, hi = 9.0 * HALF;
+    for (let i = 0; i < 80; i++) { const m = (lo + hi) / 2; if (vdot(HALF, m) > V) lo = m; else hi = m; }
+    return ((lo + hi) / 2) * 60;
+  };
+
+  // (a) reproduces the real race — anchored to demonstrated performance, not raw CTL.
+  const atAnchor = finishEstimate(17.6, 21.2945390625, ANCHORS, ASOF);
+  check("CAL-a1", "at the anchor CTL+distance the model reproduces the real 1:31 (±20 s)",
+    near(atAnchor, RECENT_SEC, 20), `${(atAnchor / 60).toFixed(2)} min vs ${(RECENT_SEC / 60).toFixed(2)}`);
+  const at20 = fe(20);
+  check("CAL-a2", "at CTL 20 the half projects ~1:31 (within ~90 s of 1:31:00), never the old ~1:52",
+    near(at20, sec(1, 31), 90) && at20 < sec(1, 35), `${(at20 / 60).toFixed(2)} min`);
+
+  // (b) HARD INVARIANT: never slower than any real race at CTL ≤ C. Sweep 18–26.
+  let invOk = true;
+  const viol: string[] = [];
+  for (let c = 18; c <= 26; c += 0.5) {
+    const caps = ANCHORS.filter((a) => a.ctlAtRace <= c).map(halfEquiv);
+    const cap = caps.length ? Math.min(...caps) : Infinity;
+    if (fe(c) > cap + 1e-6) { invOk = false; viol.push(`C${c}: ${fe(c).toFixed(0)}>${cap.toFixed(0)}`); }
+  }
+  check("CAL-b1", "HARD INVARIANT: finishEstimate(C,half) ≤ min half-equiv of anchors with CTL≤C, C∈[18,26]",
+    invOk, viol.slice(0, 3).join("; "));
+  check("CAL-b2", "finishEstimate(22, half) ≤ 1:31 (vs the 1:31 already run at CTL 17.6)",
+    fe(22) <= sec(1, 31) + 1e-6, `${(fe(22) / 60).toFixed(2)} min`);
+  check("CAL-b3", "at CTL ≥ the PR CTL the half projects ≤ the 1:17 PR half-equivalent",
+    finishEstimate(67.3, HALF, ANCHORS, ASOF) <= halfEquiv(ANCHORS[0]) + 1e-6, "");
+
+  // (c) honest gap for a 1:24 goal: reachable ~22 does NOT suddenly reach 1:24.
+  check("CAL-c", "1:24 stays an honest gap: finishEstimate(22) slower than 1:24 yet far faster than 1:52",
+    fe(22) > sec(1, 24) && fe(22) < sec(1, 45), `${(fe(22) / 60).toFixed(2)} min (>1:24, <1:45)`);
+
+  // (d) monotone: more CTL ⇒ faster (or equal).
+  let monoOk = true;
+  let prev = Infinity;
+  for (let c = 15; c <= 30; c += 1) { const v = fe(c); if (v > prev + 1e-6) monoOk = false; prev = v; }
+  check("CAL-d", "personal curve monotone non-increasing in CTL (more fitness ⇒ ≤ time)", monoOk);
+
+  // (e) no personal races ⇒ byte-identical fallback to the generic VDOT model.
+  const SNAP: Record<number, number> = {
+    20: 6636.079195, 22: 6496.017031, 26: 6233.556021, 35: 5716.944664, 50: 5030.580392,
+  };
+  let fbOk = true;
+  const fbDetail: string[] = [];
+  for (const c of [20, 22, 26, 35, 50]) {
+    const none = finishEstimate(c, HALF);
+    const empty = finishEstimate(c, HALF, [], ASOF);
+    if (none !== empty || Math.abs(none - SNAP[c]) > 1e-3) { fbOk = false; fbDetail.push(`C${c}:${none.toFixed(3)}`); }
+  }
+  check("CAL-e", "no-anchor fallback byte-identical to the pre-change generic model", fbOk, fbDetail.join(" "));
+}
+
 // ——— D. Backtest neutrality (rule 7 — the pins must not move) ————————
 {
   // D8/D10: replay every dataset week through TaperV1 exactly like

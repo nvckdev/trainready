@@ -1,6 +1,7 @@
 import {
   finishEstimate,
   goalCtlTarget,
+  loadRaceAnchors,
   LONG_EASY_KMH,
   LONG_MIN_CAP,
   longRunKm,
@@ -613,8 +614,11 @@ function buildGoalGap(
   const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
   const reachablePeakCtl = r1(reachableRaceDayCtl);
   const gapCtl = r1(Math.max(0, requiredPeakCtl - reachablePeakCtl));
-  // Load-limited finish from the reachable CTL, clamped no faster than goal.
-  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm));
+  // Load-limited finish from the reachable CTL, anchored to demonstrated races
+  // (personal ceiling-saturating curve + hard invariant clamp, engine/goal.ts)
+  // and clamped no faster than the goal. Anchors come from the gitignored
+  // corpus; absent ⇒ generic fallback.
+  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, loadRaceAnchors()));
   const realisticFinish = fmtClock(finishSec);
   const message =
     gapCtl > 1

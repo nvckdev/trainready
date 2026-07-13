@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { RaceType } from "./plan.ts";
 
 /**
@@ -87,17 +89,11 @@ export function goalCtlTarget(distanceKm: number, goalTimeSec: number): GoalCtl 
 }
 
 /**
- * Inverse: finish estimate (seconds) from a reachable race-day CTL. Exact
- * inverse of the forward chain down to VDOT*, then a monotone bisection for
- * the finish time (vdot decreasing in T ⇒ unique root). A load-limited bound,
- * never a hard prediction (§1.3): economy can beat it, so callers clamp it no
- * faster than the goal pace.
+ * Invert vdot(distanceKm, t) = vdotTarget → finish time in MINUTES via the
+ * monotone bisection (vdot strictly decreasing in T ⇒ unique root). Shared by
+ * the generic fallback, the personal-curve model, and the invariant clamp.
  */
-export function finishEstimate(reachableRaceDayCtl: number, distanceKm: number): number {
-  const peakCtl = reachableRaceDayCtl / TAPER_RETENTION;
-  const weeklyTss = 7 * peakCtl;
-  const wKm = weeklyTss / CVOL;
-  const vdotTarget = (wKm / Math.pow(distanceKm / 21.1, 0.15) + 90) / 3.0;
+function invertVdotMin(distanceKm: number, vdotTarget: number): number {
   let lo = 2.5 * distanceKm; // physiological bracket, minutes
   let hi = 9.0 * distanceKm;
   for (let i = 0; i < 80; i++) {
@@ -105,7 +101,192 @@ export function finishEstimate(reachableRaceDayCtl: number, distanceKm: number):
     if (vdot(distanceKm, mid) > vdotTarget) lo = mid;
     else hi = mid;
   }
-  return ((lo + hi) / 2) * 60; // seconds
+  return (lo + hi) / 2;
+}
+
+/** Generic VDOT-from-reachable-CTL finish (seconds). The pre-calibration body,
+ *  used verbatim as the no-anchor fallback (byte-identical for anchorless athletes). */
+function genericFinishSec(reachableRaceDayCtl: number, distanceKm: number): number {
+  const peakCtl = reachableRaceDayCtl / TAPER_RETENTION;
+  const weeklyTss = 7 * peakCtl;
+  const wKm = weeklyTss / CVOL;
+  const vdotTarget = (wKm / Math.pow(distanceKm / 21.1, 0.15) + 90) / 3.0;
+  return invertVdotMin(distanceKm, vdotTarget) * 60; // seconds
+}
+
+// ——— personal-anchored finish model (docs/finish-calibration.md §§1–4) ———
+
+/** A demonstrated race: distance, finish, and the labeled CTL on race day. */
+export interface RaceAnchor {
+  date: string; // ISO — used only for age-degradation of the ceiling
+  distanceKm: number;
+  timeSec: number;
+  ctlAtRace: number;
+}
+
+// None of these are safety rails — they shape a display-only projection.
+export const CEIL_DECAY_PER_YR = 0.02; // VDOT lost per year off peak (detraining is slow)
+export const CEIL_DECAY_CAP = 0.1; // total degradation floor: Vceil ≥ 0.90·Vbest
+export const DETRAINED_FLOOR_FRAC = 0.72; // V0 = f0·Vceil — deep-detrained floor at C=0
+
+function yearsSince(dateStr: string, asOfMs: number): number {
+  const t = Date.parse(dateStr);
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, (asOfMs - t) / (365.25 * 24 * 3600 * 1000));
+}
+
+/**
+ * Fit the saturating support curve `V(C) = Vceil − (Vceil − V0)·exp(−C/λ)` from
+ * the athlete's race anchors (§§1–2). `Vceil` is the best VDOT ever shown,
+ * degraded gently for years since; `λ` is fit through the recent support anchor
+ * (least squares when ≥2). Returns null when the anchors can't constrain a curve.
+ */
+function fitPersonalCurve(
+  anchors: RaceAnchor[],
+  asOfMs: number
+): { Vceil: number; V0: number; lambda: number } | null {
+  const pts = anchors.map((a) => ({ C: a.ctlAtRace, V: vdot(a.distanceKm, a.timeSec / 60), date: a.date }));
+  if (pts.length === 0) return null;
+  const best = pts.reduce((b, p) => (p.V > b.V ? p : b), pts[0]);
+  const Vceil = best.V * (1 - Math.min(CEIL_DECAY_PER_YR * yearsSince(best.date, asOfMs), CEIL_DECAY_CAP));
+  const V0 = DETRAINED_FLOOR_FRAC * Vceil;
+  // Support anchors constrain the rise; exclude the ceiling point itself. Keep
+  // only points inside the ln domain (V < Vceil, C > 0).
+  let support = pts.filter((p) => p !== best);
+  if (support.length === 0) support = pts;
+  support = support.filter((p) => p.V < Vceil && p.C > 0);
+  if (support.length === 0) return null;
+  let lambda: number;
+  if (support.length === 1) {
+    const { C, V } = support[0];
+    lambda = -C / Math.log((Vceil - V) / (Vceil - V0));
+  } else {
+    // y = ln(Vceil − V) = ln(Vceil − V0) − C/λ ⇒ slope = −1/λ (least squares).
+    const xs = support.map((p) => p.C);
+    const ys = support.map((p) => Math.log(Vceil - p.V));
+    const n = xs.length;
+    const mx = xs.reduce((s, x) => s + x, 0) / n;
+    const my = ys.reduce((s, y) => s + y, 0) / n;
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+      num += (xs[i] - mx) * (ys[i] - my);
+      den += (xs[i] - mx) ** 2;
+    }
+    const slope = den === 0 ? 0 : num / den;
+    lambda = slope < 0 ? -1 / slope : Infinity;
+  }
+  if (!Number.isFinite(lambda) || lambda <= 0) return null;
+  return { Vceil, V0, lambda };
+}
+
+/**
+ * Finish estimate (seconds) from a reachable race-day CTL.
+ *
+ * With no personal race `anchors` this is the generic VDOT-from-CTL curve
+ * (byte-identical to the pre-calibration model). With anchors it uses the
+ * ceiling-saturating personal curve and enforces the HARD INVARIANT via a
+ * clamp: the projection is **never slower** than any real race the athlete ran
+ * at CTL ≤ the reachable CTL (§ clamp). The clamp holds regardless of any model
+ * miscalibration because it caps at each qualifying anchor's equal-VDOT finish.
+ *
+ * Still a load-limited display bound, never a hard prediction — callers clamp it
+ * no faster than the stated goal (plan.ts buildGoalGap).
+ */
+export function finishEstimate(
+  reachableRaceDayCtl: number,
+  distanceKm: number,
+  anchors?: RaceAnchor[],
+  asOf: string | number | Date = Date.now()
+): number {
+  const usable = (anchors ?? []).filter(
+    (a) => a.distanceKm > 0 && a.timeSec > 0 && Number.isFinite(a.ctlAtRace)
+  );
+  if (usable.length === 0) return genericFinishSec(reachableRaceDayCtl, distanceKm);
+
+  const asOfMs = asOf instanceof Date ? asOf.getTime() : typeof asOf === "string" ? Date.parse(asOf) : asOf;
+  const curve = fitPersonalCurve(usable, Number.isFinite(asOfMs) ? (asOfMs as number) : Date.now());
+
+  let modelSec = Infinity;
+  if (curve) {
+    const V = curve.Vceil - (curve.Vceil - curve.V0) * Math.exp(-reachableRaceDayCtl / curve.lambda);
+    modelSec = invertVdotMin(distanceKm, V) * 60;
+  }
+
+  // HARD INVARIANT clamp: cap at the equal-VDOT finish of every anchor run at
+  // CTL ≤ the reachable CTL (§ clamp). Independent of the model.
+  let cap = Infinity;
+  for (const a of usable) {
+    if (a.ctlAtRace <= reachableRaceDayCtl) {
+      const teq = invertVdotMin(distanceKm, vdot(a.distanceKm, a.timeSec / 60)) * 60;
+      if (teq < cap) cap = teq;
+    }
+  }
+
+  const result = Math.min(modelSec, cap);
+  return Number.isFinite(result) ? result : genericFinishSec(reachableRaceDayCtl, distanceKm);
+}
+
+/**
+ * Load the athlete's race anchors from the gitignored corpus
+ * (data/app/athlete-context.json `keyPerformances`). Each entry needs
+ * `distanceKm` and a finish (`timeSec`, else H:MM[:SS] `time`); `ctlAtRace` is
+ * read from the entry or looked up by date in data/derived/pmc.csv (the
+ * labeling convention, pipeline/lib/label.ts). Returns [] when the corpus is
+ * absent (deployed site) or nothing is usable ⇒ generic fallback.
+ */
+export function loadRaceAnchors(): RaceAnchor[] {
+  try {
+    const ctxPath = join(process.cwd(), "data", "app", "athlete-context.json");
+    if (!existsSync(ctxPath)) return [];
+    const ctx = JSON.parse(readFileSync(ctxPath, "utf8"));
+    const perfs: unknown = ctx?.keyPerformances;
+    if (!Array.isArray(perfs) || perfs.length === 0) return [];
+    let pmc: Map<string, number> | undefined;
+    const anchors: RaceAnchor[] = [];
+    for (const p of perfs as Array<Record<string, unknown>>) {
+      const distanceKm = Number(p?.distanceKm);
+      const timeSec = p?.timeSec != null ? Number(p.timeSec) : parseRaceTimeSec(p?.time);
+      if (!(distanceKm > 0) || !(timeSec !== undefined && timeSec > 0)) continue;
+      let ctl = p?.ctlAtRace != null ? Number(p.ctlAtRace) : NaN;
+      if (!Number.isFinite(ctl) && typeof p?.date === "string") {
+        pmc ??= loadPmcCtl();
+        const v = pmc.get(p.date);
+        if (v !== undefined) ctl = v;
+      }
+      if (!Number.isFinite(ctl)) continue;
+      anchors.push({ date: typeof p?.date === "string" ? p.date : "", distanceKm, timeSec: timeSec!, ctlAtRace: ctl });
+    }
+    return anchors;
+  } catch {
+    return [];
+  }
+}
+
+/** Race finish "H:MM:SS" or "H:MM" (hours:minutes) → seconds; undefined if bad. */
+function parseRaceTimeSec(s: unknown): number | undefined {
+  if (typeof s !== "string") return undefined;
+  const parts = s.trim().split(":").map(Number);
+  if (parts.length < 2 || parts.length > 3 || parts.some((n) => !Number.isFinite(n) || n < 0)) return undefined;
+  const total = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 3600 + parts[1] * 60;
+  return total > 0 ? total : undefined;
+}
+
+/** date → CTL from data/derived/pmc.csv (header `date,tss,ctl,atl,tsb`). */
+function loadPmcCtl(): Map<string, number> {
+  const m = new Map<string, number>();
+  try {
+    const p = join(process.cwd(), "data", "derived", "pmc.csv");
+    if (!existsSync(p)) return m;
+    const [, ...rows] = readFileSync(p, "utf8").trim().split("\n");
+    for (const r of rows) {
+      const [date, , ctl] = r.split(",");
+      if (date) m.set(date, Number(ctl));
+    }
+  } catch {
+    /* corpus absent ⇒ empty map */
+  }
+  return m;
 }
 
 // ——— long-run progression (§5): distance-tied, injury-capped ——————————
