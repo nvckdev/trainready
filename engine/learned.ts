@@ -160,10 +160,24 @@ const ANCHOR_V2_RAMP_CAP = 1.2; // ≤ +20% over the ramp-cap reference
 const ANCHOR_V2_BEST_WINDOW = 6; // trailing weeks scanned for the best week
 const ANCHOR_V2_BEST_FRACTION = 0.7; // outlier influence decays to 70%, not to 0
 const ANCHOR_V2_MAX_CUT = 0.65; // consecutive prescriptions may fall ≤ 35%
+// Week-1 base floor (audit round 2, fix 3): post-seed-fix a plan's first week
+// opens ≈ maintenance (CTL×7), which HOLDS fitness but cannot build it. With
+// ≤ 14 weeks of runway to the race and a base/build week, floor the first
+// plan week at 1.15 × maintenance so the season actually opens with an
+// overload — still under the rule-4 ramp rails (see prescribeWeek).
+const ANCHOR_V2_BASE_FLOOR = 1.15; // × maintenance (CTL×7)
+const ANCHOR_V2_BASE_FLOOR_RUNWAY_DAYS = 98; // 14 weeks
 
 /** Newest non-zero executed/prescribed week — the classic ramp base. */
 function prevNonZeroWeek(state: AthleteState): number | undefined {
   return [...state.last4WeeksTss].reverse().find((v) => v > 0);
+}
+
+/** max(previous non-zero week, 0.7 × best week in the trailing 6): the
+ *  smoothed base the +20% anchor ramp cap is measured against. */
+function rampCapRef(state: AthleteState): number {
+  const trailing = (state.trailingWeeksTss ?? state.last4WeeksTss).slice(-ANCHOR_V2_BEST_WINDOW);
+  return Math.max(prevNonZeroWeek(state) ?? 0, ANCHOR_V2_BEST_FRACTION * Math.max(0, ...trailing));
 }
 
 function anchorV2Ceiling(state: AthleteState): number {
@@ -175,8 +189,7 @@ function anchorV2Ceiling(state: AthleteState): number {
     peak = Math.max(peak, weeks[i] * Math.pow(ANCHOR_V2_PEAK_DECAY, weeksSincePeak));
   }
   let anchor = Math.max(maintenance, peak);
-  const trailing = (state.trailingWeeksTss ?? state.last4WeeksTss).slice(-ANCHOR_V2_BEST_WINDOW);
-  const capRef = Math.max(prevNonZeroWeek(state) ?? 0, ANCHOR_V2_BEST_FRACTION * Math.max(0, ...trailing));
+  const capRef = rampCapRef(state);
   if (capRef > 0) anchor = Math.min(anchor, capRef * ANCHOR_V2_RAMP_CAP);
   return anchor;
 }
@@ -284,6 +297,33 @@ export class TaperV1 implements Engine {
       if (prev !== undefined) ceiling = Math.min(ceiling, prev * ANCHOR_V2_RAMP_CAP);
     }
     let value = Math.min(ceiling, Math.max(trailingMean * lo, raw));
+    // Anchor-v2 week-1 base floor: first plan week (prevPrescribedTss absent),
+    // base/build only, race ≤ 14 weeks out — lift the opening week to 1.15 ×
+    // maintenance (CTL×7) so a short runway starts with an overload instead
+    // of a hold. The floor may raise the value past the anchor CEILING (a
+    // preference, not a rail) but never past the rule-4 rails: +20% over the
+    // trailing-month mean AND over the smoothed ramp-cap reference. Weeks 2+
+    // ramp from it under the normal anchor rules (WoW band below). Taper/race
+    // weeks never reach this code (protocol lock, rule 2); recovery keeps its
+    // legacy bounds — rails are rails.
+    let baseFloorLift = false;
+    if (
+      this.anchorV2 &&
+      (ref.phase === "base" || ref.phase === "build") &&
+      state.prevPrescribedTss === undefined &&
+      state.daysToNextRace !== null &&
+      state.daysToNextRace <= ANCHOR_V2_BASE_FLOOR_RUNWAY_DAYS
+    ) {
+      const floor = Math.min(
+        ANCHOR_V2_BASE_FLOOR * state.ctl * 7,
+        trailingMean * ANCHOR_V2_RAMP_CAP,
+        rampCapRef(state) * ANCHOR_V2_RAMP_CAP
+      );
+      if (floor > value) {
+        value = floor;
+        baseFloorLift = true;
+      }
+    }
     // Anchor-v2 week-over-week smoothing band: within a simulated plan (the
     // caller tells us its own previous prescription), consecutive targets
     // move at most +20% / −35%. The band deliberately does NOT apply to the
@@ -306,7 +346,7 @@ export class TaperV1 implements Engine {
       weekTss: Math.round(clamped),
       sessions: Math.min(13, Math.max(3, Math.round(clamped / 62))),
       shares: ref.shares,
-      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail` : ""}. ${ref.rationale}`,
+      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
     };
   }
 }

@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
+import { TaperV1 } from "./learned.ts";
+import { generatePlan, type Plan, type PlanRequest, type PlanWeek } from "./plan.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import { deriveZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
+import { briefForWeek, loadCopyBranch } from "../src/lib/week-insights.ts";
 
 /**
  * PMC recursion + plan-projection acceptance tests (`npm run engine:tests`).
@@ -441,6 +443,132 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
   } catch (e) {
     check("T9", "anchor-v2 outlier plan generates", false, (e as Error).message);
   }
+}
+
+// ——— T10: week-insights copy is truthful about maintenance vs building ———
+// Post-seed-fix a week-1 target ≈ CTL×7 merely HOLDS fitness; the card must
+// not claim "hard enough to adapt" for it. Contract: targetTss ≤ 1.05 ×
+// (start-of-week CTL × 7) → maintenance/consolidation language; building
+// language only meaningfully above that band.
+{
+  const cases: Array<[number, number, "maintenance" | "building"]> = [
+    [147, 21, "maintenance"], // exactly CTL×7
+    [154, 21, "maintenance"], // 1.048× — inside the 5% band
+    [155, 21, "building"], // 1.054× — just above the band
+    [169, 21, "building"], // the 1.15× week-1 floor is claimed as building
+    [118, 16.9, "maintenance"], // audited corpus shape: target ≈ maintenance
+    [136, 16.9, "building"], // audited corpus shape under the week-1 floor
+    [60, 20, "maintenance"], // weekly floor below maintenance
+  ];
+  check("T10a", "loadCopyBranch picks the branch from (target, ctl) pairs",
+    cases.every(([t, c, want]) => loadCopyBranch(t, c) === want),
+    cases.map(([t, c, want]) => `${t}/${c}→${loadCopyBranch(t, c)}${loadCopyBranch(t, c) === want ? "" : "≠" + want}`).join(" "));
+
+  const mkWeek = (weekStart: string, targetTss: number, ctl: number, tsb: number): PlanWeek => ({
+    weekStart,
+    phase: "base",
+    targetTss,
+    projected: { ctl, atl: r1(ctl - tsb), tsb },
+    sessions: [],
+  });
+  const fakePlan: Plan = {
+    meta: {
+      generatedAt: "-", engine: "test", raceName: "Copy test race", raceDate: "2026-10-18",
+      raceType: "run-half", daysPerWeek: 6, longDay: "sunday",
+      startCtl: 20, projectedRaceCtl: 30, projectedRaceTsb: 8,
+    },
+    // Week 1 targets exactly maintenance off startCtl 20 (140 ≤ 1.05×140);
+    // week 2 targets 170 off the projected 20.3 CTL (> 1.05×142.1);
+    // week 3 dives past −20 TSB (the deep branch outranks both).
+    weeks: [
+      mkWeek("2026-07-13", 140, 20.3, -1.2),
+      mkWeek("2026-07-20", 170, 21.1, -8.4),
+      mkWeek("2026-07-27", 190, 22.4, -21.3),
+    ],
+  };
+  const briefs = ["2026-07-13", "2026-07-20", "2026-07-27"].map((d) => briefForWeek(fakePlan, d, "Copy test race"));
+  const tsbLine = (i: number) => briefs[i]?.why[2] ?? "";
+  check("T10b", "maintenance-level week says consolidation, never 'hard enough to adapt'",
+    tsbLine(0).includes("consolidation") && !tsbLine(0).includes("hard enough to adapt"),
+    tsbLine(0));
+  check("T10c", "meaningfully-above-maintenance week keeps the building copy",
+    tsbLine(1).includes("hard enough to adapt"), tsbLine(1));
+  check("T10d", "deep-TSB branch (≤ −20) is untouched by the copy split",
+    tsbLine(2).includes("deliberately deep"), tsbLine(2));
+}
+
+// ——— T11: anchor-v2 week-1 base floor (runway ≤ 14 weeks, base/build) ———
+// With the seed fix in, week 1 of a plan opens ≈ maintenance (CTL×7), which
+// holds fitness but cannot build it. Under the anchor-v2 flag, when the race
+// is ≤ 14 weeks out and the week is base/build, the FIRST plan week is
+// floored at 1.15 × maintenance — still under the rule-4 ramp rails (≤ +20%
+// over the trailing-month mean AND over the anchor ramp-cap reference).
+// Flag off stays byte-identical; later weeks ramp via the anchor rules.
+{
+  // A steady athlete: 26 weeks at 70 TSS → CTL ≈ 10, maintenance ≈ CTL×7.
+  const mkEngine = (anchorV2: boolean) => {
+    const eng = new TaperV1({ anchorV2 });
+    let ctl = 10;
+    let atl = 10;
+    const last8: number[] = [70, 70, 70, 70];
+    for (let i = 0; i < 26; i++) {
+      eng.observe(
+        {
+          ctl, atl, tsb: ctl - atl,
+          last4WeeksTss: last8.slice(-4),
+          last4Shares: { swim: 0.1, bike: 0.3, run: 0.6 },
+          daysToNextRace: null, weeksSinceStart: i, breakRatio: 1, daysSinceLastSession: 1,
+        },
+        70
+      );
+      for (let d = 0; d < 7; d++) {
+        const tss = d < 6 ? 70 / 6 : 0;
+        ctl = ctl + (tss - ctl) / 42;
+        atl = atl + (tss - atl) / 7;
+      }
+      last8.push(70);
+      if (last8.length > 8) last8.shift();
+    }
+    const state: AthleteState = {
+      ctl, atl, tsb: ctl - atl,
+      last4WeeksTss: last8.slice(-4),
+      trailingWeeksTss: [...last8],
+      last4Shares: { swim: 0.1, bike: 0.3, run: 0.6 },
+      daysToNextRace: 90, // 12.9 weeks of runway → base phase, inside 14 weeks
+      weeksSinceStart: 26, // 26 % 4 = 2: not a cutback slot
+      breakRatio: 1, daysSinceLastSession: 1,
+    };
+    return { eng, state };
+  };
+
+  const { eng: engOn, state } = mkEngine(true);
+  const maintenance = state.ctl * 7;
+  const floor = 1.15 * maintenance;
+  const rampRail = Math.min(70, Math.max(70, 0.7 * 70)) * 1.2; // 84, both rails agree here
+  const w1 = engOn.prescribeWeek(state);
+  check("T11a", "flag ON, week 1, runway ≤ 14w, base: target ≥ 1.15× maintenance (±1)",
+    w1.phase === "base" && w1.weekTss >= floor - 1,
+    `phase ${w1.phase}, target ${w1.weekTss}, floor ${floor.toFixed(1)}`);
+  check("T11b", "the floored week 1 still respects the +20% ramp rails",
+    w1.weekTss <= rampRail + 1, `target ${w1.weekTss}, rail ${rampRail.toFixed(1)}`);
+
+  const farRace = engOn.prescribeWeek({ ...state, daysToNextRace: 120 });
+  check("T11c", "flag ON but runway > 14 weeks: floor inactive (target ≈ maintenance, < floor)",
+    farRace.weekTss < floor - 1, `target ${farRace.weekTss}, floor ${floor.toFixed(1)}`);
+
+  const week2 = engOn.prescribeWeek({ ...state, prevPrescribedTss: 70 });
+  check("T11d", "flag ON but not week 1 (prevPrescribedTss set): floor inactive",
+    week2.weekTss < floor - 1, `target ${week2.weekTss}`);
+
+  const cutback = engOn.prescribeWeek({ ...state, weeksSinceStart: 27 }); // 27 % 4 = 3 → recovery
+  check("T11e", "flag ON but recovery week: floor never applies outside base/build",
+    cutback.phase === "recovery" && cutback.weekTss < floor - 1,
+    `phase ${cutback.phase}, target ${cutback.weekTss}`);
+
+  const { eng: engOff, state: stateOff } = mkEngine(false);
+  const off = engOff.prescribeWeek(stateOff);
+  check("T11f", "flag OFF: week 1 stays on the legacy path, below the floor",
+    off.weekTss < floor - 1, `target ${off.weekTss}, floor ${floor.toFixed(1)}`);
 }
 
 console.log(`\nPMC + projection tests (${existsSync("data") ? "real corpus" : "synthetic"})\n`);

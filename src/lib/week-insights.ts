@@ -45,6 +45,19 @@ export function currentWeek(plan: Plan, today: string): { week: PlanWeek; index:
   return null;
 }
 
+/** How far above maintenance (start-of-week CTL × 7) a target must sit
+ *  before the copy may claim the week BUILDS fitness. At or below the band
+ *  the load merely holds CTL — saying "hard enough to adapt" there is false
+ *  (audit round 2, fix 3). */
+const MAINTENANCE_BAND = 1.05;
+
+/** Copy branch for a week's load line. Pure so it is directly testable:
+ *  targetTss ≤ 1.05 × (startCtl × 7) → "maintenance" (consolidation
+ *  language); meaningfully above → "building". */
+export function loadCopyBranch(targetTss: number, startCtl: number): "maintenance" | "building" {
+  return targetTss <= MAINTENANCE_BAND * startCtl * 7 ? "maintenance" : "building";
+}
+
 const PHASE_GOAL: Record<string, string> = {
   base: "building the aerobic floor — volume over intensity",
   build: "converting the base into race-specific fitness",
@@ -80,10 +93,16 @@ export function briefForWeek(plan: Plan, today: string, raceName: string): WeekB
   } else {
     why.push(`${week.targetTss} TSS opens the season at a load your trailing month already supports.`);
   }
+  // Start-of-week CTL: the previous week's end-of-week projection, or the
+  // plan's seed CTL for week 1. Decides whether the load line may claim the
+  // week builds fitness at all — a target at ≈ CTL×7 only maintains it.
+  const weekStartCtl = prev ? prev.projected.ctl : plan.meta.startCtl;
   why.push(
     week.projected.tsb <= -20
       ? `Projected form ${week.projected.tsb.toFixed(0)} TSB — deliberately deep, but above the −25 recovery floor.`
-      : `Projected form ${week.projected.tsb.toFixed(0)} TSB by week's end — hard enough to adapt, safe enough to absorb.`
+      : loadCopyBranch(week.targetTss, weekStartCtl) === "building"
+        ? `Projected form ${week.projected.tsb.toFixed(0)} TSB by week's end — hard enough to adapt, safe enough to absorb.`
+        : `Projected form ${week.projected.tsb.toFixed(0)} TSB by week's end — a consolidation load: roughly what holds CTL ${weekStartCtl.toFixed(0)}, banking fitness rather than building it.`
   );
   why.push(`Every number backs out of ${raceName}: the race defines the season, not the other way round.`);
 
