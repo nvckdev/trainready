@@ -177,11 +177,17 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
   const remIdx = stored.plan.weeks.findIndex((w) => w.weekStart === remaining[0].weekStart);
   const expectedNowCtl = remIdx > 0 ? stored.plan.weeks[remIdx - 1].projected.ctl : stored.plan.meta.startCtl;
   const ahead = !rebaselined && actualState.ctl > expectedNowCtl + 0.5;
+  // Track whether we override any target — only then must we re-derive the
+  // projected chain (otherwise generatePlan's session-accurate projected stands).
+  let modified = false;
   if (ahead) {
     for (const w of remaining) {
       if (w.phase !== "base" && w.phase !== "build") continue;
       const orig = origByWeek.get(w.weekStart);
-      if (orig != null && w.targetTss > orig) scaleWeek(w, orig);
+      if (orig != null && w.targetTss > orig) {
+        scaleWeek(w, orig);
+        modified = true;
+      }
     }
   }
 
@@ -196,6 +202,7 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
     if (first.targetTss > maint) scaleWeek(first, maint);
     first.phase = "recovery";
     forcedRecoveryWeek = first.weekStart;
+    modified = true;
   } else if (last && last.actualTss > last.plannedTss) {
     // Overshoot damp: give back exactly the excess, then lower further (down to
     // the weekly-60 rail) until projected end-of-week TSB clears the safe band.
@@ -210,12 +217,16 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
       if (test[0].projected.tsb >= SAFE_TSB_BAND || cap <= 60) break;
       cap *= 0.95;
     }
-    if (Math.max(60, round(cap)) < first.targetTss) scaleWeek(first, Math.max(60, round(cap)));
+    if (Math.max(60, round(cap)) < first.targetTss) {
+      scaleWeek(first, Math.max(60, round(cap)));
+      modified = true;
+    }
   }
 
-  // Re-simulate the whole remaining projected chain from the actual seed so
-  // targetTss and projected stay consistent after any override above.
-  resimulateProjected(remaining, actualState.ctl, actualState.atl);
+  // Re-derive the projected chain ONLY when we overrode a target — otherwise
+  // generatePlan's session-accurate projected (incl. the race week) stands.
+  // meta.projectedRaceCtl/Tsb remain authoritative from generatePlan either way.
+  if (modified) resimulateProjected(remaining, actualState.ctl, actualState.atl);
 
   // ── Rule 6 (behind): assert the 2-week taper was never compressed ──
   const tail = remaining.slice(-2);
