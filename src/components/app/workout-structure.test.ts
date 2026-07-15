@@ -16,7 +16,7 @@
 import { generatePlan, type PlanRequest } from "../../../engine/plan.ts";
 import { deriveZones } from "../../../engine/zones.ts";
 import type { AthleteState, WorkoutStructure } from "../../../engine/types.ts";
-import { computeTotals } from "./workout-structure.tsx";
+import { computeTotals, timelineSegments } from "./workout-structure.tsx";
 
 const failures: string[] = [];
 const passes: string[] = [];
@@ -234,6 +234,63 @@ const swim: WorkoutStructure = {
 {
   const t = computeTotals({ blocks: [{ kind: "main", zone: "easy" }] });
   check("U8", "block with no size → no NaN, zero totals", t.tss === 0 && t.durationSec === null && !Number.isNaN(t.tss), "");
+}
+
+// Strides run regression: an undistanceable strides sub-block (durationSec, no
+// pace/distance) must NOT erase the pace-derived distance of the easy segment.
+// Before the fix this whole session's distance rendered as nothing.
+const strides: WorkoutStructure = {
+  blocks: [
+    { kind: "segment", zone: "easy", durationSec: 45 * 60, paceMinSecPerKm: 300, paceMaxSecPerKm: 330 },
+    { kind: "strides", zone: "vo2", reps: 5, durationSec: 20, recoveryNote: "full recovery" },
+  ],
+};
+{
+  const t = computeTotals(strides);
+  check(
+    "U9",
+    "strides sub-block (no pace/dist) does not erase the easy segment's distance",
+    (t.distanceM ?? 0) > 0 && t.distanceEstimated,
+    `dist ${t.distanceM} est ${t.distanceEstimated}`,
+  );
+}
+
+// Distance-defined hard session (swim CSS: CV + VO2 sets) → durationSec is null.
+// This is the gate the renderer keys on: it must OMIT the "At intensity" total
+// (never show a false "0s") precisely because time-at-intensity is 0 here even
+// though the session is full of hard work. Asserting the gate condition guards
+// the displayed value the earlier tests never checked.
+const cssSwim: WorkoutStructure = {
+  blocks: [
+    { kind: "warmup", zone: "easy", distanceM: 400 },
+    { kind: "main", zone: "cv", reps: 10, distanceM: 100, recoverySec: 20, recoveryNote: "rest" },
+    { kind: "main", zone: "vo2", reps: 4, distanceM: 50, recoverySec: 30 },
+    { kind: "cooldown", zone: "recovery", distanceM: 200 },
+  ],
+};
+{
+  const t = computeTotals(cssSwim);
+  check(
+    "U10",
+    "distance-defined hard swim → durationSec null (renderer omits At-intensity, no false 0s)",
+    t.durationSec === null && t.timeAtIntensitySec === 0 && (t.distanceM ?? 0) === 1800,
+    `dur ${t.durationSec} atI ${t.timeAtIntensitySec} dist ${t.distanceM}`,
+  );
+}
+
+// Race / prose-only block (no duration, no distance) still gets a proportional
+// timeline presence: a single full-width zone-colored bar rather than nothing.
+{
+  const raceSegs = timelineSegments([{ kind: "segment", zone: "race", effortNote: "Race day." }]);
+  check(
+    "U11",
+    "prose-only race block yields one full-width race timeline segment",
+    raceSegs.segs.length === 1 && raceSegs.segs[0].zone === "race" && raceSegs.segs[0].weight > 0,
+    `${raceSegs.segs.length} segs`,
+  );
+  // And a sized session is unaffected — no spurious unit bars.
+  const sized = timelineSegments(strides.blocks);
+  check("U12", "sized session timeline unaffected by the sizeless fallback", sized.segs.length >= 2, `${sized.segs.length} segs`);
 }
 
 /* ——— Report ————————————————————————————————————————————————— */

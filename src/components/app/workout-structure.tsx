@@ -87,16 +87,24 @@ export interface StructureTotals {
    *  over every block. Null when NO block carries a duration (a purely
    *  distance-defined session that gives no time signal). */
   durationSec: number | null;
-  /** Total distance in metres, or null when it can't be derived from the
-   *  structure (e.g. a bike block with watts but neither pace nor distance). */
+  /** Total distance in metres. Null ONLY when no block produced any distance
+   *  (e.g. a bike session whose blocks carry watts but neither pace nor
+   *  distance). When some sized blocks yield distance and others can't, the
+   *  derivable distance is reported and `distanceEstimated` is set — one
+   *  undistanceable sub-block (a strides rep) must not erase the distance the
+   *  rest of the session legitimately derived. */
   distanceM: number | null;
   /** Seconds spent in a non-easy zone (work portion of tempo/threshold/CV/
-   *  VO2/race blocks) — the "time at intensity". */
+   *  VO2/race blocks) — the "time at intensity". Only accrues for blocks that
+   *  carry a durationSec; a purely distance-defined session (every swim, the
+   *  prose-only race block) reports 0 here, which is why the renderer only
+   *  shows an "At intensity" total when `durationSec` is derivable. */
   timeAtIntensitySec: number;
   /** Estimated Training Stress Score from Σ block-time · zoneIF² · 100. */
   tss: number;
   /** True when any distance contribution was inferred from pace × time rather
-   *  than an explicit distanceM (renderer labels it "≈"). */
+   *  than an explicit distanceM, OR when a sized block's distance could not be
+   *  derived at all (so the reported total is a floor). Renderer labels it "≈". */
   distanceEstimated: boolean;
 }
 
@@ -165,10 +173,14 @@ export function computeTotals(workout: WorkoutStructure | undefined | null): Str
 
   return {
     durationSec: sawDuration ? Math.round(workSec + recSec) : null,
-    distanceM: sawDistance && !distanceUnknown ? Math.round(distanceM) : null,
+    // Report distance whenever ANY block yielded one; full null is reserved for
+    // the case where no block produced distance at all (bike watts). A single
+    // undistanceable sized sub-block (a strides rep) only downgrades the total
+    // to estimated ("≈"), it never erases the rest of the session's distance.
+    distanceM: sawDistance ? Math.round(distanceM) : null,
     timeAtIntensitySec: Math.round(timeAtIntensitySec),
     tss: Math.round(tss),
-    distanceEstimated,
+    distanceEstimated: distanceEstimated || distanceUnknown,
   };
 }
 
@@ -237,7 +249,7 @@ interface Seg {
   label: string;
 }
 
-function timelineSegments(blocks: Block[]): { segs: Seg[]; byTime: boolean } {
+export function timelineSegments(blocks: Block[]): { segs: Seg[]; byTime: boolean } {
   const byTime = blocks.some((b) => (b.durationSec ?? 0) > 0);
   const segs: Seg[] = [];
   for (const b of blocks) {
@@ -245,8 +257,13 @@ function timelineSegments(blocks: Block[]): { segs: Seg[]; byTime: boolean } {
     const recZone: Zone = b.recoveryNote?.toLowerCase().includes("rest") ? "recovery" : "easy";
     const size = sizeLabel(b) ?? "";
     const zLabel = ZONE_LABEL[b.zone];
+    // A block with neither a duration nor a distance (the prose-only race
+    // block) still deserves a proportional presence: give it a single
+    // full-width unit bar so its zone paints the timeline instead of vanishing.
+    const sizeless = (b.durationSec ?? 0) <= 0 && (b.distanceM ?? 0) <= 0;
     for (let i = 0; i < reps; i++) {
-      const weight = byTime ? b.durationSec ?? 0 : b.distanceM ?? 0;
+      const dim = byTime ? b.durationSec ?? 0 : b.distanceM ?? 0;
+      const weight = dim > 0 ? dim : sizeless ? 1 : 0;
       if (weight > 0) segs.push({ zone: b.zone, weight, label: `${zLabel} ${size}`.trim() });
       const isLast = i === reps - 1;
       if (!isLast) {
@@ -448,7 +465,13 @@ export function WorkoutStructureView({
           />
         )}
         {durationSec != null && <Total label="Duration" value={fmtDuration(durationSec)} />}
-        <Total label="At intensity" value={fmtDuration(totals.timeAtIntensitySec)} />
+        {/* At-intensity time is only derivable when blocks carry durations.
+            A distance-defined session (every swim) or the prose-only race block
+            accrues 0 here even when it contains hard CV/VO2/race work, so we
+            omit the total rather than assert a false "0s". */}
+        {totals.durationSec != null && (
+          <Total label="At intensity" value={fmtDuration(totals.timeAtIntensitySec)} />
+        )}
         <Total label="Load" value={String(tss)} unit="TSS" />
       </div>
     </div>
