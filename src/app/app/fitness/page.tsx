@@ -7,6 +7,8 @@ import { weeklyPainAverages } from "@/lib/pain-rules";
 import { addDays, mondayOf } from "@/lib/strength-schedule";
 import { PainVsLoadChart, PmcChart, WeeklyVolumeChart, type PainLoadRow } from "@/components/app/charts";
 import { EmptyState, StatChip } from "@/components/app/bits";
+import { CapabilityCard } from "@/components/app/race-cards";
+import { getCapability } from "@/lib/race-insights";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +16,7 @@ export default function FitnessPage() {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
+  const capability = getCapability(localToday());
   const pmc = getPmc();
   const weekly = getWeekly();
   const athlete = getAthlete();
@@ -84,6 +87,12 @@ export default function FitnessPage() {
         </div>
       </div>
       <div className="rule mt-5 mb-8" />
+
+      {capability && (
+        <section className="mb-12">
+          <CapabilityCard cap={capability} />
+        </section>
+      )}
 
       <section className="mb-12">
         <h2 className="label-mono text-bone-muted mb-4">Load, fatigue, and form · full history</h2>

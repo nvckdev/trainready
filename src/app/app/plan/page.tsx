@@ -1,6 +1,8 @@
 import { hasCorpus, localToday } from "@/lib/athlete-data";
 import { readPlan } from "@/lib/plan-io";
 import { EmptyState, SessionCard, StatChip } from "@/components/app/bits";
+import { RaceDayCard } from "@/components/app/race-cards";
+import { getRaceDayPlan } from "@/lib/race-insights";
 import { replanAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +61,7 @@ function SeasonExplainer({ phases }: { phases: Set<string> }) {
   );
 }
 
-export default function PlanPage() {
+export default async function PlanPage() {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
@@ -77,6 +79,7 @@ export default function PlanPage() {
   const { plan } = stored;
   const today = localToday();
   const maxTss = Math.max(...plan.weeks.map((w) => w.targetTss), 1);
+  const raceDay = await getRaceDayPlan(plan, today);
 
   return (
     <div>
@@ -115,6 +118,12 @@ export default function PlanPage() {
           <p className="mt-2 text-[13px] leading-relaxed text-bone-faint max-w-[72ch]">
             {plan.meta.goalGap.message}
           </p>
+        </div>
+      )}
+
+      {raceDay && (
+        <div className="mb-8">
+          <RaceDayCard plan={raceDay} raceName={plan.meta.raceName} raceDate={plan.meta.raceDate} />
         </div>
       )}
 
