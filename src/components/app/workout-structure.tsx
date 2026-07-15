@@ -185,6 +185,18 @@ function fmtDuration(sec: number): string {
   return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`;
 }
 
+/** Recovery/short-interval durations, where the second matters: 90 → "1:30"
+ *  (not the "2 min" fmtDuration rounds it to, which also collides with a real
+ *  120s). Whole minutes stay "M min"; sub-minute stays "Ns". Used only for
+ *  between-rep recovery labels so it never turns a big session duration into
+ *  a clock string. */
+function fmtRecovery(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return s === 0 ? `${m} min` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
 function fmtDistance(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${Math.round(m)} m`;
 }
@@ -239,7 +251,7 @@ function timelineSegments(blocks: Block[]): { segs: Seg[]; byTime: boolean } {
       const isLast = i === reps - 1;
       if (!isLast) {
         const recWeight = byTime ? b.recoverySec ?? 0 : 0;
-        if (recWeight > 0) segs.push({ zone: recZone, weight: recWeight, label: `recovery ${fmtDuration(b.recoverySec ?? 0)}` });
+        if (recWeight > 0) segs.push({ zone: recZone, weight: recWeight, label: `recovery ${fmtRecovery(b.recoverySec ?? 0)}` });
       }
     }
   }
@@ -348,8 +360,13 @@ function BlockRow({ block }: { block: Block }) {
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 mt-1">
           {isRepGroup && block.recoverySec != null && (
             <span className="label-mono text-bone-faint">
-              {fmtDuration(block.recoverySec)} {block.recoveryNote ?? "recovery"} between
+              {fmtRecovery(block.recoverySec)} {block.recoveryNote ?? "recovery"} between
             </span>
+          )}
+          {/* Strides (and any timed-less rep group) carry a walk-back cue in
+              recoveryNote, no recoverySec — surface it so the recovery isn't lost. */}
+          {isRepGroup && block.recoverySec == null && block.recoveryNote && (
+            <span className="label-mono text-bone-faint">{block.recoveryNote} between</span>
           )}
           {block.effortNote && <span className="text-[12px] leading-relaxed text-bone-faint">{block.effortNote}</span>}
         </div>
