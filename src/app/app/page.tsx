@@ -3,6 +3,8 @@ import { readAthleteContext } from "@/lib/athlete-context";
 import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
 import { replanAction } from "./actions";
+import { weeklyDigest } from "@/lib/digest";
+import { getWeekly } from "@/lib/athlete-data";
 import { readPainLog, readProtocolsState, isStrengthDone } from "@/lib/strength-io";
 import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
 import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
@@ -106,6 +108,7 @@ export default async function TodayPage() {
   // zero-load days rolled forward across a scheduling gap (engine/seed.ts,
   // via the src/lib gateway). Null-safe — absent with no corpus/state.
   const provenance = getSeedProvenance(today);
+  const digest = weeklyDigest(pmc, getWeekly(), stored?.plan ?? null, today);
 
   const upcoming = stored
     ? stored.plan.weeks
@@ -261,6 +264,17 @@ export default async function TodayPage() {
       {/* --- end adaptive re-plan --- */}
 
       <div className="rule mt-5 mb-8" />
+
+      {digest && (
+        <div className="border border-hairline mb-8 px-4 py-4">
+          <p className="label-mono text-signal-bright mb-3">{digest.headline}</p>
+          <div className="space-y-1.5">
+            {digest.lines.map((l, i) => (
+              <p key={i} className="text-[13.5px] leading-relaxed text-bone-muted">{l}</p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {painAlerts.length > 0 && (
         <div className="mb-8">

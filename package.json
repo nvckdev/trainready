@@ -13,7 +13,7 @@
     "engine:invariants": "tsx engine/invariants.ts",
     "engine:tests": "tsx engine/pmc.test.ts && tsx engine/goal.test.ts && tsx engine/raceday.test.ts && tsx engine/replan.test.ts",
     "strength:tests": "tsx scripts/strength-tests.ts",
-    "app:tests": "tsx src/components/app/workout-structure.test.ts",
+    "app:tests": "tsx src/components/app/workout-structure.test.ts && tsx src/lib/digest.test.ts",
     "prepare": "git config core.hooksPath .githooks || true",
     "verify": "bash scripts/verify.sh"
   },
