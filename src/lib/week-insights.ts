@@ -1,4 +1,4 @@
-import type { Plan, PlannedSessionOut, PlanWeek } from "../../engine/plan.ts";
+import type { Block, Plan, PlannedSessionOut, PlanWeek, WorkoutStructure } from "../../engine/plan.ts";
 
 /**
  * Presentation-layer insights derived from the stored plan + PMC state.
@@ -136,6 +136,69 @@ export interface EasedSession {
   structure: string;
   why: string;
   tss: number;
+  /** The mutated machine-readable structure the visual renderer consumes.
+   *  Adjustments operate on BLOCKS, not text, so the rendered card updates to
+   *  match (a converted session shows a single easy block; the derived text is
+   *  kept only for legacy consumers like calendar.ics). */
+  workout: WorkoutStructure;
+}
+
+/* ---------------- Structured (block-level) adjustments -------------------
+ * These mutate a WorkoutStructure directly — never the human-readable string —
+ * so applying one flows straight into the visual renderer (a rep group visibly
+ * gains/loses a rep, a converted session collapses to one easy block). Pure and
+ * immutable: each returns a new structure, the input is untouched. Presentation
+ * layer only; the engine's own composition (engine/plan.ts) is never altered. */
+
+/** Index of the MAIN interval rep group — the working block the feeling-based
+ *  tweaks target. Prefers a `main`-kind block that actually repeats (reps > 1);
+ *  falls back to the first `main` block, else null (nothing to adjust). */
+export function mainRepGroupIndex(w: WorkoutStructure): number | null {
+  const blocks = w.blocks ?? [];
+  const repGroup = blocks.findIndex((b) => b.kind === "main" && (b.reps ?? 1) > 1);
+  if (repGroup >= 0) return repGroup;
+  const firstMain = blocks.findIndex((b) => b.kind === "main");
+  return firstMain >= 0 ? firstMain : null;
+}
+
+function mapBlockAt(w: WorkoutStructure, i: number, fn: (b: Block) => Block): WorkoutStructure {
+  return { blocks: w.blocks.map((b, j) => (j === i ? fn(b) : b)) };
+}
+
+/** "Feeling strong" → add one rep to the main set. No-op when there is no
+ *  rep group to grow. */
+export function addRepToMain(w: WorkoutStructure): WorkoutStructure {
+  const i = mainRepGroupIndex(w);
+  if (i === null) return w;
+  return mapBlockAt(w, i, (b) => ({ ...b, reps: (b.reps ?? 1) + 1 }));
+}
+
+/** "A bit flat" → trim the MAIN set by a third, floored at one rep. A 3-rep
+ *  group drops to 2, a 6-rep to 4. The warmup, cooldown, and strides are
+ *  untouched — only the main working set shrinks. */
+export function trimMainByThird(w: WorkoutStructure): WorkoutStructure {
+  const i = mainRepGroupIndex(w);
+  if (i === null) return w;
+  return mapBlockAt(w, i, (b) => {
+    const reps = b.reps ?? 1;
+    return { ...b, reps: Math.max(1, Math.round(reps * (2 / 3))) };
+  });
+}
+
+/** "Rough day" / pain guard → collapse the whole session to a single easy
+ *  continuous block of `minutes`. Distance-less by design (a converted run/bike
+ *  is time-defined), matching the eased-session text. */
+export function easyStructure(minutes: number): WorkoutStructure {
+  return {
+    blocks: [
+      {
+        kind: "main",
+        zone: "easy",
+        durationSec: minutes * 60,
+        effortNote: "conversational effort, nothing hard",
+      },
+    ],
+  };
 }
 
 /**
@@ -143,7 +206,9 @@ export interface EasedSession {
  * same date, same duration, all intensity removed. Returns null for anything
  * that isn't a quality session (races are untouchable). The new title never
  * matches QUALITY, so the suggestion self-resolves once accepted, and stays
- * unique per date via plan-io's retitleSession.
+ * unique per date via plan-io's retitleSession. The mutation is applied to the
+ * BLOCKS (easyStructure), so the rendered card collapses to one easy block —
+ * the derived text is carried alongside for legacy string consumers.
  */
 export function easedVersion(s: PlannedSessionOut): EasedSession | null {
   if (s.discipline === "race" || s.discipline === "rest") return null;
@@ -155,6 +220,7 @@ export function easedVersion(s: PlannedSessionOut): EasedSession | null {
     structure: `${m} min entirely easy — conversational effort, nothing hard.\nConverted from "${s.title}" while pain is surfacing.\nStop if pain sharpens beyond 3/10 during the session.`,
     why: "Quality converted to easy while pain surfaces: the aerobic stimulus survives, the tissue risk doesn't.",
     tss: Math.round(s.durationHr * intensity * intensity * 100),
+    workout: easyStructure(m),
   };
 }
 

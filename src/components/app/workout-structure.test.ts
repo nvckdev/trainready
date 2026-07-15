@@ -17,6 +17,7 @@ import { generatePlan, type PlanRequest } from "../../../engine/plan.ts";
 import { deriveZones } from "../../../engine/zones.ts";
 import type { AthleteState, WorkoutStructure } from "../../../engine/types.ts";
 import { computeTotals, timelineSegments } from "./workout-structure.tsx";
+import { addRepToMain, mainRepGroupIndex, trimMainByThird } from "../../lib/week-insights.ts";
 
 const failures: string[] = [];
 const passes: string[] = [];
@@ -291,6 +292,52 @@ const cssSwim: WorkoutStructure = {
   // And a sized session is unaffected — no spurious unit bars.
   const sized = timelineSegments(strides.blocks);
   check("U12", "sized session timeline unaffected by the sizeless fallback", sized.segs.length >= 2, `${sized.segs.length} segs`);
+}
+
+/* ——— Adjustment sync: block-level "trim by a third" ———————————————
+ * The feeling-based adjustments (add a rep / trim by a third / convert to easy)
+ * must mutate the STRUCTURED workout, not the text, so the visual renderer
+ * updates to match. Here: trimming a real threshold-reps session (pulled from
+ * the actual generator) drops the main rep count, and add-a-rep grows it — both
+ * immutably (the source structure is untouched). */
+{
+  const triPlan = planFor(TRI_REQ);
+  const thr = triPlan.weeks
+    .flatMap((w) => w.sessions)
+    .find(
+      (s) =>
+        s.title === "Threshold intervals" &&
+        !!s.workout &&
+        mainRepGroupIndex(s.workout) !== null &&
+        (s.workout.blocks[mainRepGroupIndex(s.workout)!].reps ?? 1) > 1,
+    );
+  check("A0", "a generated threshold-reps session with a main rep group exists", !!thr, thr ? thr.title : "none found");
+  if (thr && thr.workout) {
+    const idx = mainRepGroupIndex(thr.workout)!;
+    const before = thr.workout.blocks[idx].reps ?? 1;
+    const trimmed = trimMainByThird(thr.workout);
+    const after = trimmed.blocks[idx].reps ?? 1;
+    const expected = Math.max(1, Math.round(before * (2 / 3)));
+    check(
+      "A1",
+      "trim by a third reduces the main rep count",
+      after === expected && after < before,
+      `${before} → ${after} (expected ${expected})`,
+    );
+    check(
+      "A2",
+      "trim is immutable — the source structure is untouched",
+      (thr.workout.blocks[idx].reps ?? 1) === before,
+      `source still ${thr.workout.blocks[idx].reps}`,
+    );
+    const grown = addRepToMain(thr.workout);
+    check(
+      "A3",
+      "add a rep grows the main rep count by one",
+      (grown.blocks[idx].reps ?? 1) === before + 1,
+      `${before} → ${grown.blocks[idx].reps}`,
+    );
+  }
 }
 
 /* ——— Report ————————————————————————————————————————————————— */

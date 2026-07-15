@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Plan, PlanRequest } from "../../engine/plan.ts";
+import type { Plan, PlanRequest, WorkoutStructure } from "../../engine/plan.ts";
 
 /** The athlete's active plan lives beside the corpus (gitignored). */
 
@@ -34,7 +34,7 @@ export function writePlan(stored: StoredPlan): void {
 export function retitleSession(
   date: string,
   title: string,
-  next: { title: string; structure: string; why: string; tss: number }
+  next: { title: string; structure: string; why: string; tss: number; workout?: WorkoutStructure }
 ): boolean {
   const stored = readPlan();
   if (!stored) return false;
@@ -50,6 +50,11 @@ export function retitleSession(
     target.structure = next.structure;
     target.why = next.why;
     target.tss = next.tss;
+    // Keep the machine-readable structure in lock-step with the text so the
+    // visual renderer reflects the mutation (a converted session collapses to
+    // one easy block). Absent → clear any stale structure and fall back to text.
+    if (next.workout) target.workout = next.workout;
+    else delete target.workout;
     writePlan(stored);
     return true;
   }

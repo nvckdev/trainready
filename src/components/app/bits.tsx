@@ -9,6 +9,7 @@ import {
   toggleStrengthDoneAction,
 } from "@/app/app/actions";
 import { sessionAdjustments, type WeekBrief } from "@/lib/week-insights";
+import { WorkoutStructureView } from "@/components/app/workout-structure";
 import {
   PAIN_CONTEXTS,
   PAIN_CONTEXT_LABEL,
@@ -70,6 +71,7 @@ export function SessionCard({
 }) {
   const done = s.status === "done";
   const adj = compact ? null : sessionAdjustments(s, tsb);
+  const hasStructure = !!s.workout && s.workout.blocks.length > 0;
   return (
     <div className={`border border-hairline ${done ? "opacity-55" : ""}`}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-hairline">
@@ -94,10 +96,33 @@ export function SessionCard({
           )}
         </div>
       </div>
+      {/* Compact (calendar day / "then" list): slim proportional timeline +
+          micro-total, driven by the structured blocks. Falls back to nothing
+          when a session carries no workout (header already shows min · TSS). */}
+      {compact && hasStructure && (
+        <div className="px-4 py-3">
+          <WorkoutStructureView
+            workout={s.workout!}
+            variant="compact"
+            stored={{ tss: s.tss, durationHr: s.durationHr }}
+          />
+        </div>
+      )}
       {!compact && (
         <>
           <div className="px-4 py-4 grid md:grid-cols-[1fr_240px] gap-5">
-            <pre className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-bone-muted">{s.structure}</pre>
+            {/* Visual workout structure replaces the plain-text prescription
+                when the session carries blocks; text-only sessions (legacy
+                stored plans) still render their `structure` string. */}
+            {hasStructure ? (
+              <WorkoutStructureView
+                workout={s.workout!}
+                variant="full"
+                stored={{ tss: s.tss, durationHr: s.durationHr }}
+              />
+            ) : (
+              <pre className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-bone-muted">{s.structure}</pre>
+            )}
             <div className="border-l border-hairline pl-5">
               <div className="label-mono text-signal-bright mb-1.5">Why</div>
               <p className="text-[13px] leading-relaxed text-bone-muted">{s.why}</p>
