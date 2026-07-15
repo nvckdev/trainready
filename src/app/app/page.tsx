@@ -2,6 +2,7 @@ import { getPmc, getSeedProvenance, getStravaSnapshot, getStravaTokens, hasCorpu
 import { readAthleteContext } from "@/lib/athlete-context";
 import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
+import { replanAction } from "./actions";
 import { readPainLog, readProtocolsState, isStrengthDone } from "@/lib/strength-io";
 import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
 import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
@@ -227,6 +228,38 @@ export default async function TodayPage() {
         </p>
       )}
       <WeatherHint />
+
+      {/* --- adaptive re-plan: plan-adjusted note, recalibration, re-plan --- */}
+      {stored && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            {stored.plan.meta.replanNote && (
+              <p className="text-[13px] leading-relaxed text-bone">
+                <span className="label-mono text-signal-bright mr-2">Plan adjusted</span>
+                {stored.plan.meta.replanNote}
+              </p>
+            )}
+            {stored.plan.meta.lastRecomputed && (
+              <p className="label-mono text-bone-faint mt-1">Re-planned {fmtAnchorDate(stored.plan.meta.lastRecomputed)}</p>
+            )}
+          </div>
+          <form action={replanAction}>
+            <button className="label-mono border border-hairline px-4 py-2 hover:border-bone transition-colors duration-150 whitespace-nowrap">
+              Re-plan from today
+            </button>
+          </form>
+        </div>
+      )}
+      {stored?.plan.meta.recalibration && (
+        <div className="border border-hairline mt-4 p-4">
+          <p className="label-mono text-signal-bright">Recalibration</p>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-bone-muted max-w-[74ch]">
+            {stored.plan.meta.recalibration.message}
+          </p>
+        </div>
+      )}
+      {/* --- end adaptive re-plan --- */}
+
       <div className="rule mt-5 mb-8" />
 
       {painAlerts.length > 0 && (

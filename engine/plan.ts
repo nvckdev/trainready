@@ -116,6 +116,17 @@ export interface Plan {
       message: string; // the §4.2 paragraph
       loadLimited: true; // flags the finish as a bound, not a prediction
     };
+    /** Adaptive re-plan (engine/replan.ts) — all optional/inert, absent on
+     *  freshly generated plans so nothing pre-existing changes. Stamped by the
+     *  re-plan action after a recompute-from-actual. */
+    lastRecomputed?: string; // ISO date of the last recompute-from-actual
+    replanNote?: string; // one-line "plan adjusted" note (what changed + why)
+    recalibration?: {
+      revisedFinish: string;
+      reachablePeakCtl: number;
+      realisticWeekTss: number;
+      message: string;
+    };
   };
   weeks: PlanWeek[];
 }
