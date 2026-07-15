@@ -24,10 +24,12 @@ export interface WeeklyDigest {
   lines: string[];
 }
 
+/** CTL change over `days`. Null unless the series actually spans that window —
+ *  so a short import never claims a "last month" trend it can't support. */
 function ctlDelta(pmc: PmcRow[], days: number): number | null {
-  if (pmc.length < 2) return null;
+  if (pmc.length <= days) return null;
   const now = pmc[pmc.length - 1].ctl;
-  const past = pmc[Math.max(0, pmc.length - 1 - days)]?.ctl;
+  const past = pmc[pmc.length - 1 - days]?.ctl;
   return past == null ? null : now - past;
 }
 
