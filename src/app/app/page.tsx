@@ -1,4 +1,4 @@
-import { getPmc, getSeedProvenance, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
+import { getPmc, getSeedProvenance, getStateAt, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readAthleteContext } from "@/lib/athlete-context";
 import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
@@ -101,14 +101,21 @@ export default async function TodayPage() {
   }
 
   const pmc = getPmc();
-  const latest = pmc[pmc.length - 1];
   const stored = readPlan();
   const today = localToday();
+  // Header fitness must reflect TODAY — the state rolled forward across any
+  // unlogged tail (matching the provenance caption below and the Plan page's
+  // "CTL now"), not the frozen last-logged day. Falls back to the last row.
+  const rolled = getStateAt(today);
+  const lastRow = pmc[pmc.length - 1];
+  const latest = rolled
+    ? { ctl: rolled.ctl, atl: rolled.atl, tsb: rolled.tsb }
+    : lastRow;
   // Where the fitness numbers are anchored: the last logged day, plus any
   // zero-load days rolled forward across a scheduling gap (engine/seed.ts,
   // via the src/lib gateway). Null-safe — absent with no corpus/state.
   const provenance = getSeedProvenance(today);
-  const digest = weeklyDigest(pmc, getWeekly(), stored?.plan ?? null, today);
+  const digest = weeklyDigest(pmc, getWeekly(), stored?.plan ?? null, today, rolled ?? undefined);
 
   const upcoming = stored
     ? stored.plan.weeks

@@ -89,13 +89,16 @@ function resimulateProjected(weeks: PlanWeek[], seedCtl: number, seedAtl: number
   let atl = seedAtl;
   for (const w of weeks) {
     const perDay = w.targetTss / 7;
-    let tsb = 0;
     for (let d = 0; d < 7; d++) {
-      tsb = ctl - atl; // yesterday's values — TrainingPeaks convention
       ctl = ctl + (perDay - ctl) / CTL_TAU;
       atl = atl + (perDay - atl) / ATL_TAU;
     }
-    w.projected = { ctl: round(ctl * 10) / 10, atl: round(atl * 10) / 10, tsb: round(tsb * 10) / 10 };
+    // End-of-week projection. TSB derived from the ROUNDED ctl/atl so the object
+    // is exactly self-consistent (projected.tsb === projected.ctl − projected.atl),
+    // matching how a freshly generated plan reports the field.
+    const rctl = round(ctl * 10) / 10;
+    const ratl = round(atl * 10) / 10;
+    w.projected = { ctl: rctl, atl: ratl, tsb: round((rctl - ratl) * 10) / 10 };
   }
 }
 
@@ -180,6 +183,7 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
   // Track whether we override any target — only then must we re-derive the
   // projected chain (otherwise generatePlan's session-accurate projected stands).
   let modified = false;
+  let aheadHeld = false; // did the ahead-cap actually hold a week back?
   if (ahead) {
     for (const w of remaining) {
       if (w.phase !== "base" && w.phase !== "build") continue;
@@ -187,6 +191,7 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
       if (orig != null && w.targetTss > orig) {
         scaleWeek(w, orig);
         modified = true;
+        aheadHeld = true;
       }
     }
   }
@@ -203,9 +208,10 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
     first.phase = "recovery";
     forcedRecoveryWeek = first.weekStart;
     modified = true;
-  } else if (last && last.actualTss > last.plannedTss) {
+  } else if (last && last.plannedTss > 0 && last.actualTss > last.plannedTss) {
     // Overshoot damp: give back exactly the excess, then lower further (down to
     // the weekly-60 rail) until projected end-of-week TSB clears the safe band.
+    // (plannedTss > 0 guards the ratio — a 0-target week never damps.)
     const overshootRatio = last.actualTss / last.plannedTss;
     overshootPct = (overshootRatio - 1) * 100;
     const plannedThisWeek = origByWeek.get(first.weekStart) ?? first.targetTss;
@@ -225,8 +231,14 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
 
   // Re-derive the projected chain ONLY when we overrode a target — otherwise
   // generatePlan's session-accurate projected (incl. the race week) stands.
-  // meta.projectedRaceCtl/Tsb remain authoritative from generatePlan either way.
-  if (modified) resimulateProjected(remaining, actualState.ctl, actualState.atl);
+  if (modified) {
+    resimulateProjected(remaining, actualState.ctl, actualState.atl);
+    // Keep the headline race-day figures consistent with the re-chained
+    // trajectory (the last week is the race week).
+    const raceWk = remaining[remaining.length - 1];
+    plan.meta.projectedRaceCtl = raceWk.projected.ctl;
+    plan.meta.projectedRaceTsb = raceWk.projected.tsb;
+  }
 
   // ── Rule 6 (behind): assert the 2-week taper was never compressed ──
   const tail = remaining.slice(-2);
@@ -268,7 +280,7 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
     note = `${overshootStreak} weeks over target → capacity re-baselined up${oldFinish && newFinish ? `; goal reprojected ${oldFinish}→${newFinish}` : ""}`;
   } else if (overshootPct > 0 && first.targetTss < (origByWeek.get(first.weekStart) ?? Infinity)) {
     note = `last week ${fmtPct(overshootPct)} over target → this week eased to ${first.targetTss} TSS to protect form`;
-  } else if (ahead) {
+  } else if (ahead && aheadHeld) {
     note = `ahead of the curve → surplus held as freshness for a sharper taper, not extra base volume`;
   }
 

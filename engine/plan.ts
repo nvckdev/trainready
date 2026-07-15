@@ -384,6 +384,7 @@ const KEEP_PRIORITY: Kind[] = [
   "run-long",
   "run-vo2",
   "run-tempo",
+  "bike-vo2",
   "bike-threshold",
   "bike-z2",
   "run-strides",
@@ -507,7 +508,15 @@ export function generatePlan(
 
   let ctl = initialState.ctl;
   let atl = initialState.atl;
-  const last8: number[] = [...initialState.last4WeeksTss];
+  // Seed the trailing window from the fuller trailingWeeksTss when the caller
+  // supplied it (the replan re-baseline passes up to 8 real executed weeks);
+  // otherwise fall back to the 4-week signal. Normal seeds carry only
+  // last4WeeksTss, so this is byte-identical for regular generation.
+  const seedTrailing =
+    initialState.trailingWeeksTss && initialState.trailingWeeksTss.length > initialState.last4WeeksTss.length
+      ? initialState.trailingWeeksTss
+      : initialState.last4WeeksTss;
+  const last8: number[] = [...seedTrailing];
   let weeksSinceStart = initialState.weeksSinceStart;
   let raceMorning: { ctl: number; tsb: number } | null = null;
   let prevPrescribed: number | undefined; // week 1 has none (see AthleteState)

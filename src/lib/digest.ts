@@ -24,22 +24,38 @@ export interface WeeklyDigest {
   lines: string[];
 }
 
-/** CTL change over `days`. Null unless the series actually spans that window —
- *  so a short import never claims a "last month" trend it can't support. */
-function ctlDelta(pmc: PmcRow[], days: number): number | null {
-  if (pmc.length <= days) return null;
-  const now = pmc[pmc.length - 1].ctl;
-  const past = pmc[pmc.length - 1 - days]?.ctl;
-  return past == null ? null : now - past;
+/** Add `days` to a YYYY-MM-DD date (UTC-noon anchored, DST-safe). */
+function addDays(date: string, days: number): string {
+  const d = new Date(date + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** CTL change from `nowCtl` (today, rolled forward) vs the logged CTL ~`days`
+ *  ago, matched BY DATE so it stays honest across an unlogged tail. Null unless
+ *  the series actually reaches back that far. */
+function ctlDelta(pmc: PmcRow[], nowCtl: number, today: string, days: number): number | null {
+  const target = addDays(today, -days);
+  if (pmc[0].date > target) return null; // series doesn't span the window
+  const past = pmc.find((r) => r.date >= target); // first row on/after target (chronological)
+  return past ? nowCtl - past.ctl : null;
 }
 
 /**
  * Build the digest from the daily PMC, weekly load, and the active plan.
  * Null-safe: returns null when there's no plan or no fitness data.
  */
-export function weeklyDigest(pmc: PmcRow[], weekly: WeeklyRow[], plan: Plan | null, today: string): WeeklyDigest | null {
+export function weeklyDigest(
+  pmc: PmcRow[],
+  weekly: WeeklyRow[],
+  plan: Plan | null,
+  today: string,
+  current?: { ctl: number; tsb: number }
+): WeeklyDigest | null {
   if (!pmc.length || !plan) return null;
-  const latest = pmc[pmc.length - 1];
+  // Prefer the rolled-forward TODAY state (matches the Today/Fitness headers);
+  // fall back to the last logged row when a caller doesn't supply it.
+  const latest = current ?? pmc[pmc.length - 1];
   const found = currentWeek(plan, today);
   if (!found) return null;
   const { week, index } = found;
@@ -61,7 +77,7 @@ export function weeklyDigest(pmc: PmcRow[], weekly: WeeklyRow[], plan: Plan | nu
   }
 
   // 2 — how fitness actually moved (28-day CTL trend — the real signal).
-  const d28 = ctlDelta(pmc, 28);
+  const d28 = ctlDelta(pmc, latest.ctl, today, 28);
   if (d28 != null) {
     const dir = d28 >= 1 ? `up ${d28.toFixed(0)}` : d28 <= -1 ? `down ${Math.abs(d28).toFixed(0)}` : "flat";
     lines.push(

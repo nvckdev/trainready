@@ -1,4 +1,4 @@
-import { getAthlete, getPmc, getWeekly, hasCorpus, localToday } from "@/lib/athlete-data";
+import { getAthlete, getPmc, getStateAt, getWeekly, hasCorpus, localToday } from "@/lib/athlete-data";
 import { readAthleteContext } from "@/lib/athlete-context";
 import { readPainLog, readProtocolsState } from "@/lib/strength-io";
 import { strengthTssPerSession } from "@/lib/strength-protocols";
@@ -16,11 +16,20 @@ export default function FitnessPage() {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
-  const capability = getCapability(localToday());
+  const today = localToday();
   const pmc = getPmc();
+  // pmc.csv can be empty/missing even when the corpus (weekly-examples.jsonl)
+  // is present — don't crash the header on an absent last row.
+  if (!pmc.length) {
+    return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
+  }
+  const capability = getCapability(today);
   const weekly = getWeekly();
   const athlete = getAthlete();
-  const latest = pmc[pmc.length - 1];
+  // Header reflects TODAY (rolled forward across any unlogged tail), matching
+  // the Today page and the plan seed — not the frozen last-logged day.
+  const rolled = getStateAt(today);
+  const latest = rolled ?? pmc[pmc.length - 1];
   const last4 = weekly.slice(-4);
   const avgHours = last4.reduce((s, w) => s + w.hours, 0) / Math.max(1, last4.length);
 

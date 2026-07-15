@@ -85,7 +85,7 @@ export function briefForWeek(plan: Plan, today: string, raceName: string): WeekB
     const dir = rampPct >= 0 ? `+${rampPct.toFixed(0)}%` : `${rampPct.toFixed(0)}%`;
     why.push(
       rampPct > 0
-        ? `${week.targetTss} TSS is ${dir} over last week — inside the +15% ramp cap the engine never exceeds.`
+        ? `${week.targetTss} TSS is ${dir} over last week — a progressive step held under the engine's weekly ramp cap.`
         : rampPct < -5
           ? `${week.targetTss} TSS is ${dir} vs last week — a planned absorption week, not lost fitness.`
           : `${week.targetTss} TSS holds steady vs last week while intensity does the work.`

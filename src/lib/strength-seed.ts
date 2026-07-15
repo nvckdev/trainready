@@ -56,6 +56,9 @@ export const SEED_PROTOCOLS: Protocol[] = [
     id: "runner-strength",
     name: "Runner general strength",
     minutes: 25,
+    // Loaded lower-body work — held (skipped) while pain is surfacing in these
+    // regions, so the pain-hold path (pain-rules.isPainHeld) actually engages.
+    targets: ["calf-achilles", "knee", "hip", "itb"],
     why: "Twice-weekly lower-body strength is the cheapest run-injury insurance there is, and it buys running economy at near-zero aerobic cost.",
     blocks: [
       {

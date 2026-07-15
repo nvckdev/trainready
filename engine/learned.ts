@@ -377,9 +377,9 @@ export class TaperV1 implements Engine {
       state.goalPeakCtl !== undefined && // plan-only — absent in the backtest
       state.ctl < state.goalPeakCtl // stop overloading once at the summit
     ) {
-      // Injury-tempered ramp ceiling: never above +13% over the trailing month
-      // or the smoothed ramp-cap reference (both ≤ the +20% rail), and never
-      // above the weekly TSS the goal summit itself implies (no overshoot).
+      // Injury-tempered ramp ceiling: never above the +20% rail over the trailing
+      // month or the smoothed ramp-cap reference, and never above the weekly TSS
+      // the goal summit itself implies (no overshoot).
       const rampCeil = Math.min(trailingMean * ANCHOR_V2_GOAL_RAMP, rampCapRef(state) * ANCHOR_V2_GOAL_RAMP);
       const goalWeekly = state.goalPeakCtl * 7;
       const goalFloor = Math.min(rampCeil, goalWeekly);

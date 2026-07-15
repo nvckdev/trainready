@@ -186,6 +186,29 @@ if (!fx) {
     const r = recomputeRemaining(mkInput({ ledger: [led(0, w(0).targetTss)] }));
     check("T7", "result stamps lastRecomputed = asOf", r.lastRecomputed === asOf);
   }
+
+  // ——— T8. projected stays self-consistent after an override ————————
+  {
+    const cap = w(2).targetTss;
+    const r = recomputeRemaining(mkInput({
+      actualState: { ctl: 20 },
+      ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss), led(2, cap * 1.5, { rampCapTss: cap })],
+    }));
+    const bad = r.plan.weeks.filter((x) => Math.abs(x.projected.tsb - (x.projected.ctl - x.projected.atl)) > 0.11);
+    check("T8a", "every re-derived week has projected.tsb === ctl − atl", bad.length === 0,
+      bad.length ? `${bad.length} inconsistent` : "consistent");
+    check("T8b", "no note ever contains Infinity/NaN", !r.note || !/Infinity|NaN/.test(r.note));
+  }
+
+  // ——— T9. a 0-target last week never divides by zero ——————————————
+  {
+    const r = recomputeRemaining(mkInput({
+      actualState: { ctl: 18 },
+      ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss), { weekStart: w(2).weekStart, actualTss: 40, plannedTss: 0, sessionsMissed: 0, sessionsPlanned: 0 }],
+    }));
+    check("T9", "0-target last week ⇒ no Infinity% note (overshoot damp skipped)",
+      !r.note || !/Infinity/.test(r.note), `note=${r.note}`);
+  }
 }
 
 for (const p of passes) console.log("  " + p);
