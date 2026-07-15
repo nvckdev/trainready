@@ -11,8 +11,10 @@ import {
   type GoalCtl,
 } from "./goal.ts";
 import { TaperV1 } from "./learned.ts";
-import type { AthleteState, Phase } from "./types.ts";
-import type { Zones } from "./zones.ts";
+import type { AthleteState, Block, Phase, WorkoutStructure } from "./types.ts";
+import type { PaceRange, Zones } from "./zones.ts";
+
+export type { Block, WorkoutStructure } from "./types.ts";
 
 /**
  * Season plan generation: simulate the weeks between now and race day,
@@ -65,7 +67,17 @@ export interface PlannedSessionOut {
   title: string;
   durationHr: number;
   tss: number;
+  /** Human-readable session text. DERIVED from `workout.blocks` in the same
+   *  per-session computation that builds them (see engine/types.ts), so the
+   *  two can never diverge; today's exact wording is preserved. Every existing
+   *  consumer (SessionCard, calendar.ics, plan-io) reads this string
+   *  unchanged. */
   structure: string;
+  /** Normalized machine-readable structure the visual renderer consumes.
+   *  Optional so pre-existing stored plans and text-only conversions
+   *  (week-insights.easedVersion) still validate and fall back to `structure`;
+   *  every freshly generated session carries it. */
+  workout?: WorkoutStructure;
   why: string;
   status?: "done" | "skipped";
 }
@@ -136,48 +148,97 @@ type Kind =
   | "swim-endurance"
   | "swim-threshold";
 
+/** What a template emits: the normalized blocks the visual renderer reads,
+ *  plus the human-readable `text`. Both are built in ONE function from the
+ *  same locals, so a value change flows to both — they cannot diverge, and
+ *  the text is never parsed back into blocks (engine/types.ts). */
+interface Built {
+  blocks: Block[];
+  text: string;
+}
+
 interface Template {
   discipline: "swim" | "bike" | "run";
   intensity: number; // IF for TSS→duration
   title: (min: number) => string;
-  structure: (z: Zones, min: number) => string;
+  build: (z: Zones, min: number) => Built;
   why: string;
 }
 
 const mins = (hr: number) => Math.round((hr * 60) / 5) * 5;
+
+/** Spread a run PaceRange into the two Block pace fields. */
+const rp = (r: PaceRange) => ({ paceMinSecPerKm: r.minSecPerKm, paceMaxSecPerKm: r.maxSecPerKm });
 
 const TEMPLATES: Record<Kind, Template> = {
   "run-easy": {
     discipline: "run",
     intensity: 0.67,
     title: (m) => `Easy ${m}`,
-    structure: (z, m) => `${m} min easy @ ${z.run.easy}. HR is the governor; slow down before you speed up.`,
+    build: (z, m) => ({
+      blocks: [
+        {
+          kind: "main",
+          zone: "easy",
+          durationSec: m * 60,
+          ...rp(z.runSec.easy),
+          effortNote: "HR is the governor; slow down before you speed up.",
+        },
+      ],
+      text: `${m} min easy @ ${z.run.easy}. HR is the governor; slow down before you speed up.`,
+    }),
     why: "Aerobic volume at low cost: the base everything else stands on.",
   },
   "run-strides": {
     discipline: "run",
     intensity: 0.68,
     title: (m) => `Easy ${m} + strides`,
-    structure: (z, m) =>
-      `${m - 5} min easy @ ${z.run.easy}\nthen 5 × strides @ ${z.run.strides}, full recovery`,
+    build: (z, m) => ({
+      blocks: [
+        { kind: "segment", zone: "easy", durationSec: (m - 5) * 60, ...rp(z.runSec.easy) },
+        { kind: "strides", zone: "vo2", reps: 5, durationSec: 20, recoveryNote: "full recovery", effortNote: z.run.strides },
+      ],
+      text: `${m - 5} min easy @ ${z.run.easy}\nthen 5 × strides @ ${z.run.strides}, full recovery`,
+    }),
     why: "Easy volume plus neuromuscular touch: turnover stays sharp while the aerobic system does the work.",
   },
   "run-long": {
     discipline: "run",
     intensity: 0.72,
     title: (m) => `Long run ${m}`,
-    structure: (z, m) =>
-      `${m} min continuous:\n· first ${Math.round(m * 0.3)} min @ ${z.run.easy}\n· middle @ ${z.run.easy} settling into rhythm\n· last ${Math.round(m * 0.15)} min may drift to ${z.run.steady} if form holds`,
+    build: (z, m) => {
+      const first = Math.round(m * 0.3);
+      const last = Math.round(m * 0.15);
+      const middle = m - first - last;
+      return {
+        blocks: [
+          { kind: "segment", zone: "easy", durationSec: first * 60, ...rp(z.runSec.easy) },
+          { kind: "segment", zone: "easy", durationSec: middle * 60, ...rp(z.runSec.easy), effortNote: "settling into rhythm" },
+          { kind: "segment", zone: "easy", durationSec: last * 60, ...rp(z.runSec.steady), effortNote: "may drift to steady if form holds" },
+        ],
+        text: `${m} min continuous:\n· first ${first} min @ ${z.run.easy}\n· middle @ ${z.run.easy} settling into rhythm\n· last ${last} min may drift to ${z.run.steady} if form holds`,
+      };
+    },
     why: "The week's cornerstone: durability, fuel economy, and time on feet.",
   },
   "run-tempo": {
     discipline: "run",
     intensity: 0.8,
     title: () => "Tempo intervals",
-    structure: (z, m) => {
+    build: (z, m) => {
+      const warm = Math.round(m * 0.3);
       const work = Math.max(15, Math.round(m * 0.4));
       const reps = Math.max(2, Math.round(work / 8));
-      return `WARMUP ${Math.round(m * 0.3)} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × ${Math.round(work / reps)} min @ ${z.run.tempo} on 2 min easy\nCOOLDOWN ${Math.round(m * 0.2)} min easy`;
+      const repMin = Math.round(work / reps);
+      const cool = Math.round(m * 0.2);
+      return {
+        blocks: [
+          { kind: "warmup", zone: "easy", durationSec: warm * 60, ...rp(z.runSec.easy), effortNote: "+ 2 strides" },
+          { kind: "main", zone: "tempo", reps, durationSec: repMin * 60, ...rp(z.runSec.tempo), recoverySec: 120, recoveryNote: "easy" },
+          { kind: "cooldown", zone: "easy", durationSec: cool * 60, ...rp(z.runSec.easy) },
+        ],
+        text: `WARMUP ${warm} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × ${repMin} min @ ${z.run.tempo} on 2 min easy\nCOOLDOWN ${cool} min easy`,
+      };
     },
     why: "Raises the sustainable-pace ceiling: the engine's race-day workhorse.",
   },
@@ -185,9 +246,18 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "run",
     intensity: 0.84,
     title: () => "VO2 set",
-    structure: (z, m) => {
+    build: (z, m) => {
+      const warm = Math.round(m * 0.33);
       const reps = Math.max(4, Math.round((m * 0.3) / 3));
-      return `WARMUP ${Math.round(m * 0.33)} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × 3 min @ ${z.run.vo2} on 90s easy\nCOOLDOWN ${Math.round(m * 0.25)} min easy`;
+      const cool = Math.round(m * 0.25);
+      return {
+        blocks: [
+          { kind: "warmup", zone: "easy", durationSec: warm * 60, ...rp(z.runSec.easy), effortNote: "+ 2 strides" },
+          { kind: "main", zone: "vo2", reps, durationSec: 180, ...rp(z.runSec.vo2), recoverySec: 90, recoveryNote: "easy" },
+          { kind: "cooldown", zone: "easy", durationSec: cool * 60, ...rp(z.runSec.easy) },
+        ],
+        text: `WARMUP ${warm} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × 3 min @ ${z.run.vo2} on 90s easy\nCOOLDOWN ${cool} min easy`,
+      };
     },
     why: "Touches the aerobic ceiling so threshold has somewhere to grow.",
   },
@@ -195,16 +265,31 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "bike",
     intensity: 0.65,
     title: (m) => `Zone 2 ride ${m}`,
-    structure: (z, m) => `WARMUP 10 min ramp to ${z.bike.z2}\nMAIN ${m - 15} min steady @ ${z.bike.z2}\nCOOLDOWN 5 min easy spin`,
+    build: (z, m) => ({
+      blocks: [
+        { kind: "warmup", zone: "easy", durationSec: 600, effortNote: `ramp to ${z.bike.z2}` },
+        { kind: "main", zone: "easy", durationSec: (m - 15) * 60, effortNote: `steady @ ${z.bike.z2}` },
+        { kind: "cooldown", zone: "recovery", durationSec: 300, effortNote: "easy spin" },
+      ],
+      text: `WARMUP 10 min ramp to ${z.bike.z2}\nMAIN ${m - 15} min steady @ ${z.bike.z2}\nCOOLDOWN 5 min easy spin`,
+    }),
     why: "Aerobic load with zero impact: volume the legs don't have to pay for.",
   },
   "bike-threshold": {
     discipline: "bike",
     intensity: 0.8,
     title: () => "Threshold intervals",
-    structure: (z, m) => {
+    build: (z, m) => {
       const reps = m >= 75 ? 3 : 2;
-      return `WARMUP 12 min ramp + 3 × 30s @ ${z.bike.vo2}\nMAIN ${reps} × ${m >= 75 ? 12 : 10} min @ ${z.bike.threshold} on 5 min easy\nCOOLDOWN 8 min spin`;
+      const repMin = m >= 75 ? 12 : 10;
+      return {
+        blocks: [
+          { kind: "warmup", zone: "easy", durationSec: 720, effortNote: `ramp + 3 × 30s @ ${z.bike.vo2}` },
+          { kind: "main", zone: "threshold", reps, durationSec: repMin * 60, recoverySec: 300, recoveryNote: "easy", effortNote: `@ ${z.bike.threshold}` },
+          { kind: "cooldown", zone: "recovery", durationSec: 480, effortNote: "spin" },
+        ],
+        text: `WARMUP 12 min ramp + 3 × 30s @ ${z.bike.vo2}\nMAIN ${reps} × ${repMin} min @ ${z.bike.threshold} on 5 min easy\nCOOLDOWN 8 min spin`,
+      };
     },
     why: "FTP work: moves the number every other bike target hangs off.",
   },
@@ -212,24 +297,45 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "bike",
     intensity: 0.83,
     title: () => "VO2 bike set",
-    structure: (z) => `WARMUP 15 min with 4 × 20s openers\nMAIN 6 × 2 min @ ${z.bike.vo2} on 2 min easy\nCOOLDOWN 10 min spin`,
+    build: (z) => ({
+      blocks: [
+        { kind: "warmup", zone: "easy", durationSec: 900, effortNote: "with 4 × 20s openers" },
+        { kind: "main", zone: "vo2", reps: 6, durationSec: 120, recoverySec: 120, recoveryNote: "easy", effortNote: `@ ${z.bike.vo2}` },
+        { kind: "cooldown", zone: "recovery", durationSec: 600, effortNote: "spin" },
+      ],
+      text: `WARMUP 15 min with 4 × 20s openers\nMAIN 6 × 2 min @ ${z.bike.vo2} on 2 min easy\nCOOLDOWN 10 min spin`,
+    }),
     why: "Short hard repeats lift aerobic power without wrecking the week.",
   },
   "bike-long": {
     discipline: "bike",
     intensity: 0.68,
     title: (m) => `Long ride ${Math.round(m / 60 * 10) / 10}h`,
-    structure: (z, m) =>
-      `${m} min mostly @ ${z.bike.z2}\ninclude 2 × 20 min @ ${z.bike.tempo} in the middle if legs agree\nfuel: 60–90g carbs/hr from minute 20`,
+    build: (z, m) => ({
+      blocks: [
+        { kind: "main", zone: "easy", durationSec: m * 60, effortNote: `mostly @ ${z.bike.z2}` },
+        { kind: "segment", zone: "tempo", reps: 2, durationSec: 1200, effortNote: `@ ${z.bike.tempo} in the middle if legs agree` },
+      ],
+      // The fuel line is coaching prose, not a training block; it lives in the
+      // derived text only (see docs/workout-structure.md).
+      text: `${m} min mostly @ ${z.bike.z2}\ninclude 2 × 20 min @ ${z.bike.tempo} in the middle if legs agree\nfuel: 60–90g carbs/hr from minute 20`,
+    }),
     why: "Race-day durability and fueling practice in one session.",
   },
   "swim-endurance": {
     discipline: "swim",
     intensity: 0.6,
     title: (m) => `Endurance swim ${m}`,
-    structure: (z, m) => {
+    build: (z, m) => {
       const main = Math.max(3, Math.round((m - 20) / 8));
-      return `WARMUP 400 easy mixed\nMAIN ${main} × 300 @ ${z.swim.easy} on 30s rest\nCOOLDOWN 200 choice`;
+      return {
+        blocks: [
+          { kind: "warmup", zone: "easy", distanceM: 400, effortNote: "easy mixed" },
+          { kind: "main", zone: "easy", reps: main, distanceM: 300, recoverySec: 30, recoveryNote: "rest", effortNote: `@ ${z.swim.easy}` },
+          { kind: "cooldown", zone: "recovery", distanceM: 200, effortNote: "choice" },
+        ],
+        text: `WARMUP 400 easy mixed\nMAIN ${main} × 300 @ ${z.swim.easy} on 30s rest\nCOOLDOWN 200 choice`,
+      };
     },
     why: "Feel for the water is rented, never owned: frequency keeps the lease.",
   },
@@ -237,8 +343,15 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "swim",
     intensity: 0.7,
     title: () => "CSS swim set",
-    structure: (z) =>
-      `WARMUP 400 as 50 drill/50 swim\nMAIN 10 × 100 @ ${z.swim.threshold} on 20s rest\n4 × 50 @ ${z.swim.vo2} on 30s\nCOOLDOWN 200 easy`,
+    build: (z) => ({
+      blocks: [
+        { kind: "warmup", zone: "easy", distanceM: 400, effortNote: "as 50 drill/50 swim" },
+        { kind: "main", zone: "cv", reps: 10, distanceM: 100, recoverySec: 20, recoveryNote: "rest", effortNote: `@ ${z.swim.threshold}` },
+        { kind: "main", zone: "vo2", reps: 4, distanceM: 50, recoverySec: 30, effortNote: `@ ${z.swim.vo2}` },
+        { kind: "cooldown", zone: "recovery", distanceM: 200, effortNote: "easy" },
+      ],
+      text: `WARMUP 400 as 50 drill/50 swim\nMAIN 10 × 100 @ ${z.swim.threshold} on 20s rest\n4 × 50 @ ${z.swim.vo2} on 30s\nCOOLDOWN 200 easy`,
+    }),
     why: "Critical-swim-speed work: open-water pace without open-water chaos.",
   },
 };
@@ -495,6 +608,7 @@ export function generatePlan(
       durationHr = Math.min(slot.kind === "bike-long" ? 4.5 : slot.kind === "run-long" ? 2.6 : 1.6, Math.max(0.4, durationHr));
       const m = mins(durationHr);
       const date = iso(wStart + slot.weekdayIdx * DAY);
+      const built = t.build(zones, m);
       return {
         date,
         weekday: WEEKDAYS[slot.weekdayIdx],
@@ -502,7 +616,8 @@ export function generatePlan(
         title: t.title(m),
         durationHr: Math.round(durationHr * 100) / 100,
         tss: Math.round(tss),
-        structure: t.structure(zones, m),
+        structure: built.text,
+        workout: { blocks: built.blocks },
         why: t.why,
       };
     });
@@ -523,6 +638,15 @@ export function generatePlan(
         durationHr: Math.round((raceTss / 81) * 100) / 100, // ≈ IF 0.9
         tss: raceTss,
         structure: `Race day. Pacing pack ships with the final taper revision; execute, don't improvise.`,
+        workout: {
+          blocks: [
+            {
+              kind: "segment",
+              zone: "race",
+              effortNote: `Race day. Pacing pack ships with the final taper revision; execute, don't improvise.`,
+            },
+          ],
+        },
         why: "Everything above this line existed for today.",
       });
     }
