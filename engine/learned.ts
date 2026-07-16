@@ -159,7 +159,24 @@ function ridge(X: number[][], y: number[], lambda: number): number[] {
 // Taper/race weeks never reach this code (protocol lock, rule 2).
 
 const ANCHOR_V2_PEAK_DECAY = 0.95; // per week since the peak week
-const ANCHOR_V2_RAMP_CAP = 1.2; // ≤ +20% over the ramp-cap reference
+const ANCHOR_V2_RAMP_CAP = 1.2; // ≤ +20% over the ramp-cap reference (the default rail)
+// Base-richness (feature 3) may raise the ramp ceiling for a demonstrably
+// base-rich returning athlete, up to this hard maximum, or lower it for a
+// novice. The maximum is a PLAN-side allowance justified by detraining research
+// (fast base reacquisition); it never applies on the backtest path.
+const RAMP_CAP_HARD_MAX = 1.3; // ≤ +30%/wk for the deepest base-rich rebuild
+
+/**
+ * Per-athlete week-over-week ramp ceiling. The linchpin of feature 3's backtest
+ * neutrality: when the plan-only rampCap signal is ABSENT (every backtest row,
+ * every synthetic seed with no history) this returns the LITERAL legacy rail
+ * with zero arithmetic, so the pins stay byte-for-byte. Only a plan that set
+ * rampCap from logged history takes the clamped per-athlete value.
+ */
+function rampCapFor(state: AthleteState): number {
+  if (state.rampCap === undefined) return ANCHOR_V2_RAMP_CAP;
+  return Math.min(RAMP_CAP_HARD_MAX, Math.max(1.1, state.rampCap));
+}
 const ANCHOR_V2_BEST_WINDOW = 6; // trailing weeks scanned for the best week
 const ANCHOR_V2_BEST_FRACTION = 0.7; // outlier influence decays to 70%, not to 0
 const ANCHOR_V2_MAX_CUT = 0.65; // consecutive prescriptions may fall ≤ 35%
@@ -206,7 +223,7 @@ function anchorV2Ceiling(state: AthleteState): number {
   }
   let anchor = Math.max(maintenance, peak);
   const capRef = rampCapRef(state);
-  if (capRef > 0) anchor = Math.min(anchor, capRef * ANCHOR_V2_RAMP_CAP);
+  if (capRef > 0) anchor = Math.min(anchor, capRef * rampCapFor(state));
   return anchor;
 }
 
@@ -388,10 +405,12 @@ export class TaperV1 implements Engine {
       floorTarget > 0 && // both signals plan-only — absent in the backtest
       state.ctl < (state.goalPeakCtl ?? Infinity) // stop overloading once at the goal summit
     ) {
-      // Injury-tempered ramp ceiling: never above the +20% rail over the trailing
-      // month or the smoothed ramp-cap reference, and never above the target
-      // weekly TSS itself (no overshoot).
-      const rampCeil = Math.min(trailingMean * ANCHOR_V2_GOAL_RAMP, rampCapRef(state) * ANCHOR_V2_GOAL_RAMP);
+      // Injury-tempered ramp ceiling: never above the per-athlete ramp rail
+      // (feature 3: +20% by default, higher for a base-rich rebuild) over the
+      // trailing month or the smoothed ramp-cap reference, and never above the
+      // target weekly TSS itself (no overshoot).
+      const goalRamp = rampCapFor(state);
+      const rampCeil = Math.min(trailingMean * goalRamp, rampCapRef(state) * goalRamp);
       const goalFloor = Math.min(rampCeil, floorTarget);
       if (goalFloor > value) {
         value = goalFloor;
@@ -399,16 +418,18 @@ export class TaperV1 implements Engine {
       }
     }
     // Anchor-v2 week-over-week smoothing band: within a simulated plan (the
-    // caller tells us its own previous prescription), consecutive targets
-    // move at most +20% / −35%. The band deliberately does NOT apply to the
-    // first plan week — there the ramp-cap reference above (max(prev
-    // non-zero week, 0.7 × best of trailing 6)) is what keeps one small
+    // caller tells us its own previous prescription), consecutive targets move
+    // at most +ramp / −35%, where +ramp is the per-athlete ceiling (feature 3:
+    // +20% by default, higher for a base-rich rebuild). The band deliberately
+    // does NOT apply to the first plan week — there the ramp-cap reference above
+    // (max(prev non-zero week, 0.7 × best of trailing 6)) is what keeps one small
     // post-outlier week from collapsing the ceiling to the weekly floor.
+    // prevPrescribedTss is absent on the backtest path, so this is inert there.
     // Taper/race weeks never reach this code (protocol lock, rule 2).
     if (this.anchorV2 && state.prevPrescribedTss !== undefined) {
       value = Math.min(
         Math.max(value, state.prevPrescribedTss * ANCHOR_V2_MAX_CUT),
-        state.prevPrescribedTss * ANCHOR_V2_RAMP_CAP
+        state.prevPrescribedTss * rampCapFor(state)
       );
     }
     const clamped = Math.max(60, value);

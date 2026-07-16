@@ -16,6 +16,7 @@ import {
 import { TaperV1 } from "./learned.ts";
 import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
 import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
+import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure } from "./types.ts";
 import type { PaceRange, Zones } from "./zones.ts";
 
@@ -552,6 +553,17 @@ export function generatePlan(
     ? Math.min(Math.max(EVIDENCE_FLOOR[req.raceType].weeklyKm * CVOL, goal ? goal.peakCtl * 7 : 0), tissueWeeklyCapTss)
     : 0;
   const peakWeeklyKmTarget = isRunRace ? peakWeeklyKm(req.raceType, goal ? goal.weeklyTss : 0, caps?.weeklyKm ?? Infinity) : 0;
+  // Feature 3: base-richness → per-athlete ramp ceiling. Logged history plus a
+  // demonstrated historical peak from the race anchors (a prior season's CTL
+  // that predates the weekly window — how the calibration athlete's 2023 base is
+  // seen). Empty history ⇒ undefined ⇒ the default +20% rail stands (synthetic
+  // seeds & the backtest). Never above an active tissue rampCeiling.
+  const richnessAnchors = loadRaceAnchors();
+  const peakHistHint = richnessAnchors.length ? Math.max(0, ...richnessAnchors.map((a) => a.ctlAtRace)) : 0;
+  const richness = deriveBaseRichness(history, initialState.ctl, peakHistHint);
+  const planRampCap = richness
+    ? Math.min(rampCapFromRichness(richness.richness), caps?.rampCeiling ?? Infinity)
+    : caps?.rampCeiling; // no richness signal: only a tissue ramp cap (if any) binds
   let prevLongKm: number | undefined; // tracked across the week loop (like prevPrescribed)
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
@@ -604,6 +616,9 @@ export function generatePlan(
       // byte-unchanged. A goal-less plan carries no periodization target, so the
       // floor stays off there (and off the backtest — no goal, no signal).
       peakWeeklyTssFloor: isRunRace && goal ? peakWeeklyTssFloor : undefined,
+      // Plan-only per-athlete ramp ceiling (feature 3). Undefined ⇒ learned layer
+      // uses the default +20% rail (backtest byte-identical).
+      rampCap: planRampCap,
       last4Shares: initialState.last4Shares,
       daysToNextRace: daysToRace,
       weeksSinceStart,
@@ -818,6 +833,11 @@ export function generatePlan(
   // active — never prophylactically (feature 4). Label from the declared site(s).
   const tissueLongCapped = caps?.longRunKm != null;
   const tissueLabel = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "tissue";
+  // The ramp % named in the copy is the athlete's ACTUAL ceiling (feature 3):
+  // +20% by default, higher for a base-rich rebuild, clamped to [10,30]%.
+  const effectiveRampCap = planRampCap === undefined ? 1.2 : Math.min(1.3, Math.max(1.1, planRampCap));
+  const rampPct = Math.round((effectiveRampCap - 1) * 100);
+  const baseRich = richness !== undefined && effectiveRampCap > 1.2;
   // Feature 2: when a floor is missed, the gap copy must SAY why (tissue cap, or
   // the ramp/runway still warming the volume up) — the target is not silently dropped.
   const volumeShortfall =
@@ -828,7 +848,7 @@ export function generatePlan(
       : "";
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
-      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall)
+      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich)
       : undefined;
 
   return {
@@ -869,7 +889,9 @@ function buildGoalGap(
   planWeeks: number,
   tissueLongCapped = false,
   tissueLabel = "tissue",
-  volumeShortfall = ""
+  volumeShortfall = "",
+  rampPct = 20,
+  baseRich = false
 ): NonNullable<Plan["meta"]["goalGap"]> {
   const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
   const reachablePeakCtl = r1(reachableRaceDayCtl);
@@ -881,17 +903,22 @@ function buildGoalGap(
   const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, loadRaceAnchors()));
   const realisticFinish = fmtClock(finishSec);
   // The tissue long-run limit is named ONLY when a constraint is active — a
-  // healthy runner's rails are just the ramp + form floor (feature 4).
+  // healthy runner's rails are just the ramp + form floor (feature 4). The ramp
+  // % is the athlete's own ceiling (feature 3: higher for a base-rich rebuild).
   const railClause = tissueLongCapped
-    ? `the +20% weekly ramp, the −25 form floor, and your ${tissueLabel} long-run limit`
-    : `the +20% weekly ramp and the −25 form floor`;
+    ? `the +${rampPct}% weekly ramp, the −25 form floor, and your ${tissueLabel} long-run limit`
+    : `the +${rampPct}% weekly ramp and the −25 form floor`;
   const rampLever = tissueLongCapped
-    ? `or — only once the ${tissueLabel} fully clears — ramp nearer (never above) the +20% ceiling`
-    : `or ramp nearer (never above) the +20% ceiling`;
+    ? `or — only once the ${tissueLabel} fully clears — ramp nearer (never above) the +${rampPct}% ceiling`
+    : `or ramp nearer (never above) the +${rampPct}% ceiling`;
+  const baseRichNote = baseRich
+    ? ` Your logged training base lets you rebuild faster than a first-timer — that's why the safe ramp here runs to +${rampPct}%, not the standard +20%.`
+    : "";
   const message =
     (gapCtl > 1
       ? `Goal ${goalTime} implies a race-day CTL around ${Math.round(requiredPeakCtl)}. A safe progression from your current ~${Math.round(startCtl)} over ${planWeeks} weeks — held under ${railClause} — reaches about ${Math.round(reachablePeakCtl)}. That projects to roughly ${realisticFinish} here (load-limited; sharp legs can beat it). To close the ~${Math.round(gapCtl)}-CTL gap: extend the timeline (a 26–30 week build), treat ${realisticFinish} as the honest target for this race and ${goalTime} as a multi-season goal, ${rampLever}. Re-test threshold pace mid-block to refine.`
       : `Goal ${goalTime} (race-day CTL ~${Math.round(requiredPeakCtl)}) is within reach of your projected ~${Math.round(reachablePeakCtl)} — hold the ramp and the taper and it stays on the table (~${realisticFinish} load-limited).`) +
+    baseRichNote +
     volumeShortfall;
   return { goalTime, requiredPeakCtl, reachablePeakCtl, realisticFinish, gapCtl, message, loadLimited: true };
 }

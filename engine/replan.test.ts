@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { generatePlan, type PlanRequest } from "./plan.ts";
+import { loadRaceAnchors } from "./goal.ts";
+import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import { deriveZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
@@ -150,14 +152,20 @@ if (!fx) {
     check("T4b", "recompute did not throw the taper invariant", true);
   }
 
-  // ——— T5. undershoot-no-unsafe-make-up (the +20% ramp rail still binds) ——
+  // ——— T5. undershoot-no-unsafe-make-up (the per-athlete ramp rail still binds) —
   {
     // After a big miss, the reflow continues from lower fitness under the SAME
-    // safe ramp — it never crams the lost load by exceeding +20% week-over-week.
+    // safe ramp — it never crams the lost load by exceeding the athlete's ramp
+    // ceiling week-over-week. That ceiling is now base-richness-adjusted
+    // (feature 3): this returning athlete's is above the legacy +20%.
     const r = recomputeRemaining(mkInput({
       actualState: { ctl: 12 },
       ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss * 0.5), led(2, w(2).targetTss * 0.5)],
     }));
+    const anchors = loadRaceAnchors();
+    const peakHint = anchors.length ? Math.max(0, ...anchors.map((a) => a.ctlAtRace)) : 0;
+    const rich = deriveBaseRichness(history, 12, peakHint);
+    const rampCap = rich ? rampCapFromRichness(rich.richness) : 1.2;
     const weeks = r.plan.weeks;
     let worst = 0;
     for (let i = 1; i < weeks.length; i++) {
@@ -165,8 +173,8 @@ if (!fx) {
       const prev = weeks[i - 1].targetTss;
       if (prev > 0) worst = Math.max(worst, (weeks[i].targetTss - prev) / prev);
     }
-    check("T5", "no reflowed week jumps more than +20% over the prior (rail holds; no cramming)",
-      worst <= 0.20 + 0.03, `worst +${(worst * 100).toFixed(0)}%`);
+    check("T5", `no reflowed week jumps more than the ramp cap (${rampCap.toFixed(2)}×) over the prior (no cramming)`,
+      worst <= rampCap - 1 + 0.03, `worst +${(worst * 100).toFixed(0)}%`);
   }
 
   // ——— T6. single-miss-silent ——————————————————————————————————————

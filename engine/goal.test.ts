@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   finishEstimate,
   goalCtlTarget,
+  loadRaceAnchors,
   longRunKm,
   parseGoalTime,
   peakLongKm,
@@ -13,6 +14,7 @@ import {
 import { TaperV1 } from "./learned.ts";
 import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
 import { declareTissue } from "./tissue.ts";
+import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import { deriveZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
@@ -272,7 +274,13 @@ if (!fx) {
 
   // ——— E. Rails still bind under a goal (rule 4) ———————————————————
   {
-    // no week exceeds 1.20× trailing-4wk mean nor 1.20× the prior week
+    // The ramp rail is now PER-ATHLETE (feature 3): the calibration athlete is
+    // base-rich (a big 2023 CTL peak well above the current ~17), so their safe
+    // rebuild ramp runs above the legacy +20% — but never above their derived cap.
+    const anchors = loadRaceAnchors();
+    const peakHint = anchors.length ? Math.max(0, ...anchors.map((a) => a.ctlAtRace)) : 0;
+    const rich = deriveBaseRichness(history, seed.ctl, peakHint);
+    const rampCap = rich ? rampCapFromRichness(rich.richness) : 1.2;
     const tss = plan.weeks.map((w) => w.targetTss);
     let rampOk = true;
     const bad: string[] = [];
@@ -283,12 +291,14 @@ if (!fx) {
       // Rails bind on the PRESCRIBED weekTss; the emitted targetTss is that sum
       // re-rounded across ~6–7 sessions (the long-run redistribution preserves
       // the total pre-rounding), so allow a small ±4 TSS rounding band.
-      if (tss[i] > trailing * 1.2 + 4 || tss[i] > prev * 1.2 + 4) {
+      if (tss[i] > trailing * rampCap + 4 || tss[i] > prev * rampCap + 4) {
         rampOk = false;
         bad.push(`wk${i} ${tss[i]} vs trail ${trailing.toFixed(0)} prev ${prev}`);
       }
     }
-    check("E11a", "no week's targetTss exceeds +20% over trailing-4wk mean or prior week (±4 rounding)", rampOk, bad.slice(0, 3).join("; "));
+    check("E11a", `no week's targetTss exceeds the base-richness ramp cap (${rampCap.toFixed(2)}×) over trailing-4wk mean or prior week (±4)`, rampOk, bad.slice(0, 3).join("; "));
+    check("E11a2", "the base-rich calibration athlete ramps above the legacy +20% rail",
+      rampCap > 1.2, `rampCap ${rampCap.toFixed(3)}`);
 
     const tsbFloorOk = plan.weeks.every((w) => w.projected.tsb >= -25);
     check("E11b", "no week breaches the TSB floor (−25)", tsbFloorOk,

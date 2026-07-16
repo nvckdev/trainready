@@ -48,6 +48,14 @@ export interface AthleteState {
    *  cannot fire in replay and the pins stay byte-identical). Lifts the peak
    *  build week's load toward the km floor under the same rails. */
   peakWeeklyTssFloor?: number;
+  /** Per-athlete week-over-week ramp ceiling as a multiplier (feature 3:
+   *  base-richness). 1.20 = the legacy +20% rail; base-rich returning athletes
+   *  run higher (up to RAMP_CAP_HARD_MAX), de-novo athletes lower. Set ONLY
+   *  inside generatePlan (from logged history); NEVER on the backtest path
+   *  (dataset features lack it), so rampCapFor() returns the literal +20% rail
+   *  in replay and the pins stay byte-identical. Never above an active tissue
+   *  rampCeiling. */
+  rampCap?: number;
   /** Trailing discipline mix of executed load. */
   last4Shares: { swim: number; bike: number; run: number };
   /** Days from the week's start to the next A-race, if one is scheduled. */
