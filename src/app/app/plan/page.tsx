@@ -94,7 +94,14 @@ export default async function PlanPage() {
         </div>
         <div className="flex items-end gap-6">
           <StatChip label="CTL now" value={String(Math.round(plan.meta.startCtl))} />
-          <StatChip label="Race-day CTL" value={String(Math.round(plan.meta.projectedRaceCtl))} unit="proj." />
+          <StatChip
+            label={plan.meta.projectedRaceRunCtl !== undefined ? "Race-day CTL (total)" : "Race-day CTL"}
+            value={String(Math.round(plan.meta.projectedRaceCtl))}
+            unit="proj."
+          />
+          {plan.meta.projectedRaceRunCtl !== undefined && (
+            <StatChip label="Running CTL" value={String(Math.round(plan.meta.projectedRaceRunCtl))} unit="proj." />
+          )}
           <StatChip label="Race-day form" value={String(Math.round(plan.meta.projectedRaceTsb))} unit="TSB" />
           <form action={replanAction}>
             <button className="label-mono bg-signal text-field px-4 py-2.5 hover:bg-bone transition-colors duration-150">

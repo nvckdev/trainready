@@ -16,6 +16,7 @@ import {
 import { TaperV1 } from "./learned.ts";
 import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
 import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
+import { crossKindFor, crossTrainSplit } from "./crosstrain.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure } from "./types.ts";
 import type { PaceRange, Zones } from "./zones.ts";
@@ -92,13 +93,18 @@ export interface PlannedSessionOut {
   workout?: WorkoutStructure;
   why: string;
   status?: "done" | "skipped";
+  /** True for a non-impact session added to REPLACE running a tissue constraint
+   *  caps (feature 5). Its load builds total CTL but never running-specific CTL. */
+  substituted?: boolean;
 }
 
 export interface PlanWeek {
   weekStart: string;
   phase: Phase;
   targetTss: number;
-  projected: { ctl: number; atl: number; tsb: number };
+  /** projected fitness at week's end. runCtl/runTsb are present ONLY when cross-
+   *  training made running-specific load diverge from total (feature 5). */
+  projected: { ctl: number; atl: number; tsb: number; runCtl?: number; runTsb?: number };
   sessions: PlannedSessionOut[];
 }
 
@@ -114,6 +120,10 @@ export interface Plan {
     startCtl: number;
     projectedRaceCtl: number;
     projectedRaceTsb: number;
+    /** Running-specific race-day CTL (feature 5) — present ONLY when cross-
+     *  training was used, so total and running CTL differ. The goal-gap finish
+     *  is read from THIS (running fitness), never the cross-training-inflated total. */
+    projectedRaceRunCtl?: number;
     /** Honest goal-vs-reachable assessment (engine/goal.ts). Present only when
      *  a run-distance race goal was supplied; absent for goal-less and tri
      *  plans, so existing plans are unaffected. The rails are NEVER loosened to
@@ -588,6 +598,13 @@ export function generatePlan(
   const last8: number[] = [...seedTrailing];
   let weeksSinceStart = initialState.weeksSinceStart;
   let raceMorning: { ctl: number; tsb: number } | null = null;
+  // Feature 5: a SECOND, run-only PMC accumulator (same τ=42/7 recursion) so
+  // running-specific CTL is never conflated with total (run + cross-training)
+  // CTL. Seeded from the all-discipline current state — exact for the run-primary
+  // calibration athlete, a documented approximation for a multi-sport athlete.
+  let runCtl = initialState.ctl;
+  let runAtl = initialState.atl;
+  let raceMorningRun: { ctl: number; tsb: number } | null = null;
   let prevPrescribed: number | undefined; // week 1 has none (see AthleteState)
 
   const weeks: PlanWeek[] = [];
@@ -633,11 +650,14 @@ export function generatePlan(
 
     // Race day consumes part of a race week's budget.
     const raceTss = RACE_TSS[req.raceType];
-    let trainableTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
-    // Tissue weekly-volume cap (feature 4): hold the running week under the
-    // declared km ceiling (km→TSS via CVOL). Inert when no cap ⇒ Infinity. The
-    // shed aerobic volume is what feature 5 offers back as cross-training.
-    if (caps?.weeklyKm != null) trainableTss = Math.min(trainableTss, caps.weeklyKm * CVOL);
+    const aerobicTargetTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
+    // Tissue weekly-volume cap (feature 4) + cross-training substitution (feature
+    // 5): running is held under the declared km ceiling; the shed aerobic volume
+    // is offered back as non-impact bike/pool so TOTAL aerobic load still lands
+    // on target. Inert (split all-running) when no weekly cap. Never on a race week.
+    const split = crossTrainSplit(aerobicTargetTss, caps?.weeklyKm != null ? caps.weeklyKm * CVOL : Infinity);
+    const trainableTss = split.runTss;
+    const crossTss = raceWeek ? 0 : split.crossTss;
 
     const slots = slotsFor(req, p.phase)
       .filter((s) => iso(wStart + s.weekdayIdx * DAY) < req.raceDate)
@@ -765,23 +785,70 @@ export function generatePlan(
       });
     }
 
-    // Simulate PMC through the week, day by day.
+    // Feature 5: close the aerobic gap the tissue cap opened with non-impact
+    // volume, placed on an otherwise-empty day. Marked `substituted` so the UI
+    // can show it's replacing running, and NOT counted toward running-CTL.
+    if (crossTss > 1) {
+      const used = new Set(placed.map((s) => s.weekdayIdx));
+      const xDay = [0, 2, 4, 1, 3, 5, 6].find(
+        (d) => !used.has(d) && iso(wStart + d * DAY) >= startDateStr && iso(wStart + d * DAY) < req.raceDate
+      );
+      if (xDay !== undefined) {
+        const kind = crossKindFor(crossTss);
+        const t = TEMPLATES[kind];
+        const durationHr = Math.min(2.5, Math.max(0.5, crossTss / (t.intensity * t.intensity * 100)));
+        const m = mins(durationHr);
+        const built = t.build(zones, m);
+        const site = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "the tissue";
+        sessions.push({
+          date: iso(wStart + xDay * DAY),
+          weekday: WEEKDAYS[xDay],
+          discipline: t.discipline,
+          title: `${t.title(m)} · cross-train`,
+          durationHr: Math.round(durationHr * 100) / 100,
+          tss: Math.round(crossTss),
+          structure: built.text,
+          workout: { blocks: built.blocks },
+          why: `Non-impact aerobic volume replacing the running your ${site} can't absorb — holds total aerobic load on target without the impact. Builds the engine, not the legs (it does not count toward running fitness).`,
+          substituted: true,
+        });
+      }
+    }
+
+    // Simulate PMC through the week, day by day. Two accumulators: total (all
+    // sessions) and run-only (run + race discipline) — cross-training lifts the
+    // former, never the latter (only running load predicts running performance).
     const tssByDate = new Map(sessions.map((s) => [s.date, s.tss] as [string, number]));
+    const runTssByDate = new Map(
+      sessions.filter((s) => s.discipline === "run" || s.discipline === "race").map((s) => [s.date, s.tss] as [string, number])
+    );
     for (let d = 0; d < 7; d++) {
       const dayIso = iso(wStart + d * DAY);
       if (dayIso === req.raceDate) {
         raceMorning = { ctl: r1(ctl), tsb: r1(ctl - atl) };
+        raceMorningRun = { ctl: r1(runCtl), tsb: r1(runCtl - runAtl) };
       }
       const dayTss = tssByDate.get(dayIso) ?? 0;
       ctl = ctl + (dayTss - ctl) / 42;
       atl = atl + (dayTss - atl) / 7;
+      const dayRunTss = runTssByDate.get(dayIso) ?? 0;
+      runCtl = runCtl + (dayRunTss - runCtl) / 42;
+      runAtl = runAtl + (dayRunTss - runAtl) / 7;
     }
     // Projected = the state at the week's END, i.e. after the loop has
     // absorbed the week's sessions. (Snapshotting before the loop shipped
     // every card one week stale: week 1 showed the untouched seed.) TSB keeps
     // the yesterday-CTL−ATL convention: Sunday night's CTL/ATL are exactly
     // "yesterday" to the Monday morning the athlete wakes into.
-    const projected = { ctl: r1(ctl), atl: r1(atl), tsb: r1(ctl - atl) };
+    // run-only CTL/TSB attach ONLY when they diverge from total (i.e. cross-
+    // training actually ran) — so a normal all-running plan is byte-identical.
+    const runDiverged = Math.abs(runCtl - ctl) > 0.05;
+    const projected = {
+      ctl: r1(ctl),
+      atl: r1(atl),
+      tsb: r1(ctl - atl),
+      ...(runDiverged ? { runCtl: r1(runCtl), runTsb: r1(runCtl - runAtl) } : {}),
+    };
 
     // A plan may start mid-week (see the mondayOnOrBefore fallback): the PMC
     // simulation above still runs the full Monday-anchored week, but sessions
@@ -803,6 +870,12 @@ export function generatePlan(
   }
 
   const projectedRaceCtl = raceMorning ? raceMorning.ctl : r1(ctl);
+  // Running-specific race-day CTL (feature 5). Present only when cross-training
+  // made it diverge from total — then the finish is read from running fitness,
+  // not the cross-training-inflated total (cross-training builds the engine, not
+  // race-specific running). Byte-identical when there's no cross-training.
+  const raceRunCtl = raceMorningRun ? raceMorningRun.ctl : r1(runCtl);
+  const projectedRaceRunCtl = Math.abs(raceRunCtl - projectedRaceCtl) > 0.05 ? raceRunCtl : undefined;
 
   // Honest goal-vs-reachable gap (spec §4). The reachable figure is literally
   // the plotted trajectory's race-morning CTL — computed under the rails, never
@@ -848,7 +921,7 @@ export function generatePlan(
       : "";
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
-      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich)
+      ? buildGoalGap(req.goalTime, goal, projectedRaceRunCtl ?? projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich)
       : undefined;
 
   return {
@@ -863,6 +936,7 @@ export function generatePlan(
       startCtl: r1(initialState.ctl),
       projectedRaceCtl,
       projectedRaceTsb: raceMorning ? raceMorning.tsb : r1(ctl - atl),
+      ...(projectedRaceRunCtl !== undefined ? { projectedRaceRunCtl } : {}),
       ...(goalGap ? { goalGap } : {}),
       ...(caps ? { tissue: { caps, why: tissueReasons(req.tissueConstraints) } } : {}),
       ...(volumeTargets ? { volumeTargets } : {}),
