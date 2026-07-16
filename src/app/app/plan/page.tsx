@@ -1,6 +1,7 @@
 import { hasCorpus, localToday } from "@/lib/athlete-data";
 import { readPlan } from "@/lib/plan-io";
 import { weekIntensity, type WeekIntensity } from "@/lib/week-insights";
+import { evidenceFor, TIER_LABEL, TIER_TONE } from "@/lib/evidence";
 import { EmptyState, SessionCard, StatChip } from "@/components/app/bits";
 import { RaceDayCard } from "@/components/app/race-cards";
 import { getRaceDayPlan } from "@/lib/race-insights";
@@ -131,7 +132,10 @@ export default async function PlanPage() {
 
       {plan.meta.volumeTargets && (
         <div className="border border-hairline mb-8 p-4">
-          <p className="label-mono text-bone-muted">Volume targets</p>
+          <div className="flex items-center gap-2">
+            <p className="label-mono text-bone-muted">Volume targets</p>
+            <EvidenceBadge id="fokkema-volume" />
+          </div>
           <div className="mt-2 flex flex-wrap gap-x-8 gap-y-2">
             <VolumeStat
               label="peak weekly"
@@ -158,7 +162,10 @@ export default async function PlanPage() {
 
       {plan.meta.tissue && plan.meta.tissue.why.length > 0 && (
         <div className="border border-hairline mb-8 p-4">
-          <p className="label-mono text-signal-bright">Tissue constraint active</p>
+          <div className="flex items-center gap-2">
+            <p className="label-mono text-signal-bright">Tissue constraint active</p>
+            <EvidenceBadge id="tissue-load-management" />
+          </div>
           <ul className="mt-2 space-y-1">
             {plan.meta.tissue.why.map((w) => (
               <li key={w} className="text-[13px] leading-relaxed text-bone-faint max-w-[72ch]">
@@ -217,6 +224,22 @@ export default async function PlanPage() {
   );
 }
 
+/** Confidence-tier badge for a prescriptive claim (feature 6). Hovering shows
+ *  the plain claim + source, so the copy never implies more certainty than the
+ *  evidence holds. Renders nothing for an unknown id. */
+function EvidenceBadge({ id }: { id: string }) {
+  const e = evidenceFor(id);
+  if (!e) return null;
+  return (
+    <span
+      className={`label-mono ${TIER_TONE[e.tier]} border border-hairline px-1.5 py-0.5`}
+      title={`${e.plainClaim} — ${e.source}`}
+    >
+      {TIER_LABEL[e.tier]}
+    </span>
+  );
+}
+
 /** One volume target: achieved km vs the evidence floor (feature 2). */
 function VolumeStat({ label, actual, floor, meets }: { label: string; actual: number; floor: number; meets: boolean }) {
   return (
@@ -251,7 +274,9 @@ function IntensityStrip({ dist, phase }: { dist: WeekIntensity; phase: string })
   return (
     <div className="mb-3">
       <div className="flex items-center justify-between mb-1">
-        <span className="label-mono text-bone-faint">intensity by time</span>
+        <span className="label-mono text-bone-faint flex items-center gap-2">
+          intensity by time <EvidenceBadge id="intensity-distribution" />
+        </span>
         <span className="label-mono text-bone-muted">{note}</span>
       </div>
       <div className="flex h-[6px] w-full overflow-hidden bg-field-sunken" aria-hidden="true">
