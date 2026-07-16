@@ -1,5 +1,6 @@
 import {
   CVOL,
+  EVIDENCE_FLOOR,
   finishEstimate,
   goalCtlTarget,
   loadRaceAnchors,
@@ -7,11 +8,14 @@ import {
   longRunKm,
   parseGoalTime,
   peakLongKm,
+  peakWeeklyKm,
   raceDistanceKm,
+  weeklyKmToTss,
   type GoalCtl,
 } from "./goal.ts";
 import { TaperV1 } from "./learned.ts";
 import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
+import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure } from "./types.ts";
 import type { PaceRange, Zones } from "./zones.ts";
 
@@ -130,6 +134,22 @@ export interface Plan {
     tissue?: {
       caps: TissueCaps;
       why: string[];
+    };
+    /** Direct volume/long-run targets vs what the plan achieves (feature 2).
+     *  Present only for run-distance races. The evidence floors (Fokkema 2020)
+     *  are the minimum viable weekly/long km; `meets*` flags whether the plan
+     *  reaches them, and `tissueActive` whether a constraint legitimately holds
+     *  it below. */
+    volumeTargets?: {
+      peakWeeklyKmTarget: number;
+      peakWeeklyKmActual: number;
+      peakLongKmTarget: number;
+      peakLongKmActual: number;
+      weeklyFloorKm: number;
+      longFloorKm: number;
+      meetsWeeklyFloor: boolean;
+      meetsLongFloor: boolean;
+      tissueActive: boolean;
     };
     /** Adaptive re-plan (engine/replan.ts) — all optional/inert, absent on
      *  freshly generated plans so nothing pre-existing changes. Stamped by the
@@ -521,6 +541,17 @@ export function generatePlan(
   // cap that used to exist (INJURY_CAP_KM); it now arrives here, justified.
   const caps: TissueCaps | null = activeTissueCaps(req.tissueConstraints);
   const longPeakKm = peakLongKm(req.raceType, caps?.longRunKm ?? Infinity);
+  // Feature 2: peak weekly-VOLUME floor (as TSS) driving the plan directly. The
+  // goal term uses goal.peakCtl·7 — the exact expression the learned goal floor
+  // uses — so when the goal dominates this equals the goal floor and goal plans
+  // stay byte-identical; the evidence km floor only lifts a modest-goal/goal-less
+  // plan. A tissue weekly cap pulls it down (may go below the evidence floor →
+  // the goal-gap surfaces the shortfall).
+  const tissueWeeklyCapTss = caps?.weeklyKm != null ? caps.weeklyKm * CVOL : Infinity;
+  const peakWeeklyTssFloor = isRunRace
+    ? Math.min(Math.max(EVIDENCE_FLOOR[req.raceType].weeklyKm * CVOL, goal ? goal.peakCtl * 7 : 0), tissueWeeklyCapTss)
+    : 0;
+  const peakWeeklyKmTarget = isRunRace ? peakWeeklyKm(req.raceType, goal ? goal.weeklyTss : 0, caps?.weeklyKm ?? Infinity) : 0;
   let prevLongKm: number | undefined; // tracked across the week loop (like prevPrescribed)
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
@@ -566,6 +597,13 @@ export function generatePlan(
       // Plan-only goal target (see above / engine/types.ts). Drives the
       // learned-layer goal floor; absent on the backtest path.
       goalPeakCtl: goal?.peakCtl,
+      // Plan-only evidence weekly-volume floor as TSS (feature 2). Set only when
+      // a GOAL is present — it SUPPLEMENTS the goal floor (lifting a modest-goal
+      // HM toward the ≥32 km evidence target), and the goal term uses goal.peakCtl·7
+      // so when the goal dominates this equals the goal floor and those plans are
+      // byte-unchanged. A goal-less plan carries no periodization target, so the
+      // floor stays off there (and off the backtest — no goal, no signal).
+      peakWeeklyTssFloor: isRunRace && goal ? peakWeeklyTssFloor : undefined,
       last4Shares: initialState.last4Shares,
       daysToNextRace: daysToRace,
       weeksSinceStart,
@@ -756,13 +794,41 @@ export function generatePlan(
   // by loosening them — so the surfaced gap matches the emitted curve. The
   // finish is a load-limited BOUND (clamped no faster than the goal pace),
   // never a hard prediction (§1.3): a naturally fast runner can beat it.
+  // Direct volume/long-run targets vs achieved (feature 2). The evidence floors
+  // are the Fokkema minimum viable; a plan may fall below only when a tissue cap
+  // legitimately holds it there (flagged, and named in the goal-gap copy).
+  const floor = isRunRace ? EVIDENCE_FLOOR[req.raceType] : { weeklyKm: 0, longRunKm: 0 };
+  const actualWeeklyKm = peakWeekRunKm(weeks);
+  const actualLongKm = peakLongRunKm(weeks);
+  const volumeTargets = isRunRace
+    ? {
+        peakWeeklyKmTarget: r1(peakWeeklyKmTarget),
+        peakWeeklyKmActual: r1(actualWeeklyKm),
+        peakLongKmTarget: r1(longPeakKm),
+        peakLongKmActual: r1(actualLongKm),
+        weeklyFloorKm: floor.weeklyKm,
+        longFloorKm: floor.longRunKm,
+        meetsWeeklyFloor: actualWeeklyKm >= floor.weeklyKm - 0.5,
+        meetsLongFloor: actualLongKm >= floor.longRunKm - 0.5,
+        tissueActive: caps != null,
+      }
+    : undefined;
+
   // Only name a tissue long-run limit in the gap copy when one is actually
   // active — never prophylactically (feature 4). Label from the declared site(s).
   const tissueLongCapped = caps?.longRunKm != null;
   const tissueLabel = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "tissue";
+  // Feature 2: when a floor is missed, the gap copy must SAY why (tissue cap, or
+  // the ramp/runway still warming the volume up) — the target is not silently dropped.
+  const volumeShortfall =
+    volumeTargets && (!volumeTargets.meetsWeeklyFloor || !volumeTargets.meetsLongFloor)
+      ? volumeTargets.tissueActive
+        ? ` Peak volume runs below the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor because your ${tissueLabel} constraint caps it — not by choice; cross-training can hold the aerobic side.`
+        : ` Peak volume is still short of the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor — the ramp needs more runway to build there safely.`
+      : "";
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
-      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel)
+      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall)
       : undefined;
 
   return {
@@ -779,6 +845,7 @@ export function generatePlan(
       projectedRaceTsb: raceMorning ? raceMorning.tsb : r1(ctl - atl),
       ...(goalGap ? { goalGap } : {}),
       ...(caps ? { tissue: { caps, why: tissueReasons(req.tissueConstraints) } } : {}),
+      ...(volumeTargets ? { volumeTargets } : {}),
     },
     weeks,
   };
@@ -801,7 +868,8 @@ function buildGoalGap(
   startCtl: number,
   planWeeks: number,
   tissueLongCapped = false,
-  tissueLabel = "tissue"
+  tissueLabel = "tissue",
+  volumeShortfall = ""
 ): NonNullable<Plan["meta"]["goalGap"]> {
   const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
   const reachablePeakCtl = r1(reachableRaceDayCtl);
@@ -821,9 +889,10 @@ function buildGoalGap(
     ? `or — only once the ${tissueLabel} fully clears — ramp nearer (never above) the +20% ceiling`
     : `or ramp nearer (never above) the +20% ceiling`;
   const message =
-    gapCtl > 1
+    (gapCtl > 1
       ? `Goal ${goalTime} implies a race-day CTL around ${Math.round(requiredPeakCtl)}. A safe progression from your current ~${Math.round(startCtl)} over ${planWeeks} weeks — held under ${railClause} — reaches about ${Math.round(reachablePeakCtl)}. That projects to roughly ${realisticFinish} here (load-limited; sharp legs can beat it). To close the ~${Math.round(gapCtl)}-CTL gap: extend the timeline (a 26–30 week build), treat ${realisticFinish} as the honest target for this race and ${goalTime} as a multi-season goal, ${rampLever}. Re-test threshold pace mid-block to refine.`
-      : `Goal ${goalTime} (race-day CTL ~${Math.round(requiredPeakCtl)}) is within reach of your projected ~${Math.round(reachablePeakCtl)} — hold the ramp and the taper and it stays on the table (~${realisticFinish} load-limited).`;
+      : `Goal ${goalTime} (race-day CTL ~${Math.round(requiredPeakCtl)}) is within reach of your projected ~${Math.round(reachablePeakCtl)} — hold the ramp and the taper and it stays on the table (~${realisticFinish} load-limited).`) +
+    volumeShortfall;
   return { goalTime, requiredPeakCtl, reachablePeakCtl, realisticFinish, gapCtl, message, loadLimited: true };
 }
 

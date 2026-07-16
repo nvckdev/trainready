@@ -122,6 +122,33 @@ export default async function PlanPage() {
         </div>
       )}
 
+      {plan.meta.volumeTargets && (
+        <div className="border border-hairline mb-8 p-4">
+          <p className="label-mono text-bone-muted">Volume targets</p>
+          <div className="mt-2 flex flex-wrap gap-x-8 gap-y-2">
+            <VolumeStat
+              label="peak weekly"
+              actual={plan.meta.volumeTargets.peakWeeklyKmActual}
+              floor={plan.meta.volumeTargets.weeklyFloorKm}
+              meets={plan.meta.volumeTargets.meetsWeeklyFloor}
+            />
+            <VolumeStat
+              label="longest run"
+              actual={plan.meta.volumeTargets.peakLongKmActual}
+              floor={plan.meta.volumeTargets.longFloorKm}
+              meets={plan.meta.volumeTargets.meetsLongFloor}
+            />
+          </div>
+          <p className="mt-2 text-[12px] leading-relaxed text-bone-faint max-w-[72ch]">
+            {plan.meta.volumeTargets.meetsWeeklyFloor && plan.meta.volumeTargets.meetsLongFloor
+              ? "Weekly volume and long run both clear the evidence floor (weekly >32 km, long >21 km each independently linked to faster half-marathons — Fokkema 2020, observational)."
+              : plan.meta.volumeTargets.tissueActive
+                ? "Below the evidence floor because a tissue constraint caps running — cross-training can hold total aerobic volume while it settles."
+                : "Building toward the evidence floor; the ramp needs more runway to reach it safely."}
+          </p>
+        </div>
+      )}
+
       {plan.meta.tissue && plan.meta.tissue.why.length > 0 && (
         <div className="border border-hairline mb-8 p-4">
           <p className="label-mono text-signal-bright">Tissue constraint active</p>
@@ -179,6 +206,21 @@ export default async function PlanPage() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** One volume target: achieved km vs the evidence floor (feature 2). */
+function VolumeStat({ label, actual, floor, meets }: { label: string; actual: number; floor: number; meets: boolean }) {
+  return (
+    <div>
+      <p className="label-mono text-bone-faint">{label}</p>
+      <p className="mt-0.5 font-mono text-lg tabular text-bone">
+        {Math.round(actual)}<span className="text-bone-faint text-sm"> km</span>
+      </p>
+      <p className={`label-mono ${meets ? "text-bone-muted" : "text-signal-bright"}`}>
+        {meets ? "≥" : "below"} {floor} km floor
+      </p>
     </div>
   );
 }

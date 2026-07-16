@@ -370,19 +370,29 @@ export class TaperV1 implements Engine {
     // the trajectory dips on cutbacks: rise, rise, rise, dip, rise → rising CTL.
     // Auto-off once state.ctl ≥ goalPeakCtl (the climb flattens at the peak
     // instead of overshooting past what the race needs).
+    // The floor target is the LARGER of the goal summit's weekly TSS and the
+    // evidence-based weekly-VOLUME floor (feature 2). Both are plan-only signals
+    // absent on the backtest ⇒ floorTarget 0 ⇒ this branch is inert in replay,
+    // so the pins stay byte-for-byte. When the goal dominates (the normal
+    // goal-backed case), floorTarget === goalPeakCtl·7 exactly, so goal plans are
+    // byte-unchanged; the volume floor only lifts a plan whose evidence km target
+    // exceeds what the goal alone would ask (e.g. a modest-goal or goal-less HM).
     let goalFloorLift = false;
+    const floorTarget = Math.max(
+      state.goalPeakCtl !== undefined ? state.goalPeakCtl * 7 : 0,
+      state.peakWeeklyTssFloor ?? 0
+    );
     if (
       this.anchorV2 &&
       (ref.phase === "base" || ref.phase === "build") &&
-      state.goalPeakCtl !== undefined && // plan-only — absent in the backtest
-      state.ctl < state.goalPeakCtl // stop overloading once at the summit
+      floorTarget > 0 && // both signals plan-only — absent in the backtest
+      state.ctl < (state.goalPeakCtl ?? Infinity) // stop overloading once at the goal summit
     ) {
       // Injury-tempered ramp ceiling: never above the +20% rail over the trailing
-      // month or the smoothed ramp-cap reference, and never above the weekly TSS
-      // the goal summit itself implies (no overshoot).
+      // month or the smoothed ramp-cap reference, and never above the target
+      // weekly TSS itself (no overshoot).
       const rampCeil = Math.min(trailingMean * ANCHOR_V2_GOAL_RAMP, rampCapRef(state) * ANCHOR_V2_GOAL_RAMP);
-      const goalWeekly = state.goalPeakCtl * 7;
-      const goalFloor = Math.min(rampCeil, goalWeekly);
+      const goalFloor = Math.min(rampCeil, floorTarget);
       if (goalFloor > value) {
         value = goalFloor;
         goalFloorLift = true;

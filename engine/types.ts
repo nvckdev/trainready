@@ -41,6 +41,13 @@ export interface AthleteState {
    *  invisible to prescribeWeek(ex.features), keeping the pinned backtest
    *  baselines byte-for-byte unchanged (taper-rules rule 7). */
   goalPeakCtl?: number;
+  /** Evidence-based peak weekly-VOLUME floor, expressed as TSS (feature 2:
+   *  km target × CVOL). Set ONLY inside generatePlan's per-week state for run
+   *  races; NEVER present on the backtest path (same audited neutrality as
+   *  goalPeakCtl/isFirstPlanWeek — dataset features lack it, so the volume floor
+   *  cannot fire in replay and the pins stay byte-identical). Lifts the peak
+   *  build week's load toward the km floor under the same rails. */
+  peakWeeklyTssFloor?: number;
   /** Trailing discipline mix of executed load. */
   last4Shares: { swim: number; bike: number; run: number };
   /** Days from the week's start to the next A-race, if one is scheduled. */

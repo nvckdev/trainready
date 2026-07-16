@@ -150,7 +150,9 @@ export function activeTissueCaps(constraints?: TissueConstraint[] | null): Tissu
           : out.maxSessionIntensity;
     }
   }
-  return out;
+  // No lever actually bound (e.g. a niggle whose caps were all empty) ⇒ treat as
+  // inactive, so the plan is byte-identical to a healthy one.
+  return Object.keys(out).length ? out : null;
 }
 
 /** All active constraints' reasons (deduped), for the UI. Empty when none. */

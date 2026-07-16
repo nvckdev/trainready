@@ -106,8 +106,8 @@ const stable = (p: Plan) => JSON.stringify({ ...p, meta: { ...p.meta, generatedA
   // also inert — resolver yields no active caps ⇒ same plan.
   const inert: TissueConstraint = { site: "knee", status: "niggle", provocation: "speed", caps: {} };
   const withInert = generatePlan({ ...REQ, tissueConstraints: [inert] }, seed, [], zones);
-  check("TT7b", "a constraint with empty caps still caps nothing on the long run",
-    stable(withInert) === stable(absent) || withInert.meta.tissue?.caps.longRunKm === undefined);
+  check("TT7b", "a constraint whose caps are all empty is inert ⇒ byte-identical",
+    stable(withInert) === stable(absent) && withInert.meta.tissue === undefined);
 }
 
 for (const p of passes) console.log("  " + p);

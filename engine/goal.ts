@@ -312,11 +312,46 @@ const LONG_MULT: Record<RaceType, number> = {
 const LONGRUN_STEP_KM = 2.0;
 const LONGRUN_RATE = 0.15;
 
-/** Peak long-run distance for a race: distance-driven, capped ONLY by an active
- *  tissue constraint's long-run ceiling (default none ⇒ Infinity). */
+/**
+ * Direct volume/long-run targets by race distance (feature 2). The strongest
+ * HM-specific evidence — Fokkema 2020 (Scand J Med Sci Sports, n=556) — found
+ * weekly volume >32 km AND longest run >21 km each INDEPENDENTLY associated with
+ * a faster finish, with no injury-risk increase. So we derive km targets from
+ * the distance and let TSS follow (weeklyKmToTss), rather than reading km off a
+ * TSS byproduct. Observational tier (faster runners both train more and race
+ * faster, so the effect overstates causation) — see engine/evidence.ts.
+ */
+export const EVIDENCE_FLOOR: Record<RaceType, { weeklyKm: number; longRunKm: number }> = {
+  "run-5k": { weeklyKm: 20, longRunKm: 10 },
+  "run-10k": { weeklyKm: 25, longRunKm: 14 },
+  "run-half": { weeklyKm: 32, longRunKm: 21 }, // Fokkema 2020 floors
+  "run-marathon": { weeklyKm: 50, longRunKm: 29 },
+  sprint: { weeklyKm: 0, longRunKm: 0 },
+  olympic: { weeklyKm: 0, longRunKm: 0 },
+  "half-ironman": { weeklyKm: 0, longRunKm: 0 },
+  ironman: { weeklyKm: 0, longRunKm: 0 },
+};
+
+/** km → TSS at the training-volume norm (the "TSS follows km" bridge; inverse of
+ *  the implicit km = weekTss/CVOL the CTL math already uses). */
+export function weeklyKmToTss(weeklyKm: number): number {
+  return weeklyKm * CVOL;
+}
+
+/** Peak weekly running-volume TARGET (km): the evidence floor, scaled UP toward
+ *  the goal-appropriate volume, pulled DOWN only by an active tissue weekly cap
+ *  (which may take it below the floor — the caller then surfaces the shortfall). */
+export function peakWeeklyKm(raceType: RaceType, goalWeeklyTss = 0, tissueWeeklyKmCap = Infinity): number {
+  const floor = EVIDENCE_FLOOR[raceType].weeklyKm;
+  const goalKm = goalWeeklyTss / CVOL;
+  return Math.min(Math.max(floor, goalKm), tissueWeeklyKmCap);
+}
+
+/** Peak long-run distance for a race: distance-driven with the evidence floor,
+ *  capped ONLY by an active tissue constraint's long-run ceiling (default none). */
 export function peakLongKm(raceType: RaceType, tissueLongRunKmCap = Infinity): number {
   const d = raceDistanceKm(raceType) ?? 21.1;
-  return Math.min(d * LONG_MULT[raceType], tissueLongRunKmCap);
+  return Math.min(Math.max(d * LONG_MULT[raceType], EVIDENCE_FLOOR[raceType].longRunKm), tissueLongRunKmCap);
 }
 
 /** Weekly build progression under the overload rails; hold flat on cutback weeks. */
