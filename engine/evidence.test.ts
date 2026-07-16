@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import {
   EVIDENCE,
   BANNED_CAUSAL,
@@ -61,34 +61,35 @@ const TIERS: EvidenceTier[] = ["rct", "observational", "elite-practice", "heuris
     used.every((k) => ids.has(k)), used.filter((k) => !ids.has(k)).join(", "));
 }
 
-// ——— EV5. THE LINT — no user-facing copy overclaims causal certainty ————
+// ——— EV5. THE LINT — every copy file, no causal overclaim ————————————————
 {
-  const COPY_FILES = [
-    "engine/plan.ts",
-    "engine/intensity.ts",
-    "engine/tissue.ts",
-    "engine/crosstrain.ts",
-    "engine/history.ts",
-    "engine/volume.ts",
-    "src/lib/digest.ts",
-    "src/lib/week-insights.ts",
-    "src/lib/tissue-constraints.ts",
-    "src/app/app/plan/page.tsx",
-  ];
-  const bad: string[] = [];
-  for (const f of COPY_FILES) {
-    let src: string;
-    try {
-      src = stripComments(readFileSync(f, "utf8"));
-    } catch {
-      continue; // file moved — skip rather than fail the lint on a path drift
+  // Recursively scan ALL engine + src prose sources (comments stripped), not a
+  // hand-list — so a new copy file is covered automatically and a moved one can't
+  // silently drop out (m4/M7). Exclude tests and the evidence registry itself
+  // (it deliberately contains the banned phrases as regex/examples).
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = `${dir}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name === "node_modules" || e.name === ".next" || e.name === "dist") continue;
+        out.push(...walk(full));
+      } else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && !/\bevidence\.ts$/.test(full)) {
+        out.push(full);
+      }
     }
+    return out;
+  };
+  const files = [...walk("engine"), ...walk("src")];
+  const bad: string[] = [];
+  for (const f of files) {
+    const src = stripComments(readFileSync(f, "utf8")); // no try/catch: a read error MUST fail the lint
     for (const re of BANNED_CAUSAL) {
       const m = src.match(re);
       if (m) bad.push(`${f}: "${m[0]}"`);
     }
   }
-  check("EV5", "no user-facing copy string claims causal certainty (comments excluded)", bad.length === 0, bad.slice(0, 4).join("; "));
+  check("EV5", `no user-facing copy claims causal certainty (${files.length} files scanned, comments excluded)`, bad.length === 0, bad.slice(0, 4).join("; "));
 }
 
 // ——— EV6. the lint actually catches a violation (self-test) ————————————

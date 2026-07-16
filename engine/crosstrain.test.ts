@@ -49,18 +49,19 @@ const runKm = (s: { discipline: string; durationHr: number }) => (s.discipline =
   check("X2c", "a healthy plan adds NONE (never prophylactic)", healthy.weeks.flatMap((w) => w.sessions).every((s) => !s.substituted));
 }
 
-// ——— X3. running is held DOWN by the cap while total aerobic is filled ————
+// ——— X3. running is held to the km cap while total aerobic is filled ————
 {
   const peak = (p: Plan) => Math.max(...p.weeks.filter((w) => w.phase === "base" || w.phase === "build").map((w) => w.sessions.reduce((a, s) => a + runKm(s), 0)));
-  // The km cap converts to a TSS budget (× CVOL); with feature-1's easy-heavy
-  // weeks that budget buys somewhat more km than nominal, but running is still
-  // sharply reduced vs the uncapped plan — the impact-reduction intent holds.
-  check("X3a", "the tissue cap sharply reduces peak weekly running vs the healthy plan",
-    peak(capped) < peak(healthy) * 0.75, `capped ${peak(capped).toFixed(0)} km vs healthy ${peak(healthy).toFixed(0)} km`);
+  // The cap now binds in KM (kept run days shrink to fit); a small tolerance
+  // covers the quality-vs-easy pace estimate. The healthy plan runs far more.
+  check("X3a", "peak weekly RUNNING is held at/under the 24 km cap (± pace estimate)",
+    peak(capped) <= 24 + 2 && peak(capped) < peak(healthy) - 8, `capped ${peak(capped).toFixed(1)} km vs healthy ${peak(healthy).toFixed(1)} km`);
   // A week with substitution: total TSS (run + cross) exceeds the running-only TSS.
   const wWithSub = capped.weeks.find((w) => w.sessions.some((s) => s.substituted))!;
   const runTss = wWithSub.sessions.filter((s) => !s.substituted).reduce((a, s) => a + s.tss, 0);
   check("X3b", "total aerobic load exceeds running-only (the gap is filled)", wWithSub.targetTss > runTss, `${wWithSub.targetTss} vs run ${runTss}`);
+  check("X3c", "the capped athlete does NOT falsely meet the 32 km evidence floor", capped.meta.volumeTargets?.meetsWeeklyFloor === false);
+  check("X3d", "substitution respects daysPerWeek (never adds a day)", capped.weeks.every((w) => w.sessions.filter((s) => s.discipline !== "race").length <= 6));
 }
 
 // ——— X4. running-CTL and total-CTL are tracked separately, never conflated —

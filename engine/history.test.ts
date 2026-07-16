@@ -99,6 +99,15 @@ const REQ: PlanRequest = {
   const peakCtl = (p: typeof free) => Math.max(...p.weeks.map((w) => w.projected.ctl));
   check("H5c", "an acute tissue ramp cap holds the base-rich athlete back (tissue wins)",
     peakCtl(acute) < peakCtl(free) - 0.5, `capped ${peakCtl(acute).toFixed(1)} vs free ${peakCtl(free).toFixed(1)}`);
+  // The acute rampCeiling (1.05) must actually BIND — not be floored back to 1.10
+  // (the bug fixed in the hardening pass). Allow a small rounding band over reps.
+  const t = acute.weeks.map((w) => w.targetTss);
+  let worst = 0;
+  for (let i = 1; i < acute.weeks.length; i++) {
+    if (acute.weeks[i].phase === "taper" || acute.weeks[i].phase === "race") continue;
+    if (t[i - 1] > 0) worst = Math.max(worst, (t[i] - t[i - 1]) / t[i - 1]);
+  }
+  check("H5d", "the acute +5% ramp ceiling binds (well under the base-rich +27%)", worst <= 0.09, `worst +${(worst * 100).toFixed(0)}%`);
 }
 
 // ——— H6. NEUTRALITY — rampCap undefined vs an explicit 1.2 are identical ——

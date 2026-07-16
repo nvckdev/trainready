@@ -159,13 +159,18 @@ if (!fx) {
     check("I7", "every week's Z1+Z2+Z3 sums to 1", bad.length === 0, `${bad.length} malformed`);
   }
 
-  // ——— I8. build phase carries MORE hard time than base (phases differ) ——
+  // ——— I8. build weeks carry MORE hard time than accumulation weeks ————————
   {
-    const mean = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
-    const baseHard = mean(dist.filter((x) => x.phase === "base").map((x) => x.d.z2Pct + x.d.z3Pct));
-    const buildHard = mean(dist.filter((x) => x.phase === "build").map((x) => x.d.z2Pct + x.d.z3Pct));
-    check("I8", "build weeks carry more Z2+Z3 than base weeks (race-specific fitness)",
-      buildHard > baseHard, `base ${(baseHard * 100).toFixed(0)}% vs build ${(buildHard * 100).toFixed(0)}% hard`);
+    // Fold base + recovery into one "accumulation" cohort so the comparison
+    // isn't resting on a single base week (m3); require both cohorts non-empty and
+    // a real margin, not just >.
+    const hard = (x: { d: { z2Pct: number; z3Pct: number } }) => x.d.z2Pct + x.d.z3Pct;
+    const accum = dist.filter((x) => x.phase === "base" || x.phase === "recovery").map(hard);
+    const build = dist.filter((x) => x.phase === "build").map(hard);
+    const mean = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / xs.length;
+    check("I8", "build weeks carry meaningfully more Z2+Z3 than base/recovery weeks",
+      accum.length >= 2 && build.length >= 2 && mean(build) > mean(accum) + 0.02,
+      `accum n=${accum.length} ${(mean(accum) * 100).toFixed(0)}% vs build n=${build.length} ${(mean(build) * 100).toFixed(0)}% hard`);
   }
 }
 

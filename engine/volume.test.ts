@@ -1,6 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
 import { generatePlan, type PlanRequest } from "./plan.ts";
 import { deriveZones } from "./zones.ts";
 import { TaperV1 } from "./learned.ts";
+import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import type { AthleteState } from "./types.ts";
 import { EVIDENCE_FLOOR, peakLongKm, peakWeeklyKm, weeklyKmToTss, CVOL } from "./goal.ts";
 import { declareTissue } from "./tissue.ts";
@@ -58,15 +60,37 @@ const REQ: PlanRequest = {
   check("V3d", "targets are distance-derived, not tissue-limited here", vt?.tissueActive === false);
 }
 
-// ——— V4. a modest goal is LIFTED toward the evidence floor ————————————
-{
-  // A slow goal implies little volume on its own; the evidence floor pulls the
-  // peak build week's load up (bounded by the ramp) vs the same plan w/o the floor.
-  const slow = generatePlan({ ...REQ, goalTime: "2:10:00" }, fit, [], zones);
-  const peakSlow = Math.max(...slow.weeks.filter((w) => w.phase === "build" || w.phase === "base").map((w) => w.targetTss));
-  check("V4", "peak base/build week clears the goal-only weekly (evidence floor lifts it)",
-    peakSlow >= weeklyKmToTss(32) * 0.6, `peak ${peakSlow} TSS vs floor ${Math.round(weeklyKmToTss(32))}`);
-}
+// ——— V4. DIFFERENTIAL — the evidence floor lifts a modest-goal HM ————————
+// The learned floor only runs on a TRAINED engine (≥24 wk), so this needs the
+// corpus. A modest 2:10 goal implies tiny volume (goalPeakCtl≈7), so the peak
+// build week is driven by the 32 km EVIDENCE floor, not the goal — vs a goal-less
+// plan (no floor at all), whose peak is pure anchor/ramp.
+(() => {
+  if (!existsSync("data/datasets/weekly-examples.jsonl") || !existsSync("data/derived/pmc.csv")) {
+    console.log("  V4 SKIP — corpus absent (the learned floor needs a trained engine)");
+    return;
+  }
+  const a = JSON.parse(readFileSync("data/raw/athlete.json", "utf8"));
+  const lines = readFileSync("data/datasets/weekly-examples.jsonl", "utf8").split("\n").filter(Boolean);
+  const history = lines.map((l) => {
+    const ex = JSON.parse(l);
+    return { state: ex.features as AthleteState, actualTss: ex.targets.weekTss as number, weekStart: ex.weekStart as string };
+  });
+  const [, ...pl] = readFileSync("data/derived/pmc.csv", "utf8").trim().split("\n");
+  const series: DailyPmcPoint[] = pl.map((l) => { const [date, , ctl, atl] = l.split(","); return { date, ctl: +ctl, atl: +atl }; });
+  const seed = seedStateAt(history[history.length - 1].state, series, "2026-07-13");
+  const zones = deriveZones({ ftpWatts: a.thresholds.ftpWatts, lthrBpm: a.thresholds.lthrBpm, runThresholdSpeedMps: a.thresholds.runThresholdSpeedMpsAlt ?? a.thresholds.runThresholdSpeedMps, swimCssMps: a.thresholds.swimCssMps });
+  const req: PlanRequest = { raceName: "HM", raceDate: "2026-10-18", raceType: "run-half", daysPerWeek: 6, longDay: "sunday", startDate: "2026-07-13" };
+  const peakBuild = (gt?: string) => {
+    const plan = generatePlan({ ...req, goalTime: gt }, seed, history, zones);
+    const bw = plan.weeks.filter((w) => w.phase === "base" || w.phase === "build");
+    return bw.length ? Math.max(...bw.map((w) => w.targetTss)) : 0;
+  };
+  const modest = peakBuild("2:10:00"); // evidence floor drives it
+  const noGoal = peakBuild(undefined); // no floor at all
+  check("V4", "a modest-goal HM peaks higher than goal-less (the 32 km evidence floor lifts it)",
+    modest > noGoal + 5, `modest-goal ${modest} vs goal-less ${noGoal} TSS`);
+})();
 
 // ——— V5. a tissue weekly cap below the floor ⇒ goal-gap SAYS SO ————————
 {

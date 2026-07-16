@@ -1,5 +1,6 @@
 import type { Block, Plan, PlannedSessionOut, PlanWeek, WorkoutStructure } from "../../engine/plan.ts";
 import { weekDistribution, targetDistribution, Z1_FLOOR } from "../../engine/intensity.ts";
+import { sessionRunKm } from "../../engine/volume.ts";
 
 /**
  * Presentation-layer insights derived from the stored plan + PMC state.
@@ -37,15 +38,12 @@ export function weekIntensity(week: PlanWeek): WeekIntensity | null {
   };
 }
 
-/** Rough km estimate for a run session: duration at zone-blended speed.
- *  Quality sessions blend tempo work with easy running; easy/long days sit
- *  at easy pace. Labeled an estimate wherever shown. */
-export const QUALITY = /tempo|interval|threshold|vo2|strides/i;
-export function estimateRunKm(s: PlannedSessionOut): number {
-  if (s.discipline !== "run") return 0;
-  const kmh = QUALITY.test(s.title) ? 12.4 : 11.6; // ~4:50–5:10/km blended
-  return s.durationHr * kmh;
-}
+/** Quality-session matcher (kept here — several UI sites use it). Mirrors the
+ *  engine's volume.ts pattern so km estimates agree. */
+export const QUALITY = /tempo|interval|threshold|vo2|strides|\bcv\b/i;
+/** Rough km estimate for a run session — delegates to the engine's single
+ *  source of truth (engine/volume.ts) so the two never drift. */
+export const estimateRunKm = sessionRunKm;
 
 export interface WeekBrief {
   weekStart: string;

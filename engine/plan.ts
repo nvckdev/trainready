@@ -16,9 +16,9 @@ import {
 import { TaperV1 } from "./learned.ts";
 import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
 import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
-import { crossKindFor, crossTrainSplit } from "./crosstrain.ts";
+import { crossKindFor } from "./crosstrain.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
-import type { AthleteState, Block, Phase, WorkoutStructure } from "./types.ts";
+import type { AthleteState, Block, Phase, WorkoutStructure, Zone } from "./types.ts";
 import type { PaceRange, Zones } from "./zones.ts";
 
 export type { Block, WorkoutStructure } from "./types.ts";
@@ -455,6 +455,43 @@ function capToDays(slots: Slot[], daysPerWeek: number): Slot[] {
 
 const DEFAULT_MAX_SESSIONS = 5;
 
+// Representative intensity zone per slot kind, for the tissue maxSessionIntensity
+// cap (feature 4). Easy/long/z2/swim kinds are absent ⇒ never capped.
+const KIND_ZONE: Partial<Record<Kind, Zone>> = {
+  "run-tempo": "tempo",
+  "run-vo2": "vo2",
+  "run-strides": "vo2",
+  "bike-threshold": "threshold",
+  "bike-vo2": "vo2",
+};
+const ZONE_RANK: Zone[] = ["recovery", "easy", "tempo", "threshold", "cv", "vo2", "race"];
+const zRank = (z: Zone) => ZONE_RANK.indexOf(z);
+// Blended pace for quality run sessions (~4:50/km) vs easy/long (LONG_EASY_KMH,
+// ~5:10/km) — used to estimate run km for the tissue weekly-km cap (feature 4/5).
+const RUN_QUALITY_KMH = 12.4;
+
+/** Downgrade a quality slot when an active tissue maxSessionIntensity cap forbids
+ *  its zone (feature 4): vo2→tempo→easy, strides (inherently fast) drop to easy,
+ *  bike quality steps down. Identity when uncapped or the slot is already legal. */
+function capKindIntensity(kind: Kind, cap: Zone | undefined): Kind {
+  const z = cap ? KIND_ZONE[kind] : undefined;
+  if (!cap || z === undefined || zRank(z) <= zRank(cap)) return kind;
+  switch (kind) {
+    case "run-vo2":
+      return zRank("tempo") <= zRank(cap) ? "run-tempo" : "run-easy";
+    case "run-tempo":
+      return "run-easy";
+    case "run-strides":
+      return "run-easy";
+    case "bike-vo2":
+      return zRank("threshold") <= zRank(cap) ? "bike-threshold" : "bike-z2";
+    case "bike-threshold":
+      return "bike-z2";
+    default:
+      return kind;
+  }
+}
+
 function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
   const longIdx = req.longDay === "saturday" ? 5 : 6;
   const otherWeekend = req.longDay === "saturday" ? 6 : 5;
@@ -540,7 +577,15 @@ export function generatePlan(
   // it is the SOLE trigger for the learned-layer goal floor and never touches
   // the backtest (which never calls generatePlan) — see engine/types.ts.
   const goalDistanceKm = raceDistanceKm(req.raceType);
-  const goalSec = req.goalTime ? parseGoalTime(req.goalTime) : undefined;
+  const parsedGoalSec = req.goalTime ? parseGoalTime(req.goalTime) : undefined;
+  // Plausibility guard (invalid ⇒ inert): reject a superhuman implied pace — e.g.
+  // "1:24" parsed as 84 s (MM:SS) for a half is 4 s/km, which would otherwise
+  // yield a ~65,000 km/wk target. Anything faster than ~2:20/km (140 s/km, well
+  // inside any world record) is treated as a mis-entered time and left dormant.
+  const goalSec =
+    parsedGoalSec !== undefined && goalDistanceKm !== undefined && parsedGoalSec / goalDistanceKm < 140
+      ? undefined
+      : parsedGoalSec;
   const goal: GoalCtl | undefined =
     goalSec !== undefined && goalDistanceKm !== undefined
       ? goalCtlTarget(goalDistanceKm, goalSec)
@@ -650,14 +695,7 @@ export function generatePlan(
 
     // Race day consumes part of a race week's budget.
     const raceTss = RACE_TSS[req.raceType];
-    const aerobicTargetTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
-    // Tissue weekly-volume cap (feature 4) + cross-training substitution (feature
-    // 5): running is held under the declared km ceiling; the shed aerobic volume
-    // is offered back as non-impact bike/pool so TOTAL aerobic load still lands
-    // on target. Inert (split all-running) when no weekly cap. Never on a race week.
-    const split = crossTrainSplit(aerobicTargetTss, caps?.weeklyKm != null ? caps.weeklyKm * CVOL : Infinity);
-    const trainableTss = split.runTss;
-    const crossTss = raceWeek ? 0 : split.crossTss;
+    const trainableTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
 
     const slots = slotsFor(req, p.phase)
       .filter((s) => iso(wStart + s.weekdayIdx * DAY) < req.raceDate)
@@ -673,9 +711,11 @@ export function generatePlan(
     // NOT a race week, yet its weekend long slots land the day before the
     // start line). The dropped share is NOT redistributed — race proximity
     // simply makes the week lighter, which is correct.
-    const placed = active.filter(
-      (s) => !(s.kind.includes("long") && wStart + s.weekdayIdx * DAY >= raceT - 6 * DAY)
-    );
+    const placed = active
+      .filter((s) => !(s.kind.includes("long") && wStart + s.weekdayIdx * DAY >= raceT - 6 * DAY))
+      // Feature 4: a tissue maxSessionIntensity cap downgrades over-cap quality
+      // slots to legal ones (byte-identical when no such cap is active).
+      .map((s) => ({ ...s, kind: capKindIntensity(s.kind, caps?.maxSessionIntensity) }));
     // Long-run distance-tied floor (goal plans only, base/build/recovery —
     // docs/periodization-spec.md §5). The reference taper/race weeks defer 100%
     // to their own decay (rule 2), so the floor is skipped there. It sets the
@@ -724,21 +764,81 @@ export function generatePlan(
         ? Math.max(0, trainableTss - longFinalTss) / otherBaseSum
         : 1;
 
-    const sessions: PlannedSessionOut[] = placed.map((slot) => {
+    // The rail-bound TSS and (for run-long) the tissue-capped duration a slot
+    // carries — shared by the km-cap decision and the session build so they agree.
+    const slotLoad = (slot: Slot) => {
       const t = TEMPLATES[slot.kind];
       const isLong = slot === longSlot;
       let tss = (trainableTss * slot.weight) / totalWeight;
       if (longFinalTss !== undefined) tss = isLong ? longFinalTss : tss * otherScale;
       let durationHr = tss / (t.intensity * t.intensity * 100);
       if (isLong && longFloorHr !== undefined) durationHr = longFloorHr;
-      // An active tissue long-run cap is a HARD ceiling: peakLongKm already folds
-      // it in, so clamp the long-run duration to it (a fit athlete's TSS-derived
-      // long run must not blow past an injured tissue's limit). Inert — and thus
-      // byte-identical — for a healthy athlete (caps.longRunKm absent).
-      const runLongCeilHr =
+      const ceil =
         slot.kind === "run-long" && caps?.longRunKm != null
           ? Math.min(2.6, longPeakKm / LONG_EASY_KMH)
           : slot.kind === "run-long" ? 2.6 : slot.kind === "bike-long" ? 4.5 : 1.6;
+      return { tss, durationHr: Math.min(ceil, Math.max(0.4, durationHr)) };
+    };
+    const slotRunKm = (slot: Slot) =>
+      TEMPLATES[slot.kind].discipline === "run" ? slotLoad(slot).durationHr * (KIND_ZONE[slot.kind] ? RUN_QUALITY_KMH : LONG_EASY_KMH) : 0;
+
+    // Feature 4/5: a tissue WEEKLY-KM cap caps RUNNING in km (not TSS — easy-heavy
+    // weeks cost fewer TSS/km than CVOL assumes, so a TSS budget under-binds).
+    // Convert the lowest-priority easy run days to non-impact cross-training —
+    // preserving the DAY and its load — until running km fits the cap. This binds
+    // the km ceiling AND respects daysPerWeek (replace a day, never add one). The
+    // long run and quality days are protected. Inert when no weekly cap.
+    const crossDays = new Set<number>();
+    let protectedScale = 1; // extra shrink of the kept run days if quality+long alone overshoot
+    if (caps?.weeklyKm != null && !raceWeek) {
+      const droppable = () =>
+        placed
+          .filter((s) => (s.kind === "run-easy" || s.kind === "run-strides") && !crossDays.has(s.weekdayIdx))
+          .sort((a, b) => KEEP_PRIORITY.indexOf(b.kind) - KEEP_PRIORITY.indexOf(a.kind));
+      const keptRunKm = () => placed.filter((s) => !crossDays.has(s.weekdayIdx)).reduce((a, s) => a + slotRunKm(s), 0);
+      for (let guard = 0; guard < placed.length && keptRunKm() > caps.weeklyKm; guard++) {
+        const drop = droppable()[0];
+        if (!drop) break;
+        crossDays.add(drop.weekdayIdx);
+      }
+      // If the protected quality + long days still overshoot (their km alone
+      // exceeds the cap), shrink them to fit; the freed load moves to the cross days.
+      const km = keptRunKm();
+      if (km > caps.weeklyKm) protectedScale = caps.weeklyKm / km;
+    }
+    // Freed running TSS (from the protected-day shrink) is redistributed over the
+    // cross days so TOTAL aerobic load holds while running impact drops.
+    const isRunSlot = (s: Slot) => TEMPLATES[s.kind].discipline === "run";
+    const freedTss =
+      protectedScale < 1
+        ? placed.filter((s) => !crossDays.has(s.weekdayIdx) && isRunSlot(s)).reduce((a, s) => a + slotLoad(s).tss, 0) * (1 - protectedScale)
+        : 0;
+    const crossBoost = crossDays.size > 0 ? freedTss / crossDays.size : 0;
+    const site = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "the tissue";
+
+    const sessions: PlannedSessionOut[] = placed.map((slot) => {
+      const substituted = crossDays.has(slot.weekdayIdx);
+      // Kept run days shrink to the km cap; substituted days carry their load plus
+      // a share of the freed running load, delivered impact-free.
+      const tss = substituted
+        ? slotLoad(slot).tss + crossBoost
+        : isRunSlot(slot) && protectedScale < 1
+          ? slotLoad(slot).tss * protectedScale
+          : slotLoad(slot).tss;
+      // A substituted day becomes a non-impact bike/pool session carrying the same
+      // load, so total aerobic volume holds while running impact drops. Its duration
+      // is re-derived at the cross template's intensity so the card is consistent.
+      const kind = substituted ? crossKindFor(tss) : slot.kind;
+      const t = TEMPLATES[kind];
+      const isLong = slot === longSlot && !substituted;
+      let durationHr = tss / (t.intensity * t.intensity * 100);
+      // The long-run floor sets the duration UNLESS a tissue weekly cap is
+      // shrinking the kept run days (then the scaled tss drives it — cap wins).
+      if (isLong && longFloorHr !== undefined && protectedScale >= 1) durationHr = longFloorHr;
+      const runLongCeilHr =
+        !substituted && slot.kind === "run-long" && caps?.longRunKm != null
+          ? Math.min(2.6, longPeakKm / LONG_EASY_KMH)
+          : kind === "run-long" ? 2.6 : kind === "bike-long" ? 4.5 : substituted ? 2.5 : 1.6;
       durationHr = Math.min(runLongCeilHr, Math.max(0.4, durationHr));
       const m = mins(durationHr);
       const date = iso(wStart + slot.weekdayIdx * DAY);
@@ -747,12 +847,15 @@ export function generatePlan(
         date,
         weekday: WEEKDAYS[slot.weekdayIdx],
         discipline: t.discipline,
-        title: t.title(m),
+        title: substituted ? `${t.title(m)} · cross-train` : t.title(m),
         durationHr: Math.round(durationHr * 100) / 100,
         tss: Math.round(tss),
         structure: built.text,
         workout: { blocks: built.blocks },
-        why: t.why,
+        why: substituted
+          ? `Non-impact aerobic volume replacing a run your ${site} can't absorb — holds total aerobic load while running impact drops. Builds the engine, not the legs (it does not count toward running fitness).`
+          : t.why,
+        ...(substituted ? { substituted: true } : {}),
       };
     });
     // Track the emitted long-run distance for next week's progression (like
@@ -785,36 +888,6 @@ export function generatePlan(
       });
     }
 
-    // Feature 5: close the aerobic gap the tissue cap opened with non-impact
-    // volume, placed on an otherwise-empty day. Marked `substituted` so the UI
-    // can show it's replacing running, and NOT counted toward running-CTL.
-    if (crossTss > 1) {
-      const used = new Set(placed.map((s) => s.weekdayIdx));
-      const xDay = [0, 2, 4, 1, 3, 5, 6].find(
-        (d) => !used.has(d) && iso(wStart + d * DAY) >= startDateStr && iso(wStart + d * DAY) < req.raceDate
-      );
-      if (xDay !== undefined) {
-        const kind = crossKindFor(crossTss);
-        const t = TEMPLATES[kind];
-        const durationHr = Math.min(2.5, Math.max(0.5, crossTss / (t.intensity * t.intensity * 100)));
-        const m = mins(durationHr);
-        const built = t.build(zones, m);
-        const site = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "the tissue";
-        sessions.push({
-          date: iso(wStart + xDay * DAY),
-          weekday: WEEKDAYS[xDay],
-          discipline: t.discipline,
-          title: `${t.title(m)} · cross-train`,
-          durationHr: Math.round(durationHr * 100) / 100,
-          tss: Math.round(crossTss),
-          structure: built.text,
-          workout: { blocks: built.blocks },
-          why: `Non-impact aerobic volume replacing the running your ${site} can't absorb — holds total aerobic load on target without the impact. Builds the engine, not the legs (it does not count toward running fitness).`,
-          substituted: true,
-        });
-      }
-    }
-
     // Simulate PMC through the week, day by day. Two accumulators: total (all
     // sessions) and run-only (run + race discipline) — cross-training lifts the
     // former, never the latter (only running load predicts running performance).
@@ -840,9 +913,10 @@ export function generatePlan(
     // every card one week stale: week 1 showed the untouched seed.) TSB keeps
     // the yesterday-CTL−ATL convention: Sunday night's CTL/ATL are exactly
     // "yesterday" to the Monday morning the athlete wakes into.
-    // run-only CTL/TSB attach ONLY when they diverge from total (i.e. cross-
-    // training actually ran) — so a normal all-running plan is byte-identical.
-    const runDiverged = Math.abs(runCtl - ctl) > 0.05;
+    // run-only CTL/TSB attach ONLY when a tissue WEEKLY cap drove cross-training
+    // substitution (feature 5) — never for a healthy all-running plan (byte-
+    // identical) nor for a normal tri whose run<total is just the sport mix.
+    const runDiverged = caps?.weeklyKm != null && Math.abs(runCtl - ctl) > 0.05;
     const projected = {
       ctl: r1(ctl),
       atl: r1(atl),
@@ -875,7 +949,8 @@ export function generatePlan(
   // not the cross-training-inflated total (cross-training builds the engine, not
   // race-specific running). Byte-identical when there's no cross-training.
   const raceRunCtl = raceMorningRun ? raceMorningRun.ctl : r1(runCtl);
-  const projectedRaceRunCtl = Math.abs(raceRunCtl - projectedRaceCtl) > 0.05 ? raceRunCtl : undefined;
+  const projectedRaceRunCtl =
+    caps?.weeklyKm != null && Math.abs(raceRunCtl - projectedRaceCtl) > 0.05 ? raceRunCtl : undefined;
 
   // Honest goal-vs-reachable gap (spec §4). The reachable figure is literally
   // the plotted trajectory's race-morning CTL — computed under the rails, never
@@ -913,12 +988,23 @@ export function generatePlan(
   const baseRich = richness !== undefined && effectiveRampCap > 1.2;
   // Feature 2: when a floor is missed, the gap copy must SAY why (tissue cap, or
   // the ramp/runway still warming the volume up) — the target is not silently dropped.
-  const volumeShortfall =
-    volumeTargets && (!volumeTargets.meetsWeeklyFloor || !volumeTargets.meetsLongFloor)
-      ? volumeTargets.tissueActive
-        ? ` Peak volume runs below the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor because your ${tissueLabel} constraint caps it — not by choice; cross-training can hold the aerobic side.`
-        : ` Peak volume is still short of the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor — the ramp needs more runway to build there safely.`
-      : "";
+  const volumeShortfall = (() => {
+    if (!volumeTargets || (volumeTargets.meetsWeeklyFloor && volumeTargets.meetsLongFloor)) return "";
+    const weeklyMissed = !volumeTargets.meetsWeeklyFloor;
+    const longMissed = !volumeTargets.meetsLongFloor;
+    // The tissue is the cause ONLY if every missed floor is a lever it actually
+    // caps (feature 6 honesty) — a runway-limited weekly miss under a long-run-only
+    // cap must NOT be blamed on the tissue, and cross-training is promised only
+    // when the WEEKLY lever is what the tissue caps.
+    const weeklyByTissue = weeklyMissed && caps?.weeklyKm != null;
+    const longByTissue = longMissed && caps?.longRunKm != null;
+    const tissueIsCause = (!weeklyMissed || weeklyByTissue) && (!longMissed || longByTissue) && (weeklyByTissue || longByTissue);
+    if (tissueIsCause) {
+      const xtrain = caps?.weeklyKm != null ? " Cross-training holds the aerobic side without the impact." : "";
+      return ` Peak volume runs below the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor because your ${tissueLabel} constraint caps it — not by choice.${xtrain}`;
+    }
+    return ` Peak volume is still short of the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor — the ramp needs more runway to build there safely.`;
+  })();
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
       ? buildGoalGap(req.goalTime, goal, projectedRaceRunCtl ?? projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich)

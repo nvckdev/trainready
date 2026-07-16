@@ -5,11 +5,16 @@ import type { Phase, Zone } from "./types.ts";
  * Intensity distribution as a first-class training variable (feature 1).
  *
  * TSS is intensity-blind — 150 TSS can be 90% easy or 50/50. The actual
- * training variable is how TIME is distributed across intensity zones. We model
+ * training variable is how TIME is distributed across intensity zones. We MODEL
  * every prescribed RUN session into three physiological zones (by time, not
- * distance) and enforce a hard Z1 floor: distribution is the constraint, volume
- * follows. Only running load predicts running performance, so distribution is
- * computed over run sessions.
+ * distance) so the distribution can be measured, surfaced, and pinned. Only
+ * running load predicts running performance, so it is computed over run sessions.
+ *
+ * Where the shaping happens: the generator (engine/plan.ts slotsFor) composes
+ * base/recovery weeks with a single quality touch so they land in the elite Z1
+ * band; this module MEASURES the result and the intensity test PINS the hard
+ * floor (no week below Z1_FLOOR). Build weeks legitimately carry more quality and
+ * sit a few points below their 0.88 target — above the floor, by design.
  *
  * Pure and presentation-adjacent: reads the structured blocks the engine
  * already emits; never touches the PMC recursion or the backtest path.

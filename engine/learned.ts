@@ -175,7 +175,10 @@ const RAMP_CAP_HARD_MAX = 1.3; // ≤ +30%/wk for the deepest base-rich rebuild
  */
 function rampCapFor(state: AthleteState): number {
   if (state.rampCap === undefined) return ANCHOR_V2_RAMP_CAP;
-  return Math.min(RAMP_CAP_HARD_MAX, Math.max(1.1, state.rampCap));
+  // Clamp to [1.0, HARD_MAX]. The 1.0 floor (a maintenance-only ramp) lets an
+  // acute tissue rampCeiling (e.g. 1.05) actually bind — the base-richness cap is
+  // already ≥1.10, so only a genuine tissue brake reaches below it (tissue wins).
+  return Math.min(RAMP_CAP_HARD_MAX, Math.max(1.0, state.rampCap));
 }
 const ANCHOR_V2_BEST_WINDOW = 6; // trailing weeks scanned for the best week
 const ANCHOR_V2_BEST_FRACTION = 0.7; // outlier influence decays to 70%, not to 0
@@ -403,7 +406,7 @@ export class TaperV1 implements Engine {
       this.anchorV2 &&
       (ref.phase === "base" || ref.phase === "build") &&
       floorTarget > 0 && // both signals plan-only — absent in the backtest
-      state.ctl < (state.goalPeakCtl ?? Infinity) // stop overloading once at the goal summit
+      state.ctl * 7 < floorTarget // stop once maintenance load reaches the floor target
     ) {
       // Injury-tempered ramp ceiling: never above the per-athlete ramp rail
       // (feature 3: +20% by default, higher for a base-rich rebuild) over the

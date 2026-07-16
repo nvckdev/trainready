@@ -97,6 +97,23 @@ const stable = (p: Plan) => JSON.stringify({ ...p, meta: { ...p.meta, generatedA
   check("TT6c", "meta.tissue surfaces the cap + why", constrained.meta.tissue?.caps.longRunKm === 24 && (constrained.meta.tissue?.why[0] ?? "").length > 10);
 }
 
+// ——— TT8. a speed cap actually REMOVES over-cap intensity from the plan ————
+{
+  const speed = declareTissue("achilles", "tendinopathy", "speed"); // maxSessionIntensity = threshold
+  check("TT8a", "speed provocation caps intensity at threshold", speed.caps.maxSessionIntensity === "threshold");
+  const p = generatePlan({ ...REQ, tissueConstraints: [speed] }, seed, [], zones);
+  const aboveCap = p.weeks
+    .flatMap((w) => w.sessions)
+    .filter((s) => s.discipline === "run")
+    .flatMap((s) => s.workout?.blocks ?? [])
+    .filter((b) => b.zone === "vo2" || b.zone === "cv"); // above the threshold cap
+  check("TT8b", "no run block exceeds the threshold cap (vo2/cv sessions downgraded)", aboveCap.length === 0, `${aboveCap.length} over-cap blocks`);
+  const healthyAbove = generatePlan(REQ, seed, [], zones).weeks
+    .flatMap((w) => w.sessions).filter((s) => s.discipline === "run").flatMap((s) => s.workout?.blocks ?? [])
+    .filter((b) => b.zone === "vo2" || b.zone === "cv");
+  check("TT8c", "…and the healthy plan DID carry over-cap intensity (the cap is doing work)", healthyAbove.length > 0, `healthy ${healthyAbove.length}`);
+}
+
 // ——— TT7. LINCHPIN — byte-identical when the constraint system is inert ————
 {
   const absent = generatePlan(REQ, seed, [], zones);
