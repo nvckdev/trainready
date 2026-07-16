@@ -1,5 +1,6 @@
 import { hasCorpus, localToday } from "@/lib/athlete-data";
 import { readPlan } from "@/lib/plan-io";
+import { weekIntensity, type WeekIntensity } from "@/lib/week-insights";
 import { EmptyState, SessionCard, StatChip } from "@/components/app/bits";
 import { RaceDayCard } from "@/components/app/race-cards";
 import { getRaceDayPlan } from "@/lib/race-insights";
@@ -151,6 +152,7 @@ export default async function PlanPage() {
                 </span>
               </summary>
               <div className="border-t border-hairline p-3 space-y-2">
+                {weekIntensity(w) && <IntensityStrip dist={weekIntensity(w)!} phase={w.phase} />}
                 {w.sessions.map((s) => (
                   <SessionCard key={s.date + s.title} s={s} compact={!isCurrent} />
                 ))}
@@ -158,6 +160,45 @@ export default async function PlanPage() {
             </details>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/** Time-in-zone strip for a plan week (feature 1). Shows the actual easy /
+ *  moderate / hard split by TIME — the training variable TSS is blind to — and
+ *  brackets it against the phase target. Base/build ride the elite ~88–92%
+ *  easy band; race-specific weeks earn more hard time. */
+function IntensityStrip({ dist, phase }: { dist: WeekIntensity; phase: string }) {
+  const seg = [
+    { pct: dist.z1, color: "var(--bone-faint)", label: "easy" },
+    { pct: dist.z2, color: "var(--bone-muted)", label: "moderate" },
+    { pct: dist.z3, color: "var(--signal)", label: "hard" },
+  ].filter((s) => s.pct > 0);
+  const note =
+    phase === "base" || phase === "build" || phase === "recovery"
+      ? dist.elite
+        ? `${dist.z1}% easy — elite aerobic band`
+        : `${dist.z1}% easy (target ~${dist.targetZ1}%)`
+      : `${dist.z1}% easy — race-specific sharpening`;
+  return (
+    <div className="mb-3">
+      <div className="flex items-center justify-between mb-1">
+        <span className="label-mono text-bone-faint">intensity by time</span>
+        <span className="label-mono text-bone-muted">{note}</span>
+      </div>
+      <div className="flex h-[6px] w-full overflow-hidden bg-field-sunken" aria-hidden="true">
+        {seg.map((s) => (
+          <span key={s.label} style={{ width: `${s.pct}%`, background: s.color }} title={`${s.pct}% ${s.label}`} />
+        ))}
+      </div>
+      <div className="flex gap-4 mt-1">
+        {seg.map((s) => (
+          <span key={s.label} className="label-mono text-bone-faint flex items-center gap-1">
+            <span className="inline-block w-2 h-2" style={{ background: s.color }} aria-hidden="true" />
+            {s.pct}% {s.label}
+          </span>
+        ))}
       </div>
     </div>
   );

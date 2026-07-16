@@ -425,9 +425,15 @@ function slotsFor(req: PlanRequest, phase: Phase): Slot[] {
   );
 
   if (!isTri(req.raceType)) {
+    // Intensity distribution is a first-class constraint (feature 1): base and
+    // recovery phases lay aerobic VOLUME and carry a single quality touch, so
+    // the week lands near the elite 88–92% Z1 mark. Build/taper/race earn a
+    // second quality session for race-specific sharpening. The midweek slot is
+    // therefore easy in base/recovery/offseason and tempo only once building.
+    const midweekQuality = phase === "build";
     const slots: Slot[] = [
       { weekdayIdx: 1, kind: quality, weight: 1.15 },
-      { weekdayIdx: 3, kind: "run-tempo", weight: 1.1 },
+      { weekdayIdx: 3, kind: midweekQuality ? "run-tempo" : "run-easy", weight: 1.1 },
       { weekdayIdx: 4, kind: "run-strides", weight: 0.75 },
       { weekdayIdx: longIdx, kind: "run-long", weight: 1.7 },
     ];

@@ -1,10 +1,41 @@
 import type { Block, Plan, PlannedSessionOut, PlanWeek, WorkoutStructure } from "../../engine/plan.ts";
+import { weekDistribution, targetDistribution, Z1_FLOOR } from "../../engine/intensity.ts";
 
 /**
  * Presentation-layer insights derived from the stored plan + PMC state.
  * Pure functions only — the engine's numbers are never altered here (the
  * taper is protocol, not preference), we only explain and bracket them.
  */
+
+/**
+ * Intensity distribution for one plan week, display-ready (feature 1). Wraps
+ * the engine's time-in-zone model so pages read it through this gateway rather
+ * than reaching into engine/ directly. `z1/z2/z3` are whole percentages; `atFloor`
+ * flags a week riding the 80% hard floor; `elite` flags the 88–92% band.
+ * Null when the week has no run training time (e.g. a pure-race week).
+ */
+export interface WeekIntensity {
+  z1: number;
+  z2: number;
+  z3: number;
+  targetZ1: number;
+  atFloor: boolean;
+  elite: boolean;
+}
+export function weekIntensity(week: PlanWeek): WeekIntensity | null {
+  const d = weekDistribution(week.sessions);
+  if (d.totalSec === 0) return null;
+  const z1 = Math.round(d.z1Pct * 100);
+  const target = targetDistribution(week.phase);
+  return {
+    z1,
+    z2: Math.round(d.z2Pct * 100),
+    z3: Math.round(d.z3Pct * 100),
+    targetZ1: Math.round(target.z1 * 100),
+    atFloor: d.z1Pct < Z1_FLOOR + 0.02,
+    elite: d.z1Pct >= 0.88,
+  };
+}
 
 /** Rough km estimate for a run session: duration at zone-blended speed.
  *  Quality sessions blend tempo work with easy running; easy/long days sit
