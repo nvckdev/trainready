@@ -1,9 +1,9 @@
 import {
+  CVOL,
   finishEstimate,
   goalCtlTarget,
   loadRaceAnchors,
   LONG_EASY_KMH,
-  LONG_MIN_CAP,
   longRunKm,
   parseGoalTime,
   peakLongKm,
@@ -11,6 +11,7 @@ import {
   type GoalCtl,
 } from "./goal.ts";
 import { TaperV1 } from "./learned.ts";
+import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure } from "./types.ts";
 import type { PaceRange, Zones } from "./zones.ts";
 
@@ -58,6 +59,12 @@ export interface PlanRequest {
    *  Optional → every existing caller/harness stays valid; parsed engine-side,
    *  so an invalid/empty value simply leaves the goal target inert. */
   goalTime?: string;
+  /** Active tissue constraints (feature 4) — user-declared or inferred from the
+   *  pain tracker (app layer). Each caps only what its provocation justifies and
+   *  publishes a "why". ABSENT or [] ⇒ no caps: the plan is byte-identical to
+   *  one generated without the field (a healthy runner is never capped
+   *  prophylactically — Fokkema found no volume↔injury link). See engine/tissue.ts. */
+  tissueConstraints?: TissueConstraint[];
 }
 
 export interface PlannedSessionOut {
@@ -115,6 +122,14 @@ export interface Plan {
       gapCtl: number; // ~24
       message: string; // the §4.2 paragraph
       loadLimited: true; // flags the finish as a bound, not a prediction
+    };
+    /** Active tissue constraints (feature 4). Present ONLY when a constraint was
+     *  declared/inferred — absent for a healthy athlete, so their plan meta is
+     *  byte-identical. `caps` are the resolved (tightest) limits actually applied;
+     *  `why` is the human justification shown beside each cap. */
+    tissue?: {
+      caps: TissueCaps;
+      why: string[];
     };
     /** Adaptive re-plan (engine/replan.ts) — all optional/inert, absent on
      *  freshly generated plans so nothing pre-existing changes. Stamped by the
@@ -500,7 +515,12 @@ export function generatePlan(
       ? goalCtlTarget(goalDistanceKm, goalSec)
       : undefined;
   const isRunRace = goalDistanceKm !== undefined;
-  const longPeakKm = peakLongKm(req.raceType);
+  // Active tissue caps (feature 4). Null when none declared/inferred ⇒ every cap
+  // site below takes its pre-existing path, so a healthy plan is byte-identical
+  // whether the field is absent or []. The long-run ceiling is the ONLY blanket
+  // cap that used to exist (INJURY_CAP_KM); it now arrives here, justified.
+  const caps: TissueCaps | null = activeTissueCaps(req.tissueConstraints);
+  const longPeakKm = peakLongKm(req.raceType, caps?.longRunKm ?? Infinity);
   let prevLongKm: number | undefined; // tracked across the week loop (like prevPrescribed)
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
@@ -560,7 +580,11 @@ export function generatePlan(
 
     // Race day consumes part of a race week's budget.
     const raceTss = RACE_TSS[req.raceType];
-    const trainableTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
+    let trainableTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
+    // Tissue weekly-volume cap (feature 4): hold the running week under the
+    // declared km ceiling (km→TSS via CVOL). Inert when no cap ⇒ Infinity. The
+    // shed aerobic volume is what feature 5 offers back as cross-training.
+    if (caps?.weeklyKm != null) trainableTss = Math.min(trainableTss, caps.weeklyKm * CVOL);
 
     const slots = slotsFor(req, p.phase)
       .filter((s) => iso(wStart + s.weekdayIdx * DAY) < req.raceDate)
@@ -611,7 +635,10 @@ export function generatePlan(
         prevLongKm === undefined
           ? Math.min(longPeakKm, Math.max(baseLongHr * LONG_EASY_KMH, startKm))
           : longRunKm(prevLongKm, longPeakKm, p.phase === "recovery");
-      const targetHr = Math.min(targetKm / LONG_EASY_KMH, LONG_MIN_CAP / 60, 2.6);
+      // Duration follows the (tissue-capped) distance; the 2.6 h clamp is the
+      // universal session-length sanity bound (was also a blanket 130-min calf
+      // ceiling — removed with INJURY_CAP_KM, since targetKm is already tissue-capped).
+      const targetHr = Math.min(targetKm / LONG_EASY_KMH, 2.6);
       longFloorHr = Math.min(Math.max(targetHr, baseLongHr), capHr);
     }
     const longFinalTss = longFloorHr !== undefined ? LONG_IF2 * longFloorHr : undefined;
@@ -631,7 +658,15 @@ export function generatePlan(
       if (longFinalTss !== undefined) tss = isLong ? longFinalTss : tss * otherScale;
       let durationHr = tss / (t.intensity * t.intensity * 100);
       if (isLong && longFloorHr !== undefined) durationHr = longFloorHr;
-      durationHr = Math.min(slot.kind === "bike-long" ? 4.5 : slot.kind === "run-long" ? 2.6 : 1.6, Math.max(0.4, durationHr));
+      // An active tissue long-run cap is a HARD ceiling: peakLongKm already folds
+      // it in, so clamp the long-run duration to it (a fit athlete's TSS-derived
+      // long run must not blow past an injured tissue's limit). Inert — and thus
+      // byte-identical — for a healthy athlete (caps.longRunKm absent).
+      const runLongCeilHr =
+        slot.kind === "run-long" && caps?.longRunKm != null
+          ? Math.min(2.6, longPeakKm / LONG_EASY_KMH)
+          : slot.kind === "run-long" ? 2.6 : slot.kind === "bike-long" ? 4.5 : 1.6;
+      durationHr = Math.min(runLongCeilHr, Math.max(0.4, durationHr));
       const m = mins(durationHr);
       const date = iso(wStart + slot.weekdayIdx * DAY);
       const built = t.build(zones, m);
@@ -721,9 +756,13 @@ export function generatePlan(
   // by loosening them — so the surfaced gap matches the emitted curve. The
   // finish is a load-limited BOUND (clamped no faster than the goal pace),
   // never a hard prediction (§1.3): a naturally fast runner can beat it.
+  // Only name a tissue long-run limit in the gap copy when one is actually
+  // active — never prophylactically (feature 4). Label from the declared site(s).
+  const tissueLongCapped = caps?.longRunKm != null;
+  const tissueLabel = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "tissue";
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
-      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length)
+      ? buildGoalGap(req.goalTime, goal, projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel)
       : undefined;
 
   return {
@@ -739,6 +778,7 @@ export function generatePlan(
       projectedRaceCtl,
       projectedRaceTsb: raceMorning ? raceMorning.tsb : r1(ctl - atl),
       ...(goalGap ? { goalGap } : {}),
+      ...(caps ? { tissue: { caps, why: tissueReasons(req.tissueConstraints) } } : {}),
     },
     weeks,
   };
@@ -759,7 +799,9 @@ function buildGoalGap(
   distanceKm: number,
   goalSec: number,
   startCtl: number,
-  planWeeks: number
+  planWeeks: number,
+  tissueLongCapped = false,
+  tissueLabel = "tissue"
 ): NonNullable<Plan["meta"]["goalGap"]> {
   const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
   const reachablePeakCtl = r1(reachableRaceDayCtl);
@@ -770,9 +812,17 @@ function buildGoalGap(
   // corpus; absent ⇒ generic fallback.
   const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, loadRaceAnchors()));
   const realisticFinish = fmtClock(finishSec);
+  // The tissue long-run limit is named ONLY when a constraint is active — a
+  // healthy runner's rails are just the ramp + form floor (feature 4).
+  const railClause = tissueLongCapped
+    ? `the +20% weekly ramp, the −25 form floor, and your ${tissueLabel} long-run limit`
+    : `the +20% weekly ramp and the −25 form floor`;
+  const rampLever = tissueLongCapped
+    ? `or — only once the ${tissueLabel} fully clears — ramp nearer (never above) the +20% ceiling`
+    : `or ramp nearer (never above) the +20% ceiling`;
   const message =
     gapCtl > 1
-      ? `Goal ${goalTime} implies a race-day CTL around ${Math.round(requiredPeakCtl)}. A safe progression from your current ~${Math.round(startCtl)} over ${planWeeks} weeks — held under the +20% weekly ramp, the −25 form floor, and your calf/tendon long-run limit — reaches about ${Math.round(reachablePeakCtl)}. That projects to roughly ${realisticFinish} here (load-limited; sharp legs can beat it). To close the ~${Math.round(gapCtl)}-CTL gap: extend the timeline (a 26–30 week build), treat ${realisticFinish} as the honest target for this race and ${goalTime} as a multi-season goal, or — only once the calf fully clears — ramp nearer (never above) the +20% ceiling. Re-test threshold pace mid-block to refine.`
+      ? `Goal ${goalTime} implies a race-day CTL around ${Math.round(requiredPeakCtl)}. A safe progression from your current ~${Math.round(startCtl)} over ${planWeeks} weeks — held under ${railClause} — reaches about ${Math.round(reachablePeakCtl)}. That projects to roughly ${realisticFinish} here (load-limited; sharp legs can beat it). To close the ~${Math.round(gapCtl)}-CTL gap: extend the timeline (a 26–30 week build), treat ${realisticFinish} as the honest target for this race and ${goalTime} as a multi-season goal, ${rampLever}. Re-test threshold pace mid-block to refine.`
       : `Goal ${goalTime} (race-day CTL ~${Math.round(requiredPeakCtl)}) is within reach of your projected ~${Math.round(reachablePeakCtl)} — hold the ramp and the taper and it stays on the table (~${realisticFinish} load-limited).`;
   return { goalTime, requiredPeakCtl, reachablePeakCtl, realisticFinish, gapCtl, message, loadLimited: true };
 }

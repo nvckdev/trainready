@@ -122,6 +122,24 @@ export default async function PlanPage() {
         </div>
       )}
 
+      {plan.meta.tissue && plan.meta.tissue.why.length > 0 && (
+        <div className="border border-hairline mb-8 p-4">
+          <p className="label-mono text-signal-bright">Tissue constraint active</p>
+          <ul className="mt-2 space-y-1">
+            {plan.meta.tissue.why.map((w) => (
+              <li key={w} className="text-[13px] leading-relaxed text-bone-faint max-w-[72ch]">
+                {w}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[12px] leading-relaxed text-bone-faint max-w-[72ch]">
+            These caps apply only because a constraint is on file — a healthy runner is never
+            capped prophylactically (no volume–injury link in the evidence). Cross-training can
+            hold total aerobic volume while the tissue settles.
+          </p>
+        </div>
+      )}
+
       {raceDay && (
         <div className="mb-8">
           <RaceDayCard plan={raceDay} raceName={plan.meta.raceName} raceDate={plan.meta.raceDate} />

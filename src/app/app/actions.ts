@@ -24,23 +24,30 @@ import {
 } from "@/lib/strength-protocols";
 import { deloadSets } from "@/lib/strength-schedule";
 import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
+import { loadTissueConstraints } from "@/lib/tissue-constraints";
 import { easedVersion } from "@/lib/week-insights";
 
 function buildAndSave(request: PlanRequest): void {
   const athlete = getAthlete();
+  const startDate = request.startDate ?? localToday();
   // Seed CTL/ATL/TSB from the daily PMC series rolled forward to startDate —
   // the same state the Today header shows — never from the last weekly
   // example alone, whose PMC numbers freeze at that week's Monday.
-  const state = getStateAt(request.startDate ?? localToday());
+  const state = getStateAt(startDate);
   if (!athlete || !state) throw new Error("no corpus: import training history first");
   const history = getHistory().map((h) => ({
     state: h.state,
     actualTss: h.actualTss,
     weekStart: h.weekStart,
   }));
-  const plan = generatePlan(request, state, history, athlete.zones);
+  // Feature 4: infer active tissue constraints (declared injuries + pain log)
+  // and thread them onto the request. Empty ⇒ no caps ⇒ the plan is unchanged.
+  // Persisted with the plan so an adaptive re-plan (recomputeRemaining) inherits
+  // them through its reflow of stored.request.
+  const req: PlanRequest = { ...request, tissueConstraints: loadTissueConstraints(startDate) };
+  const plan = generatePlan(req, state, history, athlete.zones);
   carryStatusForward(plan);
-  writePlan({ request, plan });
+  writePlan({ request: req, plan });
 }
 
 /**
@@ -139,6 +146,12 @@ function recomputeAndSave(stored: { request: PlanRequest; plan: Plan }): void {
   const weekly = getWeekly();
   const weeklyTss = new Map(weekly.map((r) => [r.weekStart, r.tss]));
 
+  // Feature 4: refresh tissue constraints from current data (injuries heal, new
+  // pain gets logged) before reflowing — recomputeRemaining threads them through
+  // its regeneration of the remaining weeks. Empty ⇒ no caps ⇒ reflow unchanged.
+  const request: PlanRequest = { ...stored.request, tissueConstraints: loadTissueConstraints(today) };
+  stored = { request, plan: stored.plan };
+
   // Completed plan weeks = those whose week starts strictly before the plan
   // week containing today. Build the ledger from executed weekly TSS + status.
   const curIdx = currentWeekIndex(stored.plan.weeks, today);
@@ -169,7 +182,7 @@ function recomputeAndSave(stored: { request: PlanRequest; plan: Plan }): void {
   else delete plan.meta.recalibration;
 
   carryStatusForward(plan);
-  writePlan({ request: stored.request, plan });
+  writePlan({ request, plan });
 }
 
 /** Index of the plan week containing `today` (else the next upcoming week). */

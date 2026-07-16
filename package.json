@@ -11,9 +11,9 @@
     "engine:backtest": "tsx engine/backtest.ts",
     "engine:today": "tsx engine/today.ts",
     "engine:invariants": "tsx engine/invariants.ts",
-    "engine:tests": "tsx engine/pmc.test.ts && tsx engine/goal.test.ts && tsx engine/raceday.test.ts && tsx engine/replan.test.ts && tsx engine/intensity.test.ts",
+    "engine:tests": "tsx engine/pmc.test.ts && tsx engine/goal.test.ts && tsx engine/raceday.test.ts && tsx engine/replan.test.ts && tsx engine/intensity.test.ts && tsx engine/tissue.test.ts",
     "strength:tests": "tsx scripts/strength-tests.ts",
-    "app:tests": "tsx src/components/app/workout-structure.test.ts && tsx src/lib/digest.test.ts",
+    "app:tests": "tsx src/components/app/workout-structure.test.ts && tsx src/lib/digest.test.ts && tsx src/lib/tissue-constraints.test.ts",
     "prepare": "git config core.hooksPath .githooks || true",
     "verify": "bash scripts/verify.sh"
   },

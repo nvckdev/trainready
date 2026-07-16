@@ -12,6 +12,7 @@ import {
 } from "./goal.ts";
 import { TaperV1 } from "./learned.ts";
 import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
+import { declareTissue } from "./tissue.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import { deriveZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
@@ -254,6 +255,10 @@ const ATHLETE_REQ: PlanRequest = {
   longDay: "sunday",
   startDate: "2026-07-13",
   goalTime: "1:24:00",
+  // The real calibration athlete carries an active lower-calf tendon constraint
+  // (rotation-provoked) — feature 4. It caps the long run (the old blanket
+  // INJURY_CAP_KM is gone), which is what keeps G15a/G15b in their bands.
+  tissueConstraints: [declareTissue("calf", "tendinopathy", "rotation", "active lower-calf tendon constraint (rotation-provoked)")],
 };
 
 const fx = loadPlanFixture();
@@ -341,14 +346,16 @@ if (!fx) {
     check("G15b", "peak long run in [22,26] km-equivalent",
       peakKmEq >= 22 && peakKmEq <= 26, `peak ${peakKmEq.toFixed(1)} km`);
 
-    // peakLongKm / longRunKm unit behavior
-    check("G15c", "peakLongKm(run-half) = 24 (min of 21.1·1.15 and injury cap 24)",
-      near(peakLongKm("run-half"), 24, 0.01), `${peakLongKm("run-half")}`);
+    // peakLongKm / longRunKm unit behavior (feature 4: distance-driven, capped
+    // only by an active tissue constraint — no blanket INJURY_CAP_KM).
+    check("G15c", "peakLongKm(run-half) is distance-driven ~24.3 km; a tissue cap binds",
+      near(peakLongKm("run-half"), 21.1 * 1.15, 0.01) && peakLongKm("run-half", 22) === 22,
+      `${peakLongKm("run-half")} / capped ${peakLongKm("run-half", 22)}`);
     check("G15d", "longRunKm step ≤ 2 km and ≤ +15%/week; flat on cutback; capped at peak",
       longRunKm(12, 24, false) <= Math.min(12 + 2, 12 * 1.15) + 1e-9 &&
         longRunKm(20, 24, false) <= 20 + 2 + 1e-9 && // step binds above ~13 km
         longRunKm(20, 24, true) === 20 && // cutback holds flat
-        longRunKm(23.5, 24, false) === 24, // never exceeds the injury cap
+        longRunKm(23.5, 24, false) === 24, // never exceeds the peak
       `12→${longRunKm(12, 24, false).toFixed(2)}, 20→${longRunKm(20, 24, false).toFixed(2)}, cutback ${longRunKm(20, 24, true)}`);
   }
 

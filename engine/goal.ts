@@ -21,7 +21,7 @@ import type { RaceType } from "./plan.ts";
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
 // ——— constants (documented; none are safety rails) ————————————————————
-const CVOL = 4.9; // TSS per weekly-km (avg training pace ~5:00–5:20, IF ~0.80)
+export const CVOL = 4.9; // TSS per weekly-km (avg training pace ~5:00–5:20, IF ~0.80)
 const TAPER_RETENTION = 0.94; // CTL retained across a 2–3 wk taper (ATL sheds far more)
 
 // Distance → km. Tri types have no run-pace goal target (returns undefined).
@@ -303,19 +303,24 @@ const LONG_MULT: Record<RaceType, number> = {
   "half-ironman": 1.0,
   ironman: 0.9,
 };
-const INJURY_CAP_KM = 24; // calf/tendon absolute ceiling this cycle (the 22–26 band)
-const INJURY_STEP_KM = 2.0; // ≤ +2 km/week — the safe long-run step, the real limiter
-const INJURY_RATE = 0.15; // ≤ +15%/week (min with the step; step binds above ~13 km)
-export const LONG_MIN_CAP = 130; // minutes — calf duration ceiling (≤ engine's 156)
+// Progressive-overload rails for the long run — general, NOT injury-specific:
+// step ≤ +2 km/week and ≤ +15%/week (the step binds above ~13 km), flat on
+// cutbacks. The absolute long-run CEILING is no longer a blanket constant; it
+// comes from an active tissue constraint (engine/tissue.ts) when one exists.
+// Fokkema 2020 found no volume↔injury association, so a healthy runner is never
+// capped prophylactically — peakLongKm is distance-driven with an Infinity cap.
+const LONGRUN_STEP_KM = 2.0;
+const LONGRUN_RATE = 0.15;
 
-/** Peak long-run distance for a race, injury-capped. */
-export function peakLongKm(raceType: RaceType): number {
+/** Peak long-run distance for a race: distance-driven, capped ONLY by an active
+ *  tissue constraint's long-run ceiling (default none ⇒ Infinity). */
+export function peakLongKm(raceType: RaceType, tissueLongRunKmCap = Infinity): number {
   const d = raceDistanceKm(raceType) ?? 21.1;
-  return Math.min(d * LONG_MULT[raceType], INJURY_CAP_KM);
+  return Math.min(d * LONG_MULT[raceType], tissueLongRunKmCap);
 }
 
-/** Weekly build progression, injury-tightened; hold flat on cutback weeks. */
+/** Weekly build progression under the overload rails; hold flat on cutback weeks. */
 export function longRunKm(prevKm: number, peakKm: number, cutback: boolean): number {
   if (cutback) return prevKm; // 3:1 cutback holds the long run flat
-  return Math.min(peakKm, prevKm * (1 + INJURY_RATE), prevKm + INJURY_STEP_KM);
+  return Math.min(peakKm, prevKm * (1 + LONGRUN_RATE), prevKm + LONGRUN_STEP_KM);
 }
