@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Easing, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
+import {
+  Animated,
+  Easing,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { generatePlan, type PlanRequest, type RaceType } from "@engine/plan.ts";
 import { DateSheet, fmtLong } from "@/components/calendar";
 import { Body, Button, Display, Label, RecDot, TaperMark, useReduceMotion } from "@/components/ui";
 import { C, FONT, type } from "@/lib/theme";
-import { localToday, readAthlete, writePlan, zonesFor, type StoredAthlete } from "@/lib/store";
+import { localToday, setPlan, useAthlete, zonesFor } from "@/lib/store";
 import { seedDemoAthlete } from "@/lib/demo";
 
 const RACE_TYPES: Array<{ v: RaceType; label: string }> = [
@@ -134,7 +145,7 @@ function GeneratingScreen({ sessionCount, weekCount }: { sessionCount: number; w
 }
 
 export default function GoalScreen() {
-  const [athlete, setAthlete] = useState<StoredAthlete | null>(null);
+  const athlete = useAthlete();
   const [raceName, setRaceName] = useState("");
   const [raceDate, setRaceDate] = useState(addDays(localToday(), 112));
   const [raceType, setRaceType] = useState<RaceType>("run-half");
@@ -144,16 +155,24 @@ export default function GoalScreen() {
   const [error, setError] = useState<string | null>(null);
   const [pickingDate, setPickingDate] = useState(false);
   const [generating, setGenerating] = useState<{ sessions: number; weeks: number } | null>(null);
+  const pendingPush = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const busy = useRef(false);
 
+  useEffect(() => {
+    if (athlete === null) void seedDemoAthlete();
+  }, [athlete]);
+
+  // Leaving the tab mid-cinematic cancels the reveal: the plan is already
+  // saved, but nothing hijacks the user's navigation 1.7 s later.
   useFocusEffect(
     useCallback(() => {
-      let alive = true;
-      readAthlete().then(async (a) => {
-        const resolved = a ?? (await seedDemoAthlete());
-        if (alive) setAthlete(resolved);
-      });
       return () => {
-        alive = false;
+        if (pendingPush.current) {
+          clearTimeout(pendingPush.current);
+          pendingPush.current = null;
+        }
+        busy.current = false;
+        setGenerating(null);
       };
     }, [])
   );
@@ -163,32 +182,44 @@ export default function GoalScreen() {
   const dateInvalid = wk === null || raceDate < addDays(today, 21);
   const dateError = wk === null ? "Race date must be YYYY-MM-DD." : dateInvalid ? "Pick a race at least 3 weeks out. A taper needs runway." : null;
 
-  const generate = async () => {
+  const generate = () => {
+    if (busy.current || dateInvalid || !athlete) return;
+    busy.current = true;
     setError(null);
-    if (dateInvalid || !athlete) return;
-    try {
-      const request: PlanRequest = {
-        raceName: raceName.trim() || "A race",
-        raceDate,
-        raceType,
-        daysPerWeek,
-        longDay,
-        startDate: today,
-        goalTime: goalTime.trim() || undefined,
-      };
-      // The real engine, on this device — same code, same rails, same honesty
-      // as the dashboard. Then the drafting moment plays before the reveal.
-      const plan = generatePlan(request, athlete.seed, [], zonesFor(athlete));
-      await writePlan({ request, plan });
-      const sessions = plan.weeks.reduce((a, w) => a + w.sessions.length, 0);
-      setGenerating({ sessions, weeks: plan.weeks.length });
+    // Mount the drafting screen first, run the engine a frame later — the
+    // tap answers instantly instead of freezing until the plan is done.
+    setGenerating({ sessions: 0, weeks: Math.max(wk ?? 0, 1) });
+    requestAnimationFrame(() => {
       setTimeout(() => {
-        setGenerating(null);
-        router.push("/plan");
-      }, 1700);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Plan generation failed.");
-    }
+        try {
+          const request: PlanRequest = {
+            raceName: raceName.trim() || "A race",
+            raceDate,
+            raceType,
+            daysPerWeek,
+            longDay,
+            startDate: today,
+            goalTime: goalTime.trim() || undefined,
+          };
+          // The real engine, on this device — same code, same rails, same
+          // honesty as the dashboard.
+          const plan = generatePlan(request, athlete.seed, [], zonesFor(athlete));
+          void setPlan({ request, plan });
+          const sessions = plan.weeks.reduce((a, w) => a + w.sessions.length, 0);
+          setGenerating({ sessions, weeks: plan.weeks.length });
+          pendingPush.current = setTimeout(() => {
+            pendingPush.current = null;
+            busy.current = false;
+            setGenerating(null);
+            router.push("/plan");
+          }, 1700);
+        } catch (e) {
+          busy.current = false;
+          setGenerating(null);
+          setError(e instanceof Error ? e.message : "Plan generation failed.");
+        }
+      }, 0);
+    });
   };
 
   if (generating) {
@@ -210,6 +241,7 @@ export default function GoalScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
         <View style={{ paddingHorizontal: 20, paddingTop: 8 }}>
           <Label>RACE INTAKE</Label>
@@ -232,6 +264,8 @@ export default function GoalScreen() {
               onChangeText={setRaceName}
               placeholder="Valley Half Marathon"
               placeholderTextColor={C.boneFaint}
+              returnKeyType="done"
+              accessibilityLabel="Race name"
             />
           </View>
 
@@ -304,6 +338,8 @@ export default function GoalScreen() {
               autoCorrect={false}
               placeholder="1:45:00"
               placeholderTextColor={C.boneFaint}
+              returnKeyType="done"
+              accessibilityLabel="Goal time, optional"
             />
             <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 8 }}>
               If the goal is out of reach, the plan says so and projects the honest finish.
@@ -314,6 +350,7 @@ export default function GoalScreen() {
       <View style={{ paddingHorizontal: 20, paddingBottom: 14 }}>
         <Button label="GENERATE THE PLAN" height={52} disabled={dateInvalid} onPress={generate} />
       </View>
+      </KeyboardAvoidingView>
       {pickingDate && (
         <DateSheet
           value={raceDate}

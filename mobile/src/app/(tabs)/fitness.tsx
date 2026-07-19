@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Animated, Easing, Platform, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
 import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
 import { Body, Display, Label, TaperMark, useReduceMotion } from "@/components/ui";
 import { C, FONT, type } from "@/lib/theme";
-import { localToday, readPlan, type StoredPlan } from "@/lib/store";
+import { currentWeekIndex, localToday, usePlan } from "@/lib/store";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 // Animated props leak native-only attributes (collapsable) into the DOM on
@@ -40,23 +39,16 @@ function smoothPath(pts: Array<{ x: number; y: number }>): string {
 }
 
 export default function FitnessScreen() {
-  const [stored, setStored] = useState<StoredPlan | null>(null);
+  const stored = usePlan();
   const { width } = useWindowDimensions();
   const reduce = useReduceMotion();
   const dash = useRef(new Animated.Value(600)).current;
 
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      readPlan().then((p) => alive && setStored(p));
-      return () => {
-        alive = false;
-      };
-    }, [])
-  );
-
+  // Draw once per plan, not on every tab visit — the store snapshot is stable
+  // across focus, so keying on the plan identity is enough.
+  const planKey = stored ? `${stored.plan.meta.raceDate}|${stored.plan.weeks[0]?.weekStart}` : null;
   useEffect(() => {
-    if (!stored || !ANIMATE_DRAW) return;
+    if (!planKey || !ANIMATE_DRAW) return;
     if (reduce) {
       dash.setValue(0);
       return;
@@ -68,14 +60,11 @@ export default function FitnessScreen() {
       easing: Easing.bezier(0.16, 1, 0.3, 1),
       useNativeDriver: false,
     }).start();
-  }, [stored, reduce, dash]);
+  }, [planKey, reduce, dash]);
 
   const weeks = stored?.plan.weeks ?? [];
   const today = localToday();
-  const curIdx = weeks.findIndex((w, i) => {
-    const end = weeks[i + 1]?.weekStart ?? "9999-12-31";
-    return today >= w.weekStart && today < end;
-  });
+  const curIdx = currentWeekIndex(weeks, today);
 
   const W = Math.min(width - 40, 420);
   const H = 220;

@@ -1,26 +1,23 @@
-import { useCallback, useState } from "react";
+import { useEffect } from "react";
 import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import type { PlannedSessionOut, PlanWeek } from "@engine/plan.ts";
 import { Body, Button, Display, Label, RecDot, SpecRow, TaperMark } from "@/components/ui";
 import { C, type } from "@/lib/theme";
 import {
+  currentWeekIndex,
   localToday,
-  readAthlete,
-  readPlan,
   toggleSessionDone,
-  type StoredAthlete,
-  type StoredPlan,
+  useAthlete,
+  usePlan,
 } from "@/lib/store";
 import { seedDemoAthlete } from "@/lib/demo";
 
 /** The plan week containing `today` (or the next upcoming one). */
 function currentWeek(weeks: PlanWeek[], today: string): { week: PlanWeek; index: number } | null {
-  for (let i = 0; i < weeks.length; i++) {
-    const end = weeks[i + 1]?.weekStart ?? "9999-12-31";
-    if (today >= weeks[i].weekStart && today < end) return { week: weeks[i], index: i };
-  }
+  const i = currentWeekIndex(weeks, today);
+  if (i >= 0) return { week: weeks[i], index: i };
   if (weeks.length && today < weeks[0].weekStart) return { week: weeks[0], index: 0 };
   return null;
 }
@@ -73,33 +70,23 @@ function UpcomingRow({ s, last }: { s: PlannedSessionOut; last: boolean }) {
 }
 
 export default function TodayScreen() {
-  const [athlete, setAthlete] = useState<StoredAthlete | null>(null);
-  const [stored, setStored] = useState<StoredPlan | null>(null);
-  const [ready, setReady] = useState(false);
+  const athlete = useAthlete();
+  const stored = usePlan();
   const { width } = useWindowDimensions();
   const markW = Math.min(width - 40, 420);
 
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      (async () => {
-        let a = await readAthlete();
-        if (!a) a = await seedDemoAthlete();
-        const p = await readPlan();
-        if (alive) {
-          setAthlete(a);
-          setStored(p);
-          setReady(true);
-        }
-      })();
-      return () => {
-        alive = false;
-      };
-    }, [])
-  );
+  // First launch: seed the demo athlete once hydration proves none exists.
+  useEffect(() => {
+    if (athlete === null) void seedDemoAthlete();
+  }, [athlete]);
 
+  const ready = athlete !== undefined && stored !== undefined;
   const today = localToday();
-  const found = stored ? currentWeek(stored.plan.weeks, today) : null;
+  const raceDate = stored?.request.raceDate;
+  const raceDay = !!raceDate && today === raceDate;
+  const finished = !!raceDate && today > raceDate;
+
+  const found = stored && !finished ? currentWeek(stored.plan.weeks, today) : null;
   const todaySessions = found ? found.week.sessions.filter((s) => s.date === today) : [];
   const upcoming = stored
     ? stored.plan.weeks
@@ -109,9 +96,8 @@ export default function TodayScreen() {
     : [];
   const doneCount = found ? found.week.sessions.filter((s) => s.status === "done").length : 0;
 
-  const onToggle = async (s: PlannedSessionOut) => {
-    const next = await toggleSessionDone(s.date, s.title);
-    if (next) setStored({ ...next });
+  const onToggle = (s: PlannedSessionOut) => {
+    toggleSessionDone(s.date, s.title);
   };
 
   const header = (
@@ -134,8 +120,73 @@ export default function TodayScreen() {
     </Label>
   );
 
+  // ——— hydrating: hold the field, no half-rendered layout ————————————————
+  if (!ready) {
+    return <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]} />;
+  }
+
+  // ——— race morning: the plan's last word ————————————————————————————————
+  if (raceDay) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
+        {header}
+        <View style={{ flex: 1 }}>
+          <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
+            <Display size={40}>{heroDate(today)}</Display>
+            <View style={{ marginTop: 10 }}>
+              <TaperMark width={markW} />
+            </View>
+          </View>
+          <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: 32, alignItems: "center" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <RecDot size={6} />
+              <Label style={{ color: C.signalText }}>RACE DAY</Label>
+            </View>
+            <Display size={30} style={{ marginTop: 12, textAlign: "center" }}>
+              {stored!.plan.meta.raceName}
+            </Display>
+            <Body style={{ marginTop: 14, textAlign: "center" }}>
+              The work is banked. Trust the taper.
+            </Body>
+          </View>
+          {footer}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ——— after the race: close the season, invite the next ——————————————————
+  if (finished) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
+        {header}
+        <View style={{ flex: 1 }}>
+          <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
+            <Display size={40}>{heroDate(today)}</Display>
+            <View style={{ marginTop: 10 }}>
+              <TaperMark width={markW} muted />
+            </View>
+          </View>
+          <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: 32, alignItems: "center" }}>
+            <Label>SEASON COMPLETE</Label>
+            <Display size={30} style={{ marginTop: 12, textAlign: "center" }}>
+              {stored!.plan.meta.raceName} is in the books
+            </Display>
+            <Body style={{ marginTop: 14, textAlign: "center" }}>
+              Recover first. When you're ready, the next block starts from a new goal.
+            </Body>
+            <View style={{ marginTop: 26, alignSelf: "stretch" }}>
+              <Button label="SET THE NEXT GOAL" variant="secondary" onPress={() => router.push("/goal")} />
+            </View>
+          </View>
+          {footer}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // ——— rest day / no plan: centered composition ————————————————————————
-  if (ready && (!found || todaySessions.length === 0)) {
+  if (!found || todaySessions.length === 0) {
     const next = upcoming[0];
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>

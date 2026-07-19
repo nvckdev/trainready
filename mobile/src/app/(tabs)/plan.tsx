@@ -1,13 +1,13 @@
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import Svg, { Circle, Path } from "react-native-svg";
 import type { PlanWeek } from "@engine/plan.ts";
 import { weekDistribution } from "@engine/intensity.ts";
 import { Body, Button, Display, DistributionStrip, EvidenceTag, Label, TaperMark, TrackBar } from "@/components/ui";
 import { C, type } from "@/lib/theme";
-import { localToday, readPlan, type StoredPlan } from "@/lib/store";
+import { currentWeekIndex, localToday, usePlan } from "@/lib/store";
 
 const PHASE_LABEL: Record<string, string> = {
   base: "BASE",
@@ -97,36 +97,26 @@ function WeekRow({
 }
 
 export default function PlanScreen() {
-  const [stored, setStored] = useState<StoredPlan | null>(null);
-  const [ready, setReady] = useState(false);
+  const stored = usePlan();
   const [openWeek, setOpenWeek] = useState<string | null>(null);
-  const [curWeek, setCurWeek] = useState<string | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      readPlan().then((p) => {
-        if (alive) {
-          setStored(p);
-          setReady(true);
-          if (p) {
-            const today = localToday();
-            const cur = p.plan.weeks.find((w, i) => {
-              const end = p.plan.weeks[i + 1]?.weekStart ?? "9999-12-31";
-              return today >= w.weekStart && today < end;
-            });
-            setCurWeek(cur?.weekStart ?? null);
-            setOpenWeek(cur?.weekStart ?? p.plan.weeks[0]?.weekStart ?? null);
-          }
-        }
-      });
-      return () => {
-        alive = false;
-      };
-    }, [])
-  );
+  const today = localToday();
+  const curIdx = stored ? currentWeekIndex(stored.plan.weeks, today) : -1;
+  const curWeek = curIdx >= 0 ? stored!.plan.weeks[curIdx].weekStart : null;
 
-  if (ready && !stored) {
+  // Open the current week once per plan; after that the user's expand state
+  // survives tab switches instead of snapping back on every focus.
+  const planKey = stored ? `${stored.plan.meta.raceDate}|${stored.plan.weeks[0]?.weekStart}` : null;
+  useEffect(() => {
+    if (stored) setOpenWeek(curWeek ?? stored.plan.weeks[0]?.weekStart ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planKey]);
+
+  if (stored === undefined) {
+    return <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]} />;
+  }
+
+  if (!stored) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
         <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: 32, alignItems: "center" }}>
@@ -144,10 +134,8 @@ export default function PlanScreen() {
     );
   }
 
-  const meta = stored?.plan.meta;
-  const weeks = stored?.plan.weeks ?? [];
-  const trainingWeeks = weeks.filter((w) => w.phase !== "race");
-  const raceWeek = weeks.find((w) => w.phase === "race");
+  const meta = stored.plan.meta;
+  const weeks = stored.plan.weeks;
   const maxTss = Math.max(...weeks.map((w) => w.targetTss), 1);
   const vt = meta?.volumeTargets;
   // Tissue label from the why prefix ("Calf: pain on…" → CALF).
@@ -276,7 +264,7 @@ export default function PlanScreen() {
 
             <View style={{ marginHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.hairline }}>
               <Label style={{ marginBottom: 10 }}>{weeks.length} WEEKS TO RACE DAY</Label>
-              {trainingWeeks.map((w) => (
+              {weeks.map((w) => (
                 <WeekRow
                   key={w.weekStart}
                   w={w}
@@ -286,7 +274,7 @@ export default function PlanScreen() {
                   onToggle={() => setOpenWeek(openWeek === w.weekStart ? null : w.weekStart)}
                 />
               ))}
-              {raceWeek && (
+              {weeks.length > 0 && (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 10, paddingBottom: 6 }}>
                   <Text style={[type.figure, { fontSize: 10, color: C.signalText, width: 44 }]}>
                     {meta.raceDate.slice(5)}

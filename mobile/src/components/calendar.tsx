@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { Body, Button, Display, Label, useReduceMotion } from "@/components/ui";
 import { C, type } from "@/lib/theme";
@@ -73,6 +74,7 @@ export function DateSheet({
   onConfirm: (date: string) => void;
 }) {
   const reduce = useReduceMotion();
+  const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState(value);
   const opened = new Date((value >= minDate ? value : minDate) + "T12:00:00Z");
   const [cursor, setCursor] = useState({ y: opened.getUTCFullYear(), m: opened.getUTCMonth() });
@@ -96,7 +98,16 @@ export function DateSheet({
       <View style={{ flex: 1, backgroundColor: "rgba(12,10,8,0.72)", justifyContent: "flex-end" }}>
         <Pressable style={{ flex: 1 }} accessibilityLabel="Dismiss calendar" onPress={onCancel} />
 
-        <View style={{ backgroundColor: C.field, borderTopWidth: 1, borderTopColor: C.hairline, padding: 20 }}>
+        <View
+          style={{
+            backgroundColor: C.field,
+            borderTopWidth: 1,
+            borderTopColor: C.hairline,
+            padding: 20,
+            // Keep CANCEL / USE THIS DATE clear of the home indicator.
+            paddingBottom: 20 + insets.bottom,
+          }}
+        >
           <Label>RACE DATE</Label>
 
           <View

@@ -1,5 +1,5 @@
 import type { AthleteState } from "@engine/types.ts";
-import { writeAthlete, type StoredAthlete } from "./store";
+import { setAthlete, type StoredAthlete } from "./store";
 
 /**
  * The bundled demo athlete: a mid-pack runner with a real-looking recent
@@ -34,6 +34,6 @@ export const DEMO_ATHLETE: StoredAthlete = {
 };
 
 export async function seedDemoAthlete(): Promise<StoredAthlete> {
-  await writeAthlete(DEMO_ATHLETE);
+  await setAthlete(DEMO_ATHLETE);
   return DEMO_ATHLETE;
 }
