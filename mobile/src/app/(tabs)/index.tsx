@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import type { PlannedSessionOut, PlanWeek } from "@engine/plan.ts";
-import { Body, Display, Label, Panel, Rule, StatChip } from "@/components/ui";
+import { Body, Button, Display, Label, RecDot, SpecRow, TaperMark } from "@/components/ui";
 import { C, type } from "@/lib/theme";
 import {
   localToday,
@@ -25,33 +25,49 @@ function currentWeek(weeks: PlanWeek[], today: string): { week: PlanWeek; index:
   return null;
 }
 
-function SessionRow({ s, onToggle }: { s: PlannedSessionOut; onToggle: () => void }) {
-  const done = s.status === "done";
+/** "FRI 18 JUL" from a YYYY-MM-DD date. */
+function heroDate(iso: string): string {
+  const d = new Date(iso + "T12:00:00Z");
+  const day = d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+  const num = d.getUTCDate();
+  const mon = d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+  return `${day} ${num} ${mon}`.toUpperCase();
+}
+
+/** Parse the engine's structure text into spec-sheet rows (WARMUP / MAIN / …). */
+function specRows(structure: string): Array<{ label: string; text: string }> {
+  return structure
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(WARMUP|MAIN|COOLDOWN|STRIDES|RECOVERY|SET)\s*(.*)$/i);
+      return m ? { label: m[1].toUpperCase(), text: m[2] || line } : { label: "", text: line };
+    });
+}
+
+function UpcomingRow({ s, last }: { s: PlannedSessionOut; last: boolean }) {
   return (
-    <View style={{ borderWidth: 1, borderColor: C.hairline, padding: 12, gap: 6 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Label>{s.weekday} {s.date.slice(5)}</Label>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={done ? `Mark ${s.title} not done` : `Mark ${s.title} done`}
-          onPress={onToggle}
-          style={{
-            borderWidth: 1,
-            borderColor: done ? C.signal : C.hairline,
-            backgroundColor: done ? C.signal : "transparent",
-            paddingHorizontal: 10,
-            paddingVertical: 5,
-          }}
-        >
-          <Text style={[type.label, { color: done ? C.field : C.boneMuted }]}>
-            {done ? "Done" : "Mark done"}
-          </Text>
-        </Pressable>
+    <View
+      style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "baseline",
+        paddingVertical: 12,
+        borderTopWidth: 1,
+        borderTopColor: C.hairline,
+        borderBottomWidth: last ? 1 : 0,
+        borderBottomColor: C.hairline,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, flex: 1 }}>
+        <Label style={{ fontSize: 10 }}>{s.weekday.toUpperCase()}</Label>
+        <Text style={[type.body, { fontSize: 15, color: C.bone }]} numberOfLines={1}>
+          {s.title}
+        </Text>
       </View>
-      <Text style={[type.figure, { fontSize: 16, color: C.bone }]}>{s.title}</Text>
-      <Label>{Math.round(s.durationHr * 60)} min · {s.tss} TSS · {s.discipline}</Label>
-      {s.structure ? <Body style={{ fontSize: 13, lineHeight: 19 }}>{s.structure}</Body> : null}
-      <Body style={{ fontSize: 12, lineHeight: 18, color: C.boneFaint }}>{s.why}</Body>
+      <Text style={[type.figure, { fontSize: 11, color: C.boneFaint }]}>
+        {Math.round(s.durationHr * 60)} MIN · {s.tss} TSS
+      </Text>
     </View>
   );
 }
@@ -60,6 +76,8 @@ export default function TodayScreen() {
   const [athlete, setAthlete] = useState<StoredAthlete | null>(null);
   const [stored, setStored] = useState<StoredPlan | null>(null);
   const [ready, setReady] = useState(false);
+  const { width } = useWindowDimensions();
+  const markW = Math.min(width - 40, 420);
 
   useFocusEffect(
     useCallback(() => {
@@ -83,93 +101,181 @@ export default function TodayScreen() {
   const today = localToday();
   const found = stored ? currentWeek(stored.plan.weeks, today) : null;
   const todaySessions = found ? found.week.sessions.filter((s) => s.date === today) : [];
-  const upcoming = found
-    ? found.week.sessions.filter((s) => s.date > today).slice(0, 3)
+  const upcoming = stored
+    ? stored.plan.weeks
+        .flatMap((w) => w.sessions)
+        .filter((s) => s.date > today)
+        .slice(0, 3)
     : [];
+  const doneCount = found ? found.week.sessions.filter((s) => s.status === "done").length : 0;
 
   const onToggle = async (s: PlannedSessionOut) => {
     const next = await toggleSessionDone(s.date, s.title);
     if (next) setStored({ ...next });
   };
 
+  const header = (
+    <View style={{ paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Display size={20}>Taper</Display>
+        <RecDot />
+      </View>
+      {athlete?.demo && (
+        <View style={{ borderWidth: 1, borderColor: C.hairline, paddingHorizontal: 7, paddingVertical: 3 }}>
+          <Label style={{ fontSize: 10 }}>DEMO DATA</Label>
+        </View>
+      )}
+    </View>
+  );
+
+  const footer = (
+    <Label style={{ fontSize: 10, textAlign: "center", padding: 20 }}>
+      PLANS ARE GENERATED ON THIS DEVICE · NOT MEDICAL ADVICE
+    </Label>
+  );
+
+  // ——— rest day / no plan: centered composition ————————————————————————
+  if (ready && (!found || todaySessions.length === 0)) {
+    const next = upcoming[0];
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
+        {header}
+        <View style={{ flex: 1 }}>
+          <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
+            <Display size={40}>{heroDate(today)}</Display>
+            <View style={{ marginTop: 10 }}>
+              <TaperMark width={markW} muted={!found} />
+            </View>
+          </View>
+          <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: 32, alignItems: "center" }}>
+            {found ? (
+              <>
+                <Label>REST DAY</Label>
+                <Display size={30} style={{ marginTop: 12, textAlign: "center" }}>
+                  Nothing scheduled today
+                </Display>
+                <Body style={{ marginTop: 14, textAlign: "center" }}>
+                  The easy days are doing real work.
+                </Body>
+                {next && (
+                  <>
+                    <View style={{ width: 120, borderTopWidth: 1, borderTopColor: C.hairline, marginTop: 26 }} />
+                    <Text style={[type.figure, { fontSize: 11, color: C.boneFaint, marginTop: 12 }]}>
+                      NEXT: {next.weekday.toUpperCase()} · {next.title.toUpperCase()} ·{" "}
+                      {Math.round(next.durationHr * 60)} MIN
+                    </Text>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <Display size={30} style={{ textAlign: "center" }}>No active plan</Display>
+                <Body style={{ marginTop: 12, textAlign: "center" }}>
+                  Set a race and the engine drafts a season around it, on this device.
+                </Body>
+                <View style={{ marginTop: 26, alignSelf: "stretch" }}>
+                  <Button label="SET A RACE GOAL" variant="secondary" onPress={() => router.push("/goal")} />
+                </View>
+              </>
+            )}
+          </View>
+          {footer}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const hero = todaySessions[0];
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40, gap: 16 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.signal }} />
-          <Display size={20}>Taper</Display>
-          {athlete?.demo ? <Label style={{ color: C.signalText }}>Demo data</Label> : null}
+      {header}
+      <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
+        <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
+          <Display size={40}>{heroDate(today)}</Display>
+          <View style={{ marginTop: 10 }}>
+            <TaperMark width={markW} />
+          </View>
         </View>
-        <Rule />
 
-        <Display size={34}>Today</Display>
-
-        {found && stored ? (
+        {found && (
           <>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 20 }}>
-              <StatChip label="Fitness" value={String(Math.round(found.week.projected.ctl))} unit="CTL proj." />
-              <StatChip label="Form" value={String(Math.round(found.week.projected.tsb))} unit="TSB proj." />
-              <StatChip
-                label="Week"
-                value={`${found.index + 1}/${stored.plan.weeks.length}`}
-                unit={found.week.phase}
-              />
+            <View style={{ flexDirection: "row", paddingHorizontal: 20, paddingTop: 16 }}>
+              {[
+                { v: String(Math.round(found.week.projected.ctl)), l: "FITNESS CTL" },
+                { v: String(Math.round(found.week.projected.tsb)), l: "FORM TSB" },
+              ].map((it, i) => (
+                <View key={it.l} style={{ flexDirection: "row", flex: 1 }}>
+                  {i > 0 && <View style={{ width: 1, backgroundColor: C.hairline, marginRight: 16 }} />}
+                  <View style={{ flex: 1 }}>
+                    <Text style={[type.figure, { fontSize: 22 }]}>{it.v}</Text>
+                    <Label style={{ marginTop: 2 }}>{it.l}</Label>
+                  </View>
+                </View>
+              ))}
+              <View style={{ width: 1, backgroundColor: C.hairline, marginRight: 16 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[type.figure, { fontSize: 22 }]}>
+                  {found.index + 1}
+                  <Text style={{ color: C.boneFaint }}>/{stored!.plan.weeks.length}</Text>
+                </Text>
+                <Label style={{ marginTop: 2 }}>WEEK · {found.week.phase.toUpperCase()}</Label>
+              </View>
             </View>
 
-            <Panel>
-              <Label>This week</Label>
-              <Body style={{ marginTop: 6 }}>
-                {found.week.phase === "taper" || found.week.phase === "race"
-                  ? "Race week is close. Load falls, intensity stays; trust the taper."
-                  : `Target ${found.week.targetTss} TSS. ${found.week.sessions.filter((s) => s.status === "done").length}/${found.week.sessions.length} sessions done.`}
-              </Body>
-            </Panel>
-
-            {todaySessions.length > 0 ? (
-              <View style={{ gap: 10 }}>
-                <Label>Today's session{todaySessions.length > 1 ? "s" : ""}</Label>
-                {todaySessions.map((s) => (
-                  <SessionRow key={s.date + s.title} s={s} onToggle={() => onToggle(s)} />
-                ))}
-              </View>
-            ) : (
-              <Panel>
-                <Label>Rest day</Label>
-                <Body style={{ marginTop: 6 }}>
-                  Nothing scheduled today. The easy days are doing real work.
-                </Body>
-              </Panel>
-            )}
-
-            {upcoming.length > 0 && (
-              <View style={{ gap: 10 }}>
-                <Label>Up next</Label>
-                {upcoming.map((s) => (
-                  <SessionRow key={s.date + s.title} s={s} onToggle={() => onToggle(s)} />
-                ))}
-              </View>
-            )}
-          </>
-        ) : ready ? (
-          <Panel>
-            <Label>No active plan</Label>
-            <Body style={{ marginTop: 6 }}>
-              Point Taper at a race and it drafts every week between now and the gun,
-              generated on this device from {athlete?.demo ? "the demo athlete's" : "your"} training state.
-            </Body>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push("/goal")}
-              style={{ backgroundColor: C.signal, paddingVertical: 12, paddingHorizontal: 16, marginTop: 12, alignSelf: "flex-start" }}
+            <View
+              style={{
+                marginHorizontal: 20,
+                marginTop: 18,
+                borderTopWidth: 1,
+                borderTopColor: C.hairline,
+                paddingTop: 10,
+              }}
             >
-              <Text style={[type.label, { color: C.field }]}>Set a goal</Text>
-            </Pressable>
-          </Panel>
-        ) : null}
+              <Text style={[type.figure, { fontSize: 12, color: C.boneMuted }]}>
+                TARGET {found.week.targetTss} TSS · {doneCount}/{found.week.sessions.length} SESSIONS DONE
+              </Text>
+            </View>
+          </>
+        )}
 
-        <Label style={{ marginTop: 8 }}>
-          Plans are generated on this device · not medical advice
-        </Label>
+        {hero && (
+          <View style={{ marginHorizontal: 20, marginTop: 16, backgroundColor: C.fieldRaised, padding: 20 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Label style={{ color: C.signalText }}>TODAY · {hero.discipline.toUpperCase()}</Label>
+              <Text style={[type.figure, { fontSize: 11, color: C.boneFaint }]}>
+                {Math.round(hero.durationHr * 60)} MIN · {hero.tss} TSS
+              </Text>
+            </View>
+            <Display size={30} style={{ marginTop: 10 }}>{hero.title}</Display>
+            {hero.workout && hero.structure ? (
+              <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: C.hairline }}>
+                {specRows(hero.structure).map((r, i, arr) => (
+                  <SpecRow key={i} label={r.label} text={r.text} last={i === arr.length - 1} />
+                ))}
+              </View>
+            ) : null}
+            <Body style={{ fontSize: 13, lineHeight: 19, marginTop: 14 }}>{hero.why}</Body>
+            <View style={{ marginTop: 16 }}>
+              <Button
+                label={hero.status === "done" ? `✓ DONE · ${hero.tss} TSS LOGGED` : "MARK DONE"}
+                variant={hero.status === "done" ? "done" : "primary"}
+                onPress={() => onToggle(hero)}
+              />
+            </View>
+          </View>
+        )}
+
+        {upcoming.length > 0 && (
+          <>
+            <Label style={{ marginHorizontal: 20, marginTop: 22 }}>UPCOMING</Label>
+            <View style={{ marginHorizontal: 20, marginTop: 8 }}>
+              {upcoming.map((s, i) => (
+                <UpcomingRow key={s.date + s.title} s={s} last={i === upcoming.length - 1} />
+              ))}
+            </View>
+          </>
+        )}
+        {footer}
       </ScrollView>
     </SafeAreaView>
   );
