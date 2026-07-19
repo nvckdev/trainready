@@ -3,6 +3,7 @@ import { Animated, Easing, Pressable, ScrollView, Text, TextInput, View, useWind
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { generatePlan, type PlanRequest, type RaceType } from "@engine/plan.ts";
+import { DateSheet, fmtLong } from "@/components/calendar";
 import { Body, Button, Display, Label, RecDot, TaperMark, useReduceMotion } from "@/components/ui";
 import { C, FONT, type } from "@/lib/theme";
 import { localToday, readAthlete, writePlan, zonesFor, type StoredAthlete } from "@/lib/store";
@@ -141,6 +142,7 @@ export default function GoalScreen() {
   const [longDay, setLongDay] = useState<"saturday" | "sunday">("sunday");
   const [goalTime, setGoalTime] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [pickingDate, setPickingDate] = useState(false);
   const [generating, setGenerating] = useState<{ sessions: number; weeks: number } | null>(null);
 
   useFocusEffect(
@@ -193,17 +195,18 @@ export default function GoalScreen() {
     return <GeneratingScreen sessionCount={generating.sessions} weekCount={generating.weeks} />;
   }
 
-  const fieldStyle = (err: boolean) =>
+  /** The sunken bed shared by inputs and the tappable date readout. */
+  const fieldBox = (err: boolean) =>
     ({
       height: 48,
       backgroundColor: C.fieldSunken,
       borderWidth: 1,
       borderColor: err ? C.signal : C.hairline,
       paddingHorizontal: 14,
-      color: C.bone,
-      fontFamily: FONT.body,
-      fontSize: 15,
     }) as const;
+
+  const fieldStyle = (err: boolean) =>
+    ({ ...fieldBox(err), color: C.bone, fontFamily: FONT.body, fontSize: 15 }) as const;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]}>
@@ -234,29 +237,22 @@ export default function GoalScreen() {
 
           <View>
             <Label style={{ marginBottom: 8, color: dateError ? C.signalText : C.boneFaint }}>RACE DATE</Label>
-            <View style={{ position: "relative", justifyContent: "center" }}>
-              <TextInput
-                style={[fieldStyle(!!dateError), { fontFamily: FONT.mono, fontSize: 14, paddingRight: 92 }]}
-                value={raceDate}
-                onChangeText={setRaceDate}
-                autoCapitalize="none"
-                autoCorrect={false}
-                placeholder="2026-11-07"
-                placeholderTextColor={C.boneFaint}
-              />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Race date, ${fmtLong(raceDate)}. Opens calendar.`}
+              onPress={() => setPickingDate(true)}
+              style={[
+                fieldBox(!!dateError),
+                { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+              ]}
+            >
+              <Text style={[type.figure, { fontSize: 14 }]}>{fmtLong(raceDate)}</Text>
               {wk !== null && (
-                <Label
-                  style={{
-                    position: "absolute",
-                    right: 14,
-                    fontSize: 10,
-                    color: dateError ? C.signalText : C.boneFaint,
-                  }}
-                >
+                <Label style={{ fontSize: 10, color: dateError ? C.signalText : C.boneFaint }}>
                   {wk} WK OUT
                 </Label>
               )}
-            </View>
+            </Pressable>
             {dateError && (
               <View style={{ flexDirection: "row", gap: 8, marginTop: 8, alignItems: "flex-start" }}>
                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.signal, marginTop: 5 }} />
@@ -318,6 +314,18 @@ export default function GoalScreen() {
       <View style={{ paddingHorizontal: 20, paddingBottom: 14 }}>
         <Button label="GENERATE THE PLAN" height={52} disabled={dateInvalid} onPress={generate} />
       </View>
+      {pickingDate && (
+        <DateSheet
+          value={raceDate}
+          minDate={addDays(today, 21)}
+          today={today}
+          onCancel={() => setPickingDate(false)}
+          onConfirm={(d) => {
+            setRaceDate(d);
+            setPickingDate(false);
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
