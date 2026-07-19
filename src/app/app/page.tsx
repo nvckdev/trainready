@@ -47,7 +47,7 @@ export default async function TodayPage() {
         <div>
           <div className="flex flex-wrap items-end justify-between gap-6">
             <h1 className="display-engraved text-3xl">Today</h1>
-            <div className="flex gap-6">
+            <div className="flex flex-wrap gap-x-6 gap-y-3">
               <StatChip label="Fitness" value={String(Math.round(latest?.ctl ?? 0))} unit="CTL" />
               <StatChip label="Fatigue" value={String(Math.round(latest?.atl ?? 0))} unit="ATL" />
               <StatChip label="Form" value={String(Math.round(latest?.tsb ?? 0))} unit="TSB" />
@@ -57,9 +57,12 @@ export default async function TodayPage() {
           <div className="border border-hairline">
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
               <span className="label-mono text-bone-faint">Connected via Strava · last 120 days · estimated load</span>
-              <a href="/api/strava/disconnect" className="label-mono text-bone-faint hover:text-bone transition-colors duration-150">
-                Disconnect
-              </a>
+              {/* POST form, not a GET link: disconnect is state-changing. */}
+              <form action="/api/strava/disconnect" method="POST">
+                <button className="label-mono text-bone-faint hover:text-bone transition-colors duration-150">
+                  Disconnect
+                </button>
+              </form>
             </div>
             <div className="px-4 py-4 flex flex-wrap gap-8">
               <div>
@@ -223,7 +226,7 @@ export default async function TodayPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-6">
         <h1 className="display-engraved text-3xl">Today</h1>
-        <div className="flex gap-6">
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
           <StatChip label="Fitness" value={String(Math.round(latest?.ctl ?? 0))} unit="CTL" />
           <StatChip label="Fatigue" value={String(Math.round(latest?.atl ?? 0))} unit="ATL" />
           <StatChip label="Form" value={String(Math.round(latest?.tsb ?? 0))} unit="TSB" />

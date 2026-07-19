@@ -38,6 +38,9 @@ export async function readTokens(): Promise<StravaTokens | null> {
 }
 
 export const STRAVA_COOKIE = COOKIE;
+/** CSRF state cookie for the OAuth round-trip (set at login, checked+cleared
+ *  in the callback). Lives here because route files restrict their exports. */
+export const STRAVA_STATE_COOKIE = "taper_strava_state";
 
 async function freshAccessToken(t: StravaTokens): Promise<string | null> {
   if (t.e * 1000 > Date.now() + 60_000) return t.a;

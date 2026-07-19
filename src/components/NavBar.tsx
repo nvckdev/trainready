@@ -30,6 +30,7 @@ const links = [
   { href: "/#protocol", label: "Protocol" },
   { href: "/#course", label: "The Course" },
   { href: "/#engine", label: "Engine" },
+  { href: "/features", label: "Features" },
   { href: "/#disciplines", label: "Disciplines" },
   { href: "/#sync", label: "Sync" },
 ];

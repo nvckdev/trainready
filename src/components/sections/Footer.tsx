@@ -7,6 +7,7 @@ const COLS = [
       { label: "Protocol", href: "/#protocol" },
       { label: "The course", href: "/#course" },
       { label: "The engine", href: "/#engine" },
+      { label: "What's inside", href: "/features" },
       { label: "Disciplines", href: "/#disciplines" },
       { label: "Sync", href: "/#sync" },
     ],

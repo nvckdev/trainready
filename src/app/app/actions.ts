@@ -79,7 +79,8 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   const hours = Number(formData.get("weeklyHours"));
   const intake: IntakeData = {
     disciplineMode: parseDisciplineMode(formData.get("disciplineMode")),
-    weeklyHours: Number.isFinite(hours) ? Math.min(30, Math.max(1, hours)) : 8,
+    // Clamp matches the form's own bounds (start/page.tsx min=2 max=30).
+    weeklyHours: Number.isFinite(hours) ? Math.min(30, Math.max(2, hours)) : 8,
     strengthAccess: parseStrengthAccess(formData.get("strengthAccess")),
     injuries: parseInjuryAreas(formData.getAll("injuries")),
     ...(notes ? { injuryNotes: notes } : {}),
@@ -96,11 +97,27 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   // back to the legacy trailing-mean ceiling (engine/learned.ts escape hatch).
   const demonstratedCapacityAnchoring = formData.get("demonstratedCapacityAnchoring") !== null;
 
+  // Server-side validation of the two fields that can destroy a plan (untrusted
+  // input, same discipline as parsePainRegion/clampStrengthTss above). A bad
+  // raceDate would otherwise either crash generation or — worse — save a valid
+  // 0-week plan over the athlete's existing one, losing their done-marks. A bad
+  // raceType would throw deep inside the engine. Reject both up front; the
+  // intake (already persisted above) survives for the retry.
+  const RACE_TYPES: RaceType[] = ["sprint", "olympic", "half-ironman", "ironman", "run-5k", "run-10k", "run-half", "run-marathon"];
+  const rawDate = String(formData.get("raceDate") || "");
+  const rawType = String(formData.get("raceType") || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate) || rawDate <= localToday()) {
+    redirect("/app/start?error=race-date");
+  }
+  if (!RACE_TYPES.includes(rawType as RaceType)) {
+    redirect("/app/start?error=race-type");
+  }
+
   const request: PlanRequest = {
     raceName: String(formData.get("raceName") || "A race"),
-    raceDate: String(formData.get("raceDate")),
-    raceType: String(formData.get("raceType")) as RaceType,
-    daysPerWeek: Number(formData.get("daysPerWeek") || 6),
+    raceDate: rawDate,
+    raceType: rawType as RaceType,
+    daysPerWeek: Math.min(7, Math.max(4, Number(formData.get("daysPerWeek") || 6))),
     longDay: (String(formData.get("longDay")) === "sunday" ? "sunday" : "saturday") as
       | "saturday"
       | "sunday",

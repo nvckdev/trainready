@@ -93,8 +93,9 @@ export default async function PlanPage() {
             {plan.meta.raceDate} · {plan.meta.raceType} · {plan.meta.daysPerWeek} days/week · engine {plan.meta.engine}
           </p>
         </div>
-        <div className="flex items-end gap-6">
-          <StatChip label="CTL now" value={String(Math.round(plan.meta.startCtl))} />
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+          {/* startCtl is frozen at (re)generation — label it honestly. */}
+          <StatChip label="CTL at plan start" value={String(Math.round(plan.meta.startCtl))} />
           <StatChip
             label={plan.meta.projectedRaceRunCtl !== undefined ? "Race-day CTL (total)" : "Race-day CTL"}
             value={String(Math.round(plan.meta.projectedRaceCtl))}
@@ -230,10 +231,15 @@ export default async function PlanPage() {
 function EvidenceBadge({ id }: { id: string }) {
   const e = evidenceFor(id);
   if (!e) return null;
+  // Focusable (tabIndex) with the claim in an aria-label, so keyboard and
+  // screen-reader users reach the evidence — the point of the feature — not
+  // just mouse-hoverers reading the title tooltip.
   return (
     <span
-      className={`label-mono ${TIER_TONE[e.tier]} border border-hairline px-1.5 py-0.5`}
+      tabIndex={0}
+      className={`label-mono ${TIER_TONE[e.tier]} border border-hairline px-1.5 py-0.5 focus:border-bone outline-none`}
       title={`${e.plainClaim} — ${e.source}`}
+      aria-label={`Evidence tier: ${TIER_LABEL[e.tier]}. ${e.plainClaim} Source: ${e.source}`}
     >
       {TIER_LABEL[e.tier]}
     </span>

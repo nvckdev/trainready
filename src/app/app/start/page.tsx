@@ -6,10 +6,23 @@ import { generatePlanAction } from "../actions";
 
 export const dynamic = "force-dynamic";
 
-export default function StartPage() {
+export default async function StartPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ error?: string }>;
+}) {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
+  // Server-side validation bounce (actions.ts): a rejected submit lands back
+  // here with ?error= so the athlete sees why instead of a crash page.
+  const error = (await searchParams)?.error;
+  const errorCopy =
+    error === "race-date"
+      ? "That race date didn't parse, or is in the past. Pick a future date."
+      : error === "race-type"
+        ? "That race type isn't one Taper plans yet. Pick one from the list."
+        : null;
   const state = getLatestState();
   const intake = readAthleteContext()?.intake ?? null;
   // Server component, force-dynamic: rendered per request, so "today" is
@@ -35,6 +48,12 @@ export default function StartPage() {
         Every session states its why.
       </p>
       <div className="rule mt-6 mb-8" />
+
+      {errorCopy && (
+        <p role="alert" className="border border-signal text-signal-text label-mono px-4 py-3 mb-6">
+          {errorCopy}
+        </p>
+      )}
 
       <form action={generatePlanAction} className="space-y-6">
         <div>

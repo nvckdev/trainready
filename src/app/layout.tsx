@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Archivo, Fragment_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -18,6 +18,23 @@ export const metadata: Metadata = {
   title: "Taper — Adaptive Endurance Training",
   description:
     "Taper builds your season from your race goal, your training history, and your life; then re-plans it every morning. Swim, bike, run: trained on years of real racing data.",
+  // Installed-app (PWA) behavior on iOS: full-screen standalone with the brand
+  // title; the manifest (src/app/manifest.ts) covers Android/desktop installs.
+  appleWebApp: {
+    capable: true,
+    title: "Taper",
+    statusBarStyle: "black-translucent",
+  },
+};
+
+// Mobile viewport: match the field ink so the browser chrome blends with the
+// app, and extend into the safe areas (the bottom tab bar pads itself with
+// env(safe-area-inset-bottom)).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#241f1a",
 };
 
 export default function RootLayout({

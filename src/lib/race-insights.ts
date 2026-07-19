@@ -1,4 +1,4 @@
-import { getPmc, getAthleteLocation } from "./athlete-data";
+import { getPmc, getAthleteLocation, getStateAt } from "./athlete-data";
 import { loadRaceAnchors, raceDistanceKm } from "../../engine/goal.ts";
 import {
   capabilityProfile,
@@ -16,11 +16,14 @@ import type { Plan } from "../../engine/plan.ts";
  */
 
 /** What the athlete could run today across standard distances + % toward the
- *  demonstrated peak-era ceiling. */
+ *  demonstrated peak-era ceiling. Uses the CTL rolled forward to TODAY (the
+ *  same state every header shows) — never the frozen last-logged row, which
+ *  overstates capability across any unlogged tail. */
 export function getCapability(asOf: string): CapabilityProfile | null {
+  const rolled = getStateAt(asOf);
   const pmc = getPmc();
-  if (!pmc.length) return null;
-  const currentCtl = pmc[pmc.length - 1].ctl;
+  const currentCtl = rolled?.ctl ?? (pmc.length ? pmc[pmc.length - 1].ctl : null);
+  if (currentCtl == null) return null;
   return capabilityProfile(currentCtl, loadRaceAnchors(), asOf);
 }
 
