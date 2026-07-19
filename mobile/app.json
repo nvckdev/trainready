@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Taper",
+    "slug": "taper",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "taper",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.taperrun.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.taperrun.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#241f1a",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#241f1a",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 120
+        }
+      ]
+    ],
+    "experiments": {
+      "reactCompiler": true
+    },
+    "backgroundColor": "#241f1a"
+  }
+}
