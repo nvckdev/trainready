@@ -63,6 +63,8 @@ function Chevron({ dir, disabled }: { dir: "left" | "right"; disabled: boolean }
 export function DateSheet({
   value,
   minDate,
+  maxDate,
+  hint = "Anything under three weeks is greyed out — a taper needs runway.",
   today,
   onCancel,
   onConfirm,
@@ -70,6 +72,9 @@ export function DateSheet({
   value: string;
   /** Earliest selectable day — the taper runway floor. */
   minDate: string;
+  /** Latest selectable day (inclusive) — e.g. the tune-up window's end. */
+  maxDate?: string;
+  hint?: string;
   today: string;
   onCancel: () => void;
   onConfirm: (date: string) => void;
@@ -85,9 +90,11 @@ export function DateSheet({
     .toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })
     .toUpperCase();
 
-  // Stepping back is pointless once the previous month holds no legal day.
+  // Stepping past either end is pointless once the next month holds no legal day.
   const lastOfPrevMonth = iso(new Date(Date.UTC(cursor.y, cursor.m, 0, 12)));
   const prevBlocked = lastOfPrevMonth < minDate;
+  const firstOfNextMonth = iso(new Date(Date.UTC(cursor.y, cursor.m + 1, 1, 12)));
+  const nextBlocked = maxDate !== undefined && firstOfNextMonth > maxDate;
 
   const step = (n: number) => {
     const d = new Date(Date.UTC(cursor.y, cursor.m + n, 1, 12));
@@ -135,11 +142,13 @@ export function DateSheet({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Next month"
+              accessibilityState={{ disabled: nextBlocked }}
+              disabled={nextBlocked}
               onPress={() => step(1)}
               hitSlop={12}
               style={{ width: 44, height: 44, alignItems: "flex-end", justifyContent: "center" }}
             >
-              <Chevron dir="right" disabled={false} />
+              <Chevron dir="right" disabled={nextBlocked} />
             </Pressable>
           </View>
 
@@ -156,7 +165,7 @@ export function DateSheet({
               <View key={ri} style={{ flexDirection: "row", gap: 4 }}>
                 {row.map((cell) => {
                   if (!cell.inMonth) return <View key={cell.iso} style={{ flex: 1, aspectRatio: 1 }} />;
-                  const blocked = cell.iso < minDate;
+                  const blocked = cell.iso < minDate || (maxDate !== undefined && cell.iso > maxDate);
                   const selected = cell.iso === draft;
                   const isToday = cell.iso === today;
                   return (
@@ -234,9 +243,7 @@ export function DateSheet({
             </Text>
           </View>
 
-          <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 10 }}>
-            Anything under three weeks is greyed out — a taper needs runway.
-          </Body>
+          <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 10 }}>{hint}</Body>
 
           <View style={{ flexDirection: "row", gap: 10, marginTop: 16, marginBottom: 8 }}>
             <View style={{ width: 110 }}>

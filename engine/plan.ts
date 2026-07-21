@@ -65,6 +65,14 @@ export interface PlanRequest {
    *  Optional → every existing caller/harness stays valid; parsed engine-side,
    *  so an invalid/empty value simply leaves the goal target inert. */
   goalTime?: string;
+  /** Tune-up races (B-races) inside the plan window — same plan-only seam as
+   *  goalPeakCtl, invisible to the backtest path. Each reshapes ONLY its own
+   *  week: the race replaces that week's quality at full race TSS, the day
+   *  before drops to openers, the day after to recovery, and the weekly budget
+   *  absorbs the race load rather than stacking on top of it. Must sit ≥10
+   *  days before the goal race (inside that window is the goal's taper).
+   *  ABSENT or [] ⇒ byte-identical plans. */
+  tuneups?: Array<{ date: string; raceType: RaceType; name?: string }>;
   /** Active tissue constraints (feature 4) — user-declared or inferred from the
    *  pain tracker (app layer). Each caps only what its provocation justifies and
    *  publishes a "why". ABSENT or [] ⇒ no caps: the plan is byte-identical to
@@ -96,6 +104,9 @@ export interface PlannedSessionOut {
   /** True for a non-impact session added to REPLACE running a tissue constraint
    *  caps (feature 5). Its load builds total CTL but never running-specific CTL. */
   substituted?: boolean;
+  /** True for a B-race (PlanRequest.tuneups): a race-discipline session whose
+   *  week is reshaped around it — quality lives here, not on top of it. */
+  tuneup?: boolean;
 }
 
 export interface PlanWeek {
@@ -624,6 +635,20 @@ export function generatePlan(
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
   const startDateStr = req.startDate ?? iso(Date.now());
   if (req.raceDate < startDateStr) throw new Error("race date is in the past");
+
+  // Tune-up races (B-races): validate the window up front, then precompute the
+  // dates each one softens. The final 10 days belong to the goal race's taper.
+  const tuneups = req.tuneups ?? [];
+  for (const t of tuneups) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date)) throw new Error(`tune-up date "${t.date}" must be YYYY-MM-DD`);
+    if (t.date < startDateStr)
+      throw new Error(`tune-up ${t.date} is before the plan starts (${startDateStr}) — outside the plan window`);
+    if (Date.parse(t.date + "T12:00:00Z") > raceT - 10 * DAY)
+      throw new Error(`tune-up ${t.date} is too close to the goal race — the final 10 days are its taper`);
+  }
+  const tuneupDates = new Set(tuneups.map((t) => t.date));
+  const tuneupDayBefore = new Set(tuneups.map((t) => iso(Date.parse(t.date + "T12:00:00Z") - DAY)));
+  const tuneupDayAfter = new Set(tuneups.map((t) => iso(Date.parse(t.date + "T12:00:00Z") + DAY)));
   // Mid-week signup for a race that same week (e.g. Tue signup, Sat race):
   // next Monday would overshoot the race, so anchor on the CURRENT week's
   // Monday instead and filter pre-startDate sessions out of the emitted week.
@@ -693,9 +718,22 @@ export function generatePlan(
     const p = engine.prescribeWeek(state);
     const raceWeek = daysToRace <= 6;
 
-    // Race day consumes part of a race week's budget.
+    // The tune-up falling inside THIS week, if any (validation keeps them out
+    // of the goal race's final 10 days, so raceWeek and tuneup never overlap).
+    const tuneup = tuneups.find((t) => {
+      const d = Date.parse(t.date + "T12:00:00Z");
+      return d >= wStart && d < wStart + 7 * DAY;
+    });
+    const tuneupTss = tuneup ? RACE_TSS[tuneup.raceType] : 0;
+
+    // Race day consumes part of a race week's budget; a tune-up week's budget
+    // absorbs the B-race load the same way — never stacked on top.
     const raceTss = RACE_TSS[req.raceType];
-    const trainableTss = raceWeek ? Math.max(40, p.weekTss * 0.55) : p.weekTss;
+    const trainableTss = raceWeek
+      ? Math.max(40, p.weekTss * 0.55)
+      : tuneup
+        ? Math.max(40, p.weekTss - tuneupTss)
+        : p.weekTss;
 
     const slots = slotsFor(req, p.phase)
       .filter((s) => iso(wStart + s.weekdayIdx * DAY) < req.raceDate)
@@ -705,7 +743,10 @@ export function generatePlan(
       ? slots.filter((s) => !s.kind.includes("long")).map((s) => ({ ...s, weight: s.weight * 0.6 }))
       : slots;
 
-    const totalWeight = active.reduce((s, x) => s + x.weight, 0) || 1;
+    // NOTE: computed from `active`, not `placed` — the pre-race long-run drop
+    // below deliberately does NOT redistribute (race proximity makes the week
+    // lighter). Tune-up weeks are the exception: their dropped race-day slot
+    // renormalizes so the trainable budget still lands (`tuneupWeightScale`).
     // No "long" session inside the final 6 days before the gun, even when the
     // race falls early in a week (a Monday race makes the preceding taper week
     // NOT a race week, yet its weekend long slots land the day before the
@@ -715,7 +756,32 @@ export function generatePlan(
       .filter((s) => !(s.kind.includes("long") && wStart + s.weekdayIdx * DAY >= raceT - 6 * DAY))
       // Feature 4: a tissue maxSessionIntensity cap downgrades over-cap quality
       // slots to legal ones (byte-identical when no such cap is active).
-      .map((s) => ({ ...s, kind: capKindIntensity(s.kind, caps?.maxSessionIntensity) }));
+      .map((s) => ({ ...s, kind: capKindIntensity(s.kind, caps?.maxSessionIntensity) }))
+      // Tune-up shaping (checked against DATES, so a Monday race also softens
+      // the Sunday before, across the week boundary): the race day itself is
+      // protocol, not a slot; the day before drops to openers; the day after
+      // to recovery; and everything else in a tune-up week goes easy — the
+      // race IS the week's quality.
+      .filter((s) => !tuneupDates.has(iso(wStart + s.weekdayIdx * DAY)))
+      .map((s) => {
+        const dIso = iso(wStart + s.weekdayIdx * DAY);
+        const isRun = TEMPLATES[s.kind].discipline === "run";
+        if (tuneupDayBefore.has(dIso))
+          return isRun
+            ? { ...s, kind: "run-strides" as Kind, weight: Math.min(s.weight, 0.5) }
+            : { ...s, kind: capKindIntensity(s.kind, "easy"), weight: Math.min(s.weight, 0.5) };
+        if (tuneupDayAfter.has(dIso))
+          return isRun
+            ? { ...s, kind: "run-easy" as Kind, weight: Math.min(s.weight, 0.6) }
+            : { ...s, kind: capKindIntensity(s.kind, "easy"), weight: Math.min(s.weight, 0.6) };
+        if (tuneup) return { ...s, kind: capKindIntensity(s.kind, "easy") };
+        return s;
+      });
+    // Tune-up weeks renormalize over the surviving slots (the race-day slot's
+    // share must not vanish — its load returns as the race session). All other
+    // weeks keep the `active` basis, byte-identical to before tuneups existed.
+    const totalWeight =
+      (tuneup ? placed.reduce((s, x) => s + x.weight, 0) : active.reduce((s, x) => s + x.weight, 0)) || 1;
     // Long-run distance-tied floor (goal plans only, base/build/recovery —
     // docs/periodization-spec.md §5). The reference taper/race weeks defer 100%
     // to their own decay (rule 2), so the floor is skipped there. It sets the
@@ -863,6 +929,36 @@ export function generatePlan(
     const emittedLong = sessions.find((s) => longSlot && s.date === iso(wStart + longSlot.weekdayIdx * DAY) && s.discipline === "run");
     if (goal && isRunRace && emittedLong && (p.phase === "base" || p.phase === "build" || p.phase === "recovery")) {
       prevLongKm = emittedLong.durationHr * LONG_EASY_KMH;
+    }
+
+    if (tuneup) {
+      const tDow = Math.round((Date.parse(tuneup.date + "T12:00:00Z") - wStart) / DAY);
+      const distLabel = tuneup.raceType.startsWith("run-")
+        ? tuneup.raceType.slice(4).toUpperCase()
+        : tuneup.raceType;
+      sessions.push({
+        date: tuneup.date,
+        weekday: WEEKDAYS[tDow],
+        discipline: "race",
+        title: tuneup.name?.trim() || `${distLabel} tune-up`,
+        durationHr: Math.round((tuneupTss / 81) * 100) / 100, // ≈ IF 0.9
+        tss: tuneupTss,
+        structure:
+          "Tune-up race. Full warm-up, honest effort, jog down. It calibrates pacing under race stress — the plan absorbs the load.",
+        workout: {
+          blocks: [
+            {
+              kind: "segment",
+              zone: "race",
+              effortNote:
+                "Tune-up race — full warm-up, honest effort, jog down. Calibrates pacing under race stress.",
+            },
+          ],
+        },
+        why: "A rehearsal under race stress: pacing, fueling, nerves. This week's quality lives here, not on top of it.",
+        tuneup: true,
+      });
+      sessions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     }
 
     if (raceWeek) {

@@ -32,8 +32,9 @@ function WeekRow({
   onToggle: () => void;
 }) {
   const d = weekDistribution(w.sessions);
+  const hasTuneup = w.sessions.some((s) => s.tuneup);
   const barColor = isCurrent ? C.signal : w.phase === "taper" ? C.bone : C.boneMuted;
-  const dateColor = isCurrent ? C.bone : C.boneFaint;
+  const dateColor = isCurrent ? C.bone : hasTuneup ? C.signalText : C.boneFaint;
   return (
     <View>
       <Pressable
@@ -82,7 +83,10 @@ function WeekRow({
                 <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8, flex: 1 }}>
                   <Label style={{ fontSize: 9 }}>{s.weekday.toUpperCase()}</Label>
                   <Text
-                    style={[type.body, { fontSize: 12, color: s.status === "done" ? C.boneFaint : C.bone }]}
+                    style={[
+                      type.body,
+                      { fontSize: 12, color: s.status === "done" ? C.boneFaint : s.tuneup ? C.signalText : C.bone },
+                    ]}
                     numberOfLines={1}
                   >
                     {s.title}

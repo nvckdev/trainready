@@ -157,6 +157,10 @@ export default function GoalScreen() {
   const [daysPerWeek, setDaysPerWeek] = useState(5);
   const [longDay, setLongDay] = useState<"saturday" | "sunday">("sunday");
   const [goalTime, setGoalTime] = useState("");
+  const [tuneupDate, setTuneupDate] = useState<string | null>(null);
+  const [tuneupType, setTuneupType] = useState<RaceType>("run-10k");
+  const [tuneupName, setTuneupName] = useState("");
+  const [pickingTuneup, setPickingTuneup] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickingDate, setPickingDate] = useState(false);
   const [generating, setGenerating] = useState<{ sessions: number; weeks: number } | null>(null);
@@ -205,6 +209,9 @@ export default function GoalScreen() {
             longDay,
             startDate: today,
             goalTime: goalTime.trim() || undefined,
+            ...(tuneupDate
+              ? { tuneups: [{ date: tuneupDate, raceType: tuneupType, name: tuneupName.trim() || undefined }] }
+              : {}),
           };
           // The real engine, on this device — same code, same rails, same
           // honesty as the dashboard.
@@ -352,6 +359,74 @@ export default function GoalScreen() {
               If the goal is out of reach, the plan says so and projects the honest finish.
             </Body>
           </View>
+
+          <View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Label>TUNE-UP RACE · OPTIONAL</Label>
+              {tuneupDate && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove tune-up race"
+                  hitSlop={10}
+                  onPress={() => {
+                    tapLight();
+                    setTuneupDate(null);
+                    setTuneupName("");
+                  }}
+                >
+                  <Label style={{ fontSize: 10, color: C.signalText }}>REMOVE</Label>
+                </Pressable>
+              )}
+            </View>
+            {tuneupDate ? (
+              <View style={{ gap: 10 }}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Tune-up race date, ${fmtLong(tuneupDate)}. Opens calendar.`}
+                  onPress={() => setPickingTuneup(true)}
+                  style={[fieldBox(false), { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
+                >
+                  <Text style={[type.figure, { fontSize: 14 }]}>{fmtLong(tuneupDate)}</Text>
+                  <Label style={{ fontSize: 10 }}>{weeksOut(tuneupDate, today)} WK OUT</Label>
+                </Pressable>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {(raceType === "run-marathon"
+                    ? (["run-5k", "run-10k", "run-half"] as const)
+                    : (["run-5k", "run-10k"] as const)
+                  ).map((t) => (
+                    <Chip
+                      key={t}
+                      label={t.slice(4).toUpperCase()}
+                      selected={tuneupType === t}
+                      onPress={() => setTuneupType(t)}
+                    />
+                  ))}
+                </View>
+                <TextInput
+                  style={fieldStyle(false)}
+                  value={tuneupName}
+                  onChangeText={setTuneupName}
+                  placeholder="Riverside 10k · name optional"
+                  placeholderTextColor={C.boneFaint}
+                  returnKeyType="done"
+                  accessibilityLabel="Tune-up race name, optional"
+                />
+              </View>
+            ) : (
+              <Button
+                label="ADD A TUNE-UP RACE"
+                variant="secondary"
+                onPress={() => {
+                  tapLight();
+                  setPickingTuneup(true);
+                }}
+              />
+            )}
+            <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 8 }}>
+              A B-race inside the block. That week reshapes around it — the race becomes the week's
+              quality, with openers the day before and recovery after.
+            </Body>
+          </View>
         </View>
       </ScrollView>
       <View style={{ paddingHorizontal: 20, paddingBottom: 14 }}>
@@ -367,6 +442,20 @@ export default function GoalScreen() {
           onConfirm={(d) => {
             setRaceDate(d);
             setPickingDate(false);
+          }}
+        />
+      )}
+      {pickingTuneup && (
+        <DateSheet
+          value={tuneupDate ?? addDays(today, 6)}
+          minDate={addDays(today, 1)}
+          maxDate={addDays(raceDate, -10)}
+          hint="Any day up to ten days before the goal race — closer than that is its taper."
+          today={today}
+          onCancel={() => setPickingTuneup(false)}
+          onConfirm={(d) => {
+            setTuneupDate(d);
+            setPickingTuneup(false);
           }}
         />
       )}
