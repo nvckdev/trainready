@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Plan, PlanRequest } from "@engine/plan.ts";
 import type { AthleteState } from "@engine/types.ts";
 import { deriveZones, type Zones } from "@engine/zones.ts";
@@ -191,6 +191,20 @@ export function localToday(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** localToday as reactive state — an app left open across midnight rolls
+ *  over instead of showing yesterday's hero until the next focus. */
+export function useToday(): string {
+  const [today, setToday] = useState(localToday);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const t = localToday();
+      setToday((prev) => (prev === t ? prev : t));
+    }, 30_000);
+    return () => clearInterval(id);
+  }, []);
+  return today;
 }
 
 /** ISO date + n days, DST-safe via noon-UTC anchoring. */

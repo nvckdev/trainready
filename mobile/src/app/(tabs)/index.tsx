@@ -1,18 +1,17 @@
 import { useEffect } from "react";
-import { ScrollView, Text, View, useWindowDimensions } from "react-native";
+import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import type { PlannedSessionOut, PlanWeek } from "@engine/plan.ts";
 import { Body, Button, Display, Label, RecDot, SpecRow, TaperMark } from "@/components/ui";
 import { C, type } from "@/lib/theme";
-import {
-  currentWeekIndex,
-  localToday,
-  toggleSessionDone,
-  useAthlete,
-  usePlan,
-} from "@/lib/store";
+import { currentWeekIndex, toggleSessionDone, useAthlete, usePlan, useToday } from "@/lib/store";
+import { tapLight, tapSuccess } from "@/lib/haptics";
 import { seedDemoAthlete } from "@/lib/demo";
+
+function openSession(s: PlannedSessionOut): void {
+  router.push({ pathname: "/session", params: { date: s.date, title: s.title } });
+}
 
 /** The plan week containing `today` (or the next upcoming one). */
 function currentWeek(weeks: PlanWeek[], today: string): { week: PlanWeek; index: number } | null {
@@ -44,7 +43,10 @@ function specRows(structure: string): Array<{ label: string; text: string }> {
 
 function UpcomingRow({ s, last }: { s: PlannedSessionOut; last: boolean }) {
   return (
-    <View
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${s.weekday} ${s.title}, open session report`}
+      onPress={() => openSession(s)}
       style={{
         flexDirection: "row",
         justifyContent: "space-between",
@@ -65,7 +67,7 @@ function UpcomingRow({ s, last }: { s: PlannedSessionOut; last: boolean }) {
       <Text style={[type.figure, { fontSize: 11, color: C.boneFaint }]}>
         {Math.round(s.durationHr * 60)} MIN · {s.tss} TSS
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -81,7 +83,7 @@ export default function TodayScreen() {
   }, [athlete]);
 
   const ready = athlete !== undefined && stored !== undefined;
-  const today = localToday();
+  const today = useToday();
   const raceDate = stored?.request.raceDate;
   const raceDay = !!raceDate && today === raceDate;
   const finished = !!raceDate && today > raceDate;
@@ -97,6 +99,8 @@ export default function TodayScreen() {
   const doneCount = found ? found.week.sessions.filter((s) => s.status === "done").length : 0;
 
   const onToggle = (s: PlannedSessionOut) => {
+    if (s.status === "done") tapLight();
+    else tapSuccess();
     toggleSessionDone(s.date, s.title);
   };
 
@@ -106,11 +110,15 @@ export default function TodayScreen() {
         <Display size={20}>Taper</Display>
         <RecDot />
       </View>
-      {athlete?.demo && (
-        <View style={{ borderWidth: 1, borderColor: C.hairline, paddingHorizontal: 7, paddingVertical: 3 }}>
-          <Label style={{ fontSize: 10 }}>DEMO DATA</Label>
-        </View>
-      )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open settings"
+        onPress={() => router.push("/settings")}
+        hitSlop={8}
+        style={{ borderWidth: 1, borderColor: C.hairline, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}
+      >
+        <Label style={{ fontSize: 10 }}>{athlete?.demo ? "DEMO DATA" : "SETTINGS"}</Label>
+      </Pressable>
     </View>
   );
 
@@ -290,14 +298,20 @@ export default function TodayScreen() {
         )}
 
         {hero && (
-          <View style={{ marginHorizontal: 20, marginTop: 16, backgroundColor: C.fieldRaised, padding: 20 }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <Label style={{ color: C.signalText }}>TODAY · {hero.discipline.toUpperCase()}</Label>
-              <Text style={[type.figure, { fontSize: 11, color: C.boneFaint }]}>
-                {Math.round(hero.durationHr * 60)} MIN · {hero.tss} TSS
-              </Text>
-            </View>
-            <Display size={30} style={{ marginTop: 10 }}>{hero.title}</Display>
+          <View style={{ marginHorizontal: 20, marginTop: 16, backgroundColor: C.fieldRaised, borderRadius: 22, padding: 20 }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open session report for ${hero.title}`}
+              onPress={() => openSession(hero)}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Label style={{ color: C.signalText }}>TODAY · {hero.discipline.toUpperCase()}</Label>
+                <Text style={[type.figure, { fontSize: 11, color: C.boneFaint }]}>
+                  {Math.round(hero.durationHr * 60)} MIN · {hero.tss} TSS
+                </Text>
+              </View>
+              <Display size={30} style={{ marginTop: 10 }}>{hero.title}</Display>
+            </Pressable>
             {hero.workout && hero.structure ? (
               <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: C.hairline }}>
                 {specRows(hero.structure).map((r, i, arr) => (

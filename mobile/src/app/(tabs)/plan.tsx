@@ -7,7 +7,7 @@ import type { PlanWeek } from "@engine/plan.ts";
 import { weekDistribution } from "@engine/intensity.ts";
 import { Body, Button, Display, DistributionStrip, EvidenceTag, Label, TaperMark, TrackBar } from "@/components/ui";
 import { C, type } from "@/lib/theme";
-import { currentWeekIndex, localToday, usePlan } from "@/lib/store";
+import { currentWeekIndex, usePlan, useToday } from "@/lib/store";
 
 const PHASE_LABEL: Record<string, string> = {
   base: "BASE",
@@ -66,8 +66,11 @@ function WeekRow({
           )}
           <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: C.hairline }}>
             {w.sessions.map((s) => (
-              <View
+              <Pressable
                 key={s.date + s.title}
+                accessibilityRole="button"
+                accessibilityLabel={`${s.weekday} ${s.title}, open session report`}
+                onPress={() => router.push({ pathname: "/session", params: { date: s.date, title: s.title } })}
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
@@ -87,7 +90,7 @@ function WeekRow({
                   </Text>
                 </View>
                 <Text style={[type.figure, { fontSize: 10, color: C.boneFaint }]}>{s.tss}</Text>
-              </View>
+              </Pressable>
             ))}
           </View>
         </View>
@@ -100,7 +103,7 @@ export default function PlanScreen() {
   const stored = usePlan();
   const [openWeek, setOpenWeek] = useState<string | null>(null);
 
-  const today = localToday();
+  const today = useToday();
   const curIdx = stored ? currentWeekIndex(stored.plan.weeks, today) : -1;
   const curWeek = curIdx >= 0 ? stored!.plan.weeks[curIdx].weekStart : null;
 

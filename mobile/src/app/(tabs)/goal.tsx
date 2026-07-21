@@ -17,7 +17,8 @@ import { generatePlan, type PlanRequest, type RaceType } from "@engine/plan.ts";
 import { DateSheet, fmtLong } from "@/components/calendar";
 import { Body, Button, Display, Label, RecDot, TaperMark, useReduceMotion } from "@/components/ui";
 import { C, FONT, type } from "@/lib/theme";
-import { localToday, setPlan, useAthlete, zonesFor } from "@/lib/store";
+import { localToday, setPlan, useAthlete, useToday, zonesFor } from "@/lib/store";
+import { tapLight, tapSuccess } from "@/lib/haptics";
 import { seedDemoAthlete } from "@/lib/demo";
 
 const RACE_TYPES: Array<{ v: RaceType; label: string }> = [
@@ -45,7 +46,10 @@ function Chip({ label, selected, onPress }: { label: string; selected: boolean; 
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ selected }}
-      onPress={onPress}
+      onPress={() => {
+        tapLight();
+        onPress();
+      }}
       style={{
         flex: 1,
         height: 44,
@@ -177,7 +181,7 @@ export default function GoalScreen() {
     }, [])
   );
 
-  const today = localToday();
+  const today = useToday();
   const wk = weeksOut(raceDate, today);
   const dateInvalid = wk === null || raceDate < addDays(today, 21);
   const dateError = wk === null ? "Race date must be YYYY-MM-DD." : dateInvalid ? "Pick a race at least 3 weeks out. A taper needs runway." : null;
@@ -206,6 +210,7 @@ export default function GoalScreen() {
           const plan = generatePlan(request, athlete.seed, [], zonesFor(athlete));
           void setPlan({ request, plan });
           const sessions = plan.weeks.reduce((a, w) => a + w.sessions.length, 0);
+          tapSuccess();
           setGenerating({ sessions, weeks: plan.weeks.length });
           pendingPush.current = setTimeout(() => {
             pendingPush.current = null;

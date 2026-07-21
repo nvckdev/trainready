@@ -17,6 +17,15 @@ export const C = {
   signalText: "#ff7a3d",
 } as const;
 
+/** Turn-2 radii (premium analytics pass): soft surfaces, pill controls. */
+export const R = {
+  hero: 26,
+  card: 22,
+  pill: 20,
+  badge: 10,
+  bar: 12,
+} as const;
+
 /** Telemetry (mono) and display faces. Loaded in the root layout; the platform
  *  mono is the pre-load fallback so nothing flashes unstyled. */
 export const FONT = {

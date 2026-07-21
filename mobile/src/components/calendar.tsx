@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { Body, Button, Display, Label, useReduceMotion } from "@/components/ui";
 import { C, type } from "@/lib/theme";
+import { tapLight } from "@/lib/haptics";
 
 /**
  * Race-date calendar, drawn in the Night Instrument grammar rather than the
@@ -167,7 +168,10 @@ export function DateSheet({
                       }
                       accessibilityState={{ selected, disabled: blocked }}
                       disabled={blocked}
-                      onPress={() => setDraft(cell.iso)}
+                      onPress={() => {
+                        tapLight();
+                        setDraft(cell.iso);
+                      }}
                       style={{
                         flex: 1,
                         aspectRatio: 1,
