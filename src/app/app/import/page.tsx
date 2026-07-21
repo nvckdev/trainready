@@ -1,5 +1,28 @@
-import { getIntervalsActivities, intervalsConfigured, readImports } from "@/lib/athlete-data";
+import {
+  getAthlete,
+  getIntervalsActivities,
+  getStateAt,
+  intervalsConfigured,
+  localToday,
+  readImports,
+} from "@/lib/athlete-data";
 import { DISC_COLOR, EmptyState, StatChip } from "@/components/app/bits";
+import { PairPhone } from "@/components/app/pair-phone";
+
+/** `TAPER1.` + base64url(JSON) — decoded by the mobile app's Settings screen. */
+function pairCode(): string | null {
+  const athlete = getAthlete();
+  const seed = getStateAt(localToday());
+  if (!athlete || !seed) return null;
+  const payload = {
+    v: 1,
+    name: athlete.name,
+    thresholds: athlete.thresholds,
+    seed,
+    anchor: localToday(),
+  };
+  return "TAPER1." + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +110,11 @@ export default async function ImportPage() {
               </div>
             </div>
           )}
+
+          {(() => {
+            const code = pairCode();
+            return code ? <PairPhone code={code} /> : null;
+          })()}
 
           <div className="border border-hairline px-4 py-4">
             <div className="label-mono text-bone-faint mb-1.5">intervals.icu sync</div>

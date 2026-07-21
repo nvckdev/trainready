@@ -9,7 +9,7 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { C } from "@/lib/theme";
 
 // Hold the native splash until the faces are in — no blank frame, no font
@@ -28,6 +28,22 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded || error) void SplashScreen.hideAsync().catch(() => {});
   }, [loaded, error]);
+
+  // Session reminders should banner while the app is foregrounded. Dynamic
+  // import keeps expo-notifications out of the static web/node render.
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    void import("expo-notifications").then((N) => {
+      N.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        }),
+      });
+    });
+  }, []);
 
   if (!loaded && !error) return null;
 

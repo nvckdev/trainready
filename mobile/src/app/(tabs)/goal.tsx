@@ -19,6 +19,7 @@ import { Body, Button, Display, Label, RecDot, TaperMark, useReduceMotion } from
 import { C, FONT, type } from "@/lib/theme";
 import { localToday, setPlan, useAthlete, useToday, zonesFor } from "@/lib/store";
 import { tapLight, tapSuccess } from "@/lib/haptics";
+import { syncReminders } from "@/lib/notifications";
 import { seedDemoAthlete } from "@/lib/demo";
 
 const RACE_TYPES: Array<{ v: RaceType; label: string }> = [
@@ -209,6 +210,7 @@ export default function GoalScreen() {
           // honesty as the dashboard.
           const plan = generatePlan(request, athlete.seed, [], zonesFor(athlete));
           void setPlan({ request, plan });
+          void syncReminders({ request, plan });
           const sessions = plan.weeks.reduce((a, w) => a + w.sessions.length, 0);
           tapSuccess();
           setGenerating({ sessions, weeks: plan.weeks.length });

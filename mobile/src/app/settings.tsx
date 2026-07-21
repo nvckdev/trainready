@@ -6,6 +6,14 @@ import { Body, Button, Display, Label } from "@/components/ui";
 import { C, FONT, R, type } from "@/lib/theme";
 import { setAthlete, setPlan, useAthlete, usePlan } from "@/lib/store";
 import { tapLight, tapSuccess } from "@/lib/haptics";
+import { decodePairCode } from "@/lib/pair";
+import { shareIcs } from "@/lib/ics";
+import {
+  readRemindersEnabled,
+  remindersSupported,
+  setRemindersEnabled,
+  syncReminders,
+} from "@/lib/notifications";
 
 /**
  * Settings — the exit from demo data. Thresholds feed zone derivation, so
@@ -47,6 +55,14 @@ export default function SettingsScreen() {
   const [saved, setSaved] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [pairInput, setPairInput] = useState("");
+  const [pairMsg, setPairMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [reminders, setReminders] = useState(false);
+  const [reminderMsg, setReminderMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    void readRemindersEnabled().then(setReminders);
+  }, []);
 
   // Populate once per athlete identity — not on every keystroke re-render.
   useEffect(() => {
@@ -78,8 +94,48 @@ export default function SettingsScreen() {
   const clearPlan = async () => {
     tapLight();
     await setPlan(null);
+    await syncReminders(null);
     setCleared(true);
     setTimeout(() => setCleared(false), 2000);
+  };
+
+  const importCode = async () => {
+    const decoded = decodePairCode(pairInput);
+    if ("error" in decoded) {
+      setPairMsg({ ok: false, text: decoded.error });
+      return;
+    }
+    tapSuccess();
+    await setAthlete(decoded.athlete);
+    setPairInput("");
+    setPairMsg({
+      ok: true,
+      text: `Imported ${decoded.athlete.name} — CTL ${Math.round(decoded.athlete.seed.ctl)}${
+        decoded.anchor ? `, anchored ${decoded.anchor}` : ""
+      }. The next plan you generate starts from real history.`,
+    });
+  };
+
+  const toggleReminders = async () => {
+    tapLight();
+    setReminderMsg(null);
+    const next = !reminders;
+    const ok = await setRemindersEnabled(next, stored ?? null);
+    if (next && !ok) {
+      setReminderMsg("Notifications are blocked for Taper in system settings.");
+      return;
+    }
+    setReminders(next);
+  };
+
+  const exportIcs = async () => {
+    if (!stored) return;
+    tapLight();
+    try {
+      await shareIcs(stored);
+    } catch {
+      // User dismissed the share sheet — not an error worth surfacing.
+    }
   };
 
   return (
@@ -165,17 +221,97 @@ export default function SettingsScreen() {
           Applies to the next generated plan. The current plan keeps the thresholds it was drafted with.
         </Body>
 
+        <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 20 }}>
+          <Label style={{ marginBottom: 8 }}>IMPORT FROM DASHBOARD</Label>
+          <Body style={{ fontSize: 13, lineHeight: 19 }}>
+            The dashboard's Import page shows a one-line pairing code. Paste it here and this phone
+            trains as you — thresholds and fitness seed anchored on logged history.
+          </Body>
+          <TextInput
+            style={[fieldStyle, { height: 88, paddingTop: 12, fontFamily: FONT.mono, fontSize: 11, marginTop: 12 }]}
+            value={pairInput}
+            onChangeText={(t) => {
+              setPairInput(t);
+              setPairMsg(null);
+            }}
+            placeholder="TAPER1.eyJ2IjoxLCJuYW1lIjoi…"
+            placeholderTextColor={C.boneFaint}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="Pairing code from the dashboard"
+          />
+          <View style={{ marginTop: 12 }}>
+            <Button label="IMPORT ATHLETE" variant="secondary" disabled={!pairInput.trim()} onPress={importCode} />
+          </View>
+          {pairMsg && (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10, alignItems: "flex-start" }}>
+              <View
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: pairMsg.ok ? C.boneMuted : C.signal,
+                  marginTop: 5,
+                }}
+              />
+              <Body style={{ fontSize: 13, lineHeight: 19, flex: 1, color: pairMsg.ok ? C.boneMuted : C.signalText }}>
+                {pairMsg.text}
+              </Body>
+            </View>
+          )}
+        </View>
+
+        {remindersSupported && (
+          <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 20 }}>
+            <Label style={{ marginBottom: 8 }}>SESSION REMINDERS</Label>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: reminders }}
+              accessibilityLabel="Session reminders at 7 in the morning"
+              onPress={toggleReminders}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                backgroundColor: C.fieldSunken,
+                borderWidth: 1,
+                borderColor: reminders ? C.signal : C.hairline,
+                borderRadius: R.badge,
+                paddingHorizontal: 14,
+                paddingVertical: 14,
+              }}
+            >
+              <Text style={[type.body, { fontSize: 14, color: C.bone }]}>7:00 on session days</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                {reminders && <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: C.signal }} />}
+                <Label style={{ fontSize: 10, color: reminders ? C.signalText : C.boneFaint }}>
+                  {reminders ? "ON" : "OFF"}
+                </Label>
+              </View>
+            </Pressable>
+            {reminderMsg && (
+              <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 8, color: C.signalText }}>{reminderMsg}</Body>
+            )}
+            <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 8 }}>
+              Scheduled on this device from the plan — no push service, nothing registered anywhere.
+            </Body>
+          </View>
+        )}
+
         {stored && (
           <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 20 }}>
             <Label style={{ marginBottom: 8 }}>ACTIVE PLAN</Label>
             <Body style={{ fontSize: 13, lineHeight: 19 }}>
               {stored.plan.meta.raceName} · {stored.plan.meta.raceDate} · {stored.plan.weeks.length} weeks
             </Body>
-            <View style={{ marginTop: 12 }}>
+            <View style={{ marginTop: 12, gap: 10 }}>
+              <Button label="ADD TO CALENDAR · .ICS" variant="secondary" onPress={exportIcs} />
               <Button label={cleared ? "PLAN CLEARED" : "CLEAR PLAN"} variant="secondary" onPress={clearPlan} />
             </View>
             <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 8 }}>
-              Removes the plan from this device. Done marks go with it. A new one takes a minute to draft.
+              Calendar export writes one all-day event per session. Clear removes the plan and its
+              done marks from this device.
             </Body>
           </View>
         )}
