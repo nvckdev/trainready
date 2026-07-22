@@ -399,11 +399,19 @@ Known traps (each has bitten once):
 
 Ranked, with the constraint that every improvement must keep §9 intact:
 
-1. **Execution feedback (replan loop).** The plan never learns from
-   *deviation*: skipped sessions and over-performed weeks only enter through
-   full regeneration. A weekly reconcile (`replan.ts` has the re-baseline
-   machinery) that folds executed TSS into the remaining weeks — behind an
-   explicit signal — is the highest-value addition.
+1. **Execution feedback (replan loop) — BUILT on the dashboard path; do not
+   re-implement.** `engine/replan.ts recomputeRemaining` folds executed weekly
+   TSS into the remaining plan behind an explicit opt-in input (`ReplanInput`
+   ledger — `generatePlan` itself is untouched): missed volume is never
+   redistributed forward (T5 pins no cramming), an overshoot week damps the
+   next to protect form, 3 consecutive overshoots re-baseline capacity upward
+   and reproject the goal, 2 consecutive ≥40% undershoots surface an honest
+   recalibration card, a hard over-cap week forces recovery at maintenance,
+   and the 2-week taper is an invariant (throws if compressed). 18 pinned
+   assertions in `replan.test.ts`; the backtest never imports replan (N1).
+   What remains is EXPOSURE, not engine work: the mobile app has no replan
+   trigger, and the dashboard's is manual — a weekly auto-reconcile
+   surface is the actual open item.
 2. **The learned layer is athlete-count = 1.** The ridge regression is honest
    but trained on one athlete's corpus. Multi-athlete training needs a data
    pipeline and per-athlete normalization (features are already
