@@ -216,15 +216,22 @@ function rampCapRef(state: AthleteState): number {
   return Math.max(prevNonZeroWeek(state) ?? 0, ANCHOR_V2_BEST_FRACTION * Math.max(0, ...trailing));
 }
 
-function anchorV2Ceiling(state: AthleteState): number {
-  const maintenance = state.ctl * 7; // weekly TSS that holds CTL steady
+/** Recent peak week decayed 5%/week since it happened — the demonstrated-
+ *  capacity term shared by the anchor-v2 ceiling and (refinement 6) the
+ *  week-1 base floor. */
+function decayedPeakWeek(state: AthleteState): number {
   const weeks = state.last4WeeksTss; // oldest → newest
   let peak = 0;
   for (let i = 0; i < weeks.length; i++) {
     const weeksSincePeak = weeks.length - 1 - i; // newest completed week = 0
     peak = Math.max(peak, weeks[i] * Math.pow(ANCHOR_V2_PEAK_DECAY, weeksSincePeak));
   }
-  let anchor = Math.max(maintenance, peak);
+  return peak;
+}
+
+function anchorV2Ceiling(state: AthleteState): number {
+  const maintenance = state.ctl * 7; // weekly TSS that holds CTL steady
+  let anchor = Math.max(maintenance, decayedPeakWeek(state));
   const capRef = rampCapRef(state);
   if (capRef > 0) anchor = Math.min(anchor, capRef * rampCapFor(state));
   return anchor;
@@ -427,10 +434,17 @@ export class TaperV1 implements Engine {
       state.daysToNextRace !== null &&
       state.daysToNextRace <= ANCHOR_V2_BASE_FLOOR_RUNWAY_DAYS
     ) {
+      // Refinement 6: anchor the floor to DEMONSTRATED capacity —
+      // max(maintenance, recent peak week decayed) — exactly the term the
+      // anchor-v2 ceiling already trusts. A returning athlete's decayed CTL
+      // understates them; their recent weeks don't. The per-athlete ramp
+      // rails (feature 3) still min-cap it, so the floor can never exceed
+      // the ceiling. isFirstPlanWeek-gated as before: never on the backtest.
+      const capacity = Math.max(state.ctl * 7, decayedPeakWeek(state));
       const floor = Math.min(
-        ANCHOR_V2_BASE_FLOOR * state.ctl * 7,
-        trailingMean * ANCHOR_V2_RAMP_CAP,
-        rampCapRef(state) * ANCHOR_V2_RAMP_CAP
+        ANCHOR_V2_BASE_FLOOR * capacity,
+        trailingMean * rampCapFor(state),
+        rampCapRef(state) * rampCapFor(state)
       );
       if (floor > value) {
         value = floor;
