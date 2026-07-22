@@ -18,6 +18,7 @@ import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint
 import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
 import { crossKindFor } from "./crosstrain.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
+import { sessionZoneSeconds, targetDistribution, weekDistribution } from "./intensity.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure, Zone } from "./types.ts";
 import type { PaceRange, Zones } from "./zones.ts";
 
@@ -882,6 +883,7 @@ export function generatePlan(
     const crossBoost = crossDays.size > 0 ? freedTss / crossDays.size : 0;
     const site = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "the tissue";
 
+    const sessionKinds: Kind[] = [];
     const sessions: PlannedSessionOut[] = placed.map((slot) => {
       const substituted = crossDays.has(slot.weekdayIdx);
       // Kept run days shrink to the km cap; substituted days carry their load plus
@@ -924,6 +926,91 @@ export function generatePlan(
         ...(substituted ? { substituted: true } : {}),
       };
     });
+    placed.forEach((slot) => sessionKinds.push(crossDays.has(slot.weekdayIdx) ? crossKindFor(0) : slot.kind));
+
+    // Feature-1 refinement: base/build run weeks are CONSTRUCTED to the phase
+    // Z1 target (rct tier: Muñoz 2014 — polarized beat threshold-emphasis at
+    // equal load), not merely checked against the floor afterwards. Time
+    // transfers between the week's quality session and an easy day at
+    // ~constant weekly TSS: too hard ⇒ the quality session shrinks and easy
+    // volume grows; too easy ⇒ the reverse, bounded. The long run is never
+    // donor or recipient (its distance progression is its own rail), and
+    // cross-train/race sessions are protocol. A week with no quality touch
+    // (tissue intensity cap) has nothing to transfer and is left as built —
+    // all-easy already clears the floor. Runs before the long-run km tracking
+    // and the PMC simulation, so both see the shaped week.
+    if (isRunRace && (p.phase === "base" || p.phase === "build")) {
+      const z1Target = targetDistribution(p.phase).z1;
+      for (let round = 0; round < 4; round++) {
+        const d = weekDistribution(sessions);
+        if (d.totalSec <= 0 || Math.abs(d.z1Pct - z1Target) <= 0.02) break;
+        let qi = -1;
+        let qHard = 0;
+        let ei = -1;
+        let eZ1 = 0;
+        for (let i = 0; i < sessions.length; i++) {
+          const s = sessions[i];
+          if (s.discipline !== "run" || s.substituted || !s.workout) continue;
+          if (sessionKinds[i] === "run-long") continue;
+          const zs = sessionZoneSeconds(s.workout);
+          const hard = zs.z2 + zs.z3;
+          if (hard > qHard) {
+            qHard = hard;
+            qi = i;
+          }
+          if (hard / Math.max(1, zs.z1 + hard) < 0.2 && zs.z1 > eZ1) {
+            eZ1 = zs.z1;
+            ei = i;
+          }
+        }
+        if (qi < 0 || ei < 0 || qi === ei) break;
+        const q = sessions[qi];
+        const e = sessions[ei];
+        const qKind = sessionKinds[qi];
+        const eKind = sessionKinds[ei];
+        const rateOf = (k: Kind) => TEMPLATES[k].intensity * TEMPLATES[k].intensity * 100;
+        // The transfer works in TSS space and CONSERVES the week: whatever the
+        // donor sheds the recipient absorbs, and duration follows tss with the
+        // same 0.4–1.6 h clamps the original build used. A session already
+        // pinned at the duration floor can't donate — its built structure (and
+        // therefore its zone seconds) would not actually shrink, so tiny
+        // floored weeks break out here byte-identical instead of pretending.
+        const hardWant = (1 - z1Target) * d.totalSec;
+        const hardRest = d.z2Sec + d.z3Sec - qHard;
+        const scale = Math.min(1.5, Math.max(0.45, (hardWant - hardRest) / Math.max(60, qHard)));
+        let qTssNew = q.tss * scale;
+        let eTssNew = e.tss + (q.tss - qTssNew);
+        if (qTssNew < q.tss) {
+          if (q.durationHr <= 0.4 + 1e-6) break; // donor pinned at floor
+          const eCap = rateOf(eKind) * 1.6;
+          if (eTssNew > eCap) {
+            eTssNew = eCap;
+            qTssNew = q.tss - (eTssNew - e.tss);
+          }
+        } else {
+          if (e.durationHr <= 0.4 + 1e-6) break; // donor pinned at floor
+          const qCap = rateOf(qKind) * 1.6;
+          const eFloor = rateOf(eKind) * 0.4;
+          if (qTssNew > qCap) qTssNew = qCap;
+          if (e.tss + (q.tss - qTssNew) < eFloor) qTssNew = q.tss - (eFloor - e.tss);
+          eTssNew = e.tss + (q.tss - qTssNew);
+        }
+        if (Math.round(qTssNew) === q.tss) break; // no representable progress
+        const rebuildInto = (s: PlannedSessionOut, kind: Kind, tss: number) => {
+          const t = TEMPLATES[kind];
+          const durationHr = Math.min(1.6, Math.max(0.4, tss / rateOf(kind)));
+          const m = mins(durationHr);
+          const built = t.build(zones, m);
+          s.durationHr = Math.round(durationHr * 100) / 100;
+          s.tss = Math.round(tss);
+          s.title = t.title(m);
+          s.structure = built.text;
+          s.workout = { blocks: built.blocks };
+        };
+        rebuildInto(q, qKind, qTssNew);
+        rebuildInto(e, eKind, eTssNew);
+      }
+    }
     // Track the emitted long-run distance for next week's progression (like
     // prevPrescribed). Only base/build/recovery weeks carry a run-long here.
     const emittedLong = sessions.find((s) => longSlot && s.date === iso(wStart + longSlot.weekdayIdx * DAY) && s.discipline === "run");

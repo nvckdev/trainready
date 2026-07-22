@@ -38,6 +38,19 @@ export const ZONE3: Record<Zone, Zone3> = {
 /** Hard floor — no generated week may fall below this share of Z1 by time. */
 export const Z1_FLOOR = 0.8;
 
+/**
+ * Phase-aware safety floor. Base/build weeks are CONSTRUCTED to the phase
+ * target (generatePlan's shaping pass transfers time between the quality
+ * session and an easy day at constant weekly TSS), so their floor tightens to
+ * 0.85 — the floor is the catch, construction is the mechanism. Other phases
+ * keep the 0.80 floor. Evidence tier rct: Muñoz 2014 — polarized beat
+ * threshold-emphasis at equal load, so hitting the Z1 target is a training
+ * outcome, not a stylistic preference.
+ */
+export function z1FloorFor(phase: Phase): number {
+  return phase === "base" || phase === "build" ? 0.85 : Z1_FLOOR;
+}
+
 export interface Distribution {
   z1Sec: number;
   z2Sec: number;
