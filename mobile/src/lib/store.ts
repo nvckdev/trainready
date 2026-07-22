@@ -197,6 +197,24 @@ export function localToday(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** Fire the automatic weekly reconcile at most once per (plan, day). Lives
+ *  here so every screen shares one trigger — the first screen the athlete
+ *  opens after a week closes is the one that reflows, and the store's
+ *  subscription pushes the adjusted plan to all the others. */
+const reconcileTried = new Set<string>();
+export function useWeeklyReconcile(): void {
+  const plan = usePlan();
+  const athlete = useAthlete();
+  const today = useToday();
+  useEffect(() => {
+    if (!plan || !athlete) return;
+    const key = `${plan.plan.meta.generatedAt}|${plan.plan.meta.lastRecomputed ?? ""}|${today}`;
+    if (reconcileTried.has(key)) return;
+    reconcileTried.add(key);
+    void import("./reconcile").then((m) => m.reconcileIfDue(plan, athlete, today)).catch(() => {});
+  }, [plan, athlete, today]);
+}
+
 /** localToday as reactive state — an app left open across midnight rolls
  *  over instead of showing yesterday's hero until the next focus. */
 export function useToday(): string {

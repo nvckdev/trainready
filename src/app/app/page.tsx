@@ -2,6 +2,9 @@ import { getPmc, getSeedProvenance, getStateAt, getStravaSnapshot, getStravaToke
 import { readAthleteContext } from "@/lib/athlete-context";
 import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
 import { readPlan } from "@/lib/plan-io";
+import { after } from "next/server";
+import { revalidatePath } from "next/cache";
+import { reconcileIfDue } from "@/lib/replan-auto";
 import { replanAction } from "./actions";
 import { weeklyDigest } from "@/lib/digest";
 import { getWeekly } from "@/lib/athlete-data";
@@ -104,7 +107,20 @@ export default async function TodayPage() {
   }
 
   const pmc = getPmc();
-  const stored = readPlan();
+  // Automatic weekly reconcile: when a training week closes and execution
+  // diverged from plan, reflow the rest of the season. Computed HERE so this
+  // visit renders the adjusted plan (not the stale one), persisted in after()
+  // so nothing mutates during render — revalidate/cookies throw in the render
+  // phase, and after() runs with phase 'after' where they are legal.
+  const reconciled = reconcileIfDue();
+  if (reconciled.commit) {
+    const commit = reconciled.commit;
+    after(() => {
+      commit();
+      revalidatePath("/app", "layout");
+    });
+  }
+  const stored = reconciled.stored ?? readPlan();
   const today = localToday();
   // Header fitness must reflect TODAY — the state rolled forward across any
   // unlogged tail (matching the provenance caption below and the Plan page's

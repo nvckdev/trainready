@@ -4,8 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
 import { loadPopulationPrior } from "../../../engine/learned.ts";
-import { getAthlete, getHistory, getStateAt, getWeekly, localToday } from "@/lib/athlete-data";
-import { recomputeRemaining } from "../../../engine/replan.ts";
+import { getAthlete, getHistory, getStateAt, localToday } from "@/lib/athlete-data";
+import { reconcileNow, regenerateFromToday } from "@/lib/replan-auto";
 import { readPlan, retitleSession, setSessionStatus, writePlan } from "@/lib/plan-io";
 import {
   parseDisciplineMode,
@@ -143,81 +143,22 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   redirect("/app/plan");
 }
 
-/** Adaptive re-flow: regenerate every remaining week from today's state. */
+/**
+ * Manual override for the automatic weekly reconcile. The athlete asked
+ * explicitly, so the tolerance and once-per-week branches are opened — but
+ * every SAFETY branch (race passed, taper lock, too few weeks) still applies,
+ * and a reflow that throws leaves the stored plan untouched.
+ */
 export async function replanAction(): Promise<void> {
   const stored = readPlan();
   if (!stored) redirect("/app/start");
-  recomputeAndSave(stored!);
+  const outcome = reconcileNow();
+  if (outcome.commit) outcome.commit();
+  else if (!outcome.stored) regenerateFromToday(stored!.request);
   revalidatePath("/app", "layout");
   redirect("/app/plan");
 }
 
-/**
- * Adaptive recompute from actual fitness (engine/replan.ts). Gathers the real
- * post-week PMC state, executed weekly TSS, and a per-week ledger, reflows the
- * remaining plan, and stamps the honest plan-adjusted note. All corpus I/O is
- * here (rule 12); recomputeRemaining stays pure. Falls back to a naive regen if
- * the corpus/zones are unavailable.
- */
-function recomputeAndSave(stored: { request: PlanRequest; plan: Plan }): void {
-  const today = localToday();
-  const athlete = getAthlete();
-  const actualState = getStateAt(today);
-  if (!athlete || !actualState) {
-    buildAndSave({ ...stored.request, startDate: today });
-    return;
-  }
-  const history = getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss, weekStart: h.weekStart }));
-  const weekly = getWeekly();
-  const weeklyTss = new Map(weekly.map((r) => [r.weekStart, r.tss]));
-
-  // Feature 4: refresh tissue constraints from current data (injuries heal, new
-  // pain gets logged) before reflowing — recomputeRemaining threads them through
-  // its regeneration of the remaining weeks. Empty ⇒ no caps ⇒ reflow unchanged.
-  const request: PlanRequest = { ...stored.request, tissueConstraints: loadTissueConstraints(today) };
-  stored = { request, plan: stored.plan };
-
-  // Completed plan weeks = those whose week starts strictly before the plan
-  // week containing today. Build the ledger from executed weekly TSS + status.
-  const curIdx = currentWeekIndex(stored.plan.weeks, today);
-  const completed = stored.plan.weeks.slice(0, curIdx);
-  const ledger = completed.map((wk, i) => {
-    const actualTss = weeklyTss.get(wk.weekStart) ?? wk.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
-    const missed = wk.sessions.filter((s) => s.discipline !== "race" && s.status !== "done").length;
-    const prev = completed[i - 1];
-    const rampRef = prev ? (weeklyTss.get(prev.weekStart) ?? prev.targetTss) : wk.targetTss;
-    return {
-      weekStart: wk.weekStart,
-      actualTss: Math.round(actualTss),
-      plannedTss: wk.targetTss,
-      rampCapTss: Math.round(rampRef * 1.2),
-      sessionsMissed: missed,
-      sessionsPlanned: wk.sessions.length,
-    };
-  });
-  const actualTrailingTss = weekly.slice(-8).map((r) => Math.round(r.tss));
-
-  const result = recomputeRemaining({ stored, actualState, actualTrailingTss, ledger, asOf: today, history, zones: athlete.zones });
-
-  const plan = result.plan;
-  plan.meta.lastRecomputed = result.lastRecomputed;
-  if (result.note) plan.meta.replanNote = result.note;
-  else delete plan.meta.replanNote;
-  if (result.recalibration) plan.meta.recalibration = result.recalibration;
-  else delete plan.meta.recalibration;
-
-  carryStatusForward(plan);
-  writePlan({ request, plan });
-}
-
-/** Index of the plan week containing `today` (else the next upcoming week). */
-function currentWeekIndex(weeks: Plan["weeks"], today: string): number {
-  for (let i = 0; i < weeks.length; i++) {
-    const end = weeks[i + 1]?.weekStart ?? "9999-12-31";
-    if (today >= weeks[i].weekStart && today < end) return i;
-  }
-  return today < (weeks[0]?.weekStart ?? "") ? 0 : weeks.length;
-}
 
 /**
  * Done-toggle for a scheduled strength day, keyed (date, protocolId).

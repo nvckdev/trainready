@@ -7,7 +7,7 @@ import type { PlanWeek } from "@engine/plan.ts";
 import { weekDistribution } from "@engine/intensity.ts";
 import { Body, Button, Display, DistributionStrip, EvidenceTag, Label, TaperMark, TrackBar } from "@/components/ui";
 import { C, type } from "@/lib/theme";
-import { currentWeekIndex, usePlan, useToday } from "@/lib/store";
+import { currentWeekIndex, usePlan, useToday, useWeeklyReconcile } from "@/lib/store";
 
 const PHASE_LABEL: Record<string, string> = {
   base: "BASE",
@@ -104,6 +104,7 @@ function WeekRow({
 }
 
 export default function PlanScreen() {
+  useWeeklyReconcile();
   const stored = usePlan();
   const [openWeek, setOpenWeek] = useState<string | null>(null);
 
@@ -253,6 +254,30 @@ export default function PlanScreen() {
                         ? `Weekly volume can't yet support a ${vt.longFloorKm} km long run safely — it's held to ~35% of the week and grows as volume does.`
                         : "Volume is still building toward the floor. The ramp needs more runway to get there safely."}
                   </Body>
+                )}
+              </View>
+            )}
+
+            {(meta.replanNote || meta.recalibration || meta.lastRecomputed) && (
+              <View style={{ marginHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: C.hairline }}>
+                {meta.replanNote && (
+                  <>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.signal }} />
+                      <Label style={{ color: C.signalText }}>PLAN ADJUSTED</Label>
+                    </View>
+                    <Body style={{ fontSize: 13, lineHeight: 19, marginTop: 6 }}>{meta.replanNote}</Body>
+                  </>
+                )}
+                {meta.recalibration && (
+                  <Body style={{ fontSize: 13, lineHeight: 19, marginTop: 8 }}>{meta.recalibration.message}</Body>
+                )}
+                {/* Outside the note conditional: a reflow must always leave a
+                    visible trace, even if no rule produced copy. */}
+                {meta.lastRecomputed && (
+                  <Label style={{ fontSize: 10, marginTop: meta.replanNote ? 8 : 0 }}>
+                    RE-PLANNED {meta.lastRecomputed}
+                  </Label>
                 )}
               </View>
             )}

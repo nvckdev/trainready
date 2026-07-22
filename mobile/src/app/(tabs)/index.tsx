@@ -5,7 +5,7 @@ import { router } from "expo-router";
 import type { PlannedSessionOut, PlanWeek } from "@engine/plan.ts";
 import { Body, Button, Display, Label, RecDot, SpecRow, TaperMark } from "@/components/ui";
 import { C, type } from "@/lib/theme";
-import { currentWeekIndex, toggleSessionDone, useAthlete, usePlan, useToday } from "@/lib/store";
+import { currentWeekIndex, toggleSessionDone, useAthlete, usePlan, useToday, useWeeklyReconcile } from "@/lib/store";
 import { tapLight, tapSuccess } from "@/lib/haptics";
 import { seedDemoAthlete } from "@/lib/demo";
 
@@ -72,6 +72,7 @@ function UpcomingRow({ s, last }: { s: PlannedSessionOut; last: boolean }) {
 }
 
 export default function TodayScreen() {
+  useWeeklyReconcile();
   const athlete = useAthlete();
   const stored = usePlan();
   const { width } = useWindowDimensions();

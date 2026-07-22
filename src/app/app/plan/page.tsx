@@ -1,5 +1,8 @@
 import { hasCorpus, localToday } from "@/lib/athlete-data";
 import { readPlan } from "@/lib/plan-io";
+import { after } from "next/server";
+import { revalidatePath } from "next/cache";
+import { reconcileIfDue } from "@/lib/replan-auto";
 import { weekIntensity, type WeekIntensity } from "@/lib/week-insights";
 import { evidenceFor, TIER_LABEL, TIER_TONE } from "@/lib/evidence";
 import { EmptyState, SessionCard, StatChip } from "@/components/app/bits";
@@ -67,7 +70,17 @@ export default async function PlanPage() {
   if (!hasCorpus()) {
     return <EmptyState title="No training data connected" body="Run the extraction pipeline (pipeline/README.md), then reload." />;
   }
-  const stored = readPlan();
+  // Same automatic reconcile as the Today page — whichever the athlete opens
+  // first after a week closes is the one that reflows.
+  const reconciled = reconcileIfDue();
+  if (reconciled.commit) {
+    const commit = reconciled.commit;
+    after(() => {
+      commit();
+      revalidatePath("/app", "layout");
+    });
+  }
+  const stored = reconciled.stored ?? readPlan();
   if (!stored) {
     return (
       <EmptyState
