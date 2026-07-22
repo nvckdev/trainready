@@ -230,6 +230,39 @@ function anchorV2Ceiling(state: AthleteState): number {
   return anchor;
 }
 
+/**
+ * Fit population-prior weights from weekly examples (the same featurize +
+ * ridge the per-athlete layer uses). Shared by scripts/train-population-prior
+ * and the tests so the artifact and the engine can never disagree on form.
+ */
+export function fitPriorFromExamples(
+  examples: Array<{ state: AthleteState; actualTss: number }>
+): number[] {
+  const X = examples.map((e) => featurize(e.state));
+  const y = examples.map((e) => e.actualTss);
+  return ridge(X, y, LAMBDA);
+}
+
+/**
+ * The population-prior artifact (data/models/population-prior.json, written
+ * by scripts/train-population-prior.ts). Returns null when absent or invalid
+ * — and it is the CALLER's job to pass the result into PlanRequest /
+ * TaperV1Options explicitly. Never loaded inside the TaperV1 constructor:
+ * the backtest constructs TaperV1 directly and must never see a prior.
+ */
+export function loadPopulationPrior(): number[] | null {
+  try {
+    const p = join(process.cwd(), "data", "models", "population-prior.json");
+    if (!existsSync(p)) return null;
+    const parsed = JSON.parse(readFileSync(p, "utf8")) as { v?: number; weights?: unknown };
+    if (parsed.v !== 1 || !Array.isArray(parsed.weights) || parsed.weights.length !== 11) return null;
+    if (!parsed.weights.every((w) => typeof w === "number" && Number.isFinite(w))) return null;
+    return parsed.weights as number[];
+  } catch {
+    return null;
+  }
+}
+
 export interface TaperV1Options {
   /** Anchor-v2 ceiling for non-taper weeks. NOW THE DEFAULT (flipped
    *  2026-07-13, human sign-off). Kept only as a harmless no-op alias — it
@@ -242,6 +275,15 @@ export interface TaperV1Options {
    *  to the old flag-off behavior. Also switchable via env ANCHOR_LEGACY=1.
    *  Default false → anchor-v2 is on. */
   anchorLegacy?: boolean;
+  /** Population-prior weights (refinement 2): an 11-feature ridge fit across
+   *  athletes' corpora (fitPriorFromExamples / loadPopulationPrior). When
+   *  present, the learned layer is live from week 0 — weights start AS the
+   *  prior, and every observed week refits ridge-CENTERED-ON-the-prior, so
+   *  per-athlete data updates from it instead of from zero. The rails, the
+   *  taper protocol lock, and walk-forward ordering are untouched. ABSENT ⇒
+   *  byte-identical to the single-athlete engine (MIN_TRAIN=24 gate and all);
+   *  the backtest never passes it. */
+  priorWeights?: number[];
 }
 
 /** Phase-dependent bounds (fractions of trailing-month mean) the learned
@@ -267,6 +309,7 @@ export class TaperV1 implements Engine {
   private weights: number[] | null = null;
   private eras: Era[] | null = loadEras();
   private anchorV2: boolean;
+  private prior: number[] | null;
 
   constructor(opts: TaperV1Options = {}) {
     // Anchor-v2 + smoothing is the standard path (default flipped 2026-07-13,
@@ -276,14 +319,27 @@ export class TaperV1 implements Engine {
     // (anchor-v2 is already on) — kept so existing callers don't break.
     const legacy = opts.anchorLegacy ?? process.env.ANCHOR_LEGACY === "1";
     this.anchorV2 = !legacy;
+    // Refinement 2: an explicit population prior makes the layer live from
+    // week 0. Absent (every backtest construction) ⇒ null ⇒ the historical
+    // single-athlete path, byte-identical.
+    this.prior =
+      opts.priorWeights && opts.priorWeights.length === 11 && opts.priorWeights.every(Number.isFinite)
+        ? [...opts.priorWeights]
+        : null;
+    if (this.prior) this.weights = [...this.prior];
   }
 
-  /** Walk-forward learning: record what actually happened, refit. */
+  /** Walk-forward learning: record what actually happened, refit. With a
+   *  prior, refit from the very first week — ridge CENTERED on the prior
+   *  (fit the residual y − X·w0, add w0 back), so shrinkage pulls toward the
+   *  population, not toward zero. Without one: the original ≥24-week gate. */
   observe(state: AthleteState, actualTss: number, weekStart?: string): void {
     this.history.push({ state, actualTss, weekStart });
-    if (this.history.length >= MIN_TRAIN) {
+    if (this.history.length >= (this.prior ? 1 : MIN_TRAIN)) {
       const X = this.history.map((e) => featurize(e.state));
-      const y = this.history.map((e) => e.actualTss);
+      const y = this.prior
+        ? this.history.map((e, i) => e.actualTss - X[i].reduce((s, xi, j) => s + xi * this.prior![j], 0))
+        : this.history.map((e) => e.actualTss);
       const w = this.sampleWeights();
       if (w) {
         // Weighted least squares via row scaling: XᵀWX = (√W·X)ᵀ(√W·X).
@@ -293,7 +349,8 @@ export class TaperV1 implements Engine {
           y[i] *= s;
         }
       }
-      this.weights = ridge(X, y, LAMBDA);
+      const fitted = ridge(X, y, LAMBDA);
+      this.weights = this.prior ? this.prior.map((w0, i) => w0 + fitted[i]) : fitted;
     }
   }
 
@@ -444,7 +501,11 @@ export class TaperV1 implements Engine {
       weekTss: Math.round(clamped),
       sessions: Math.min(13, Math.max(3, Math.round(clamped / 62))),
       shares: ref.shares,
-      rationale: `Learned from ${this.history.length} weeks of your history${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (goalFloorLift ? `, lifted to ${Math.round(clamped)} by the goal target (race needs peak CTL ~${Math.round(state.goalPeakCtl!)}; ramping at the +20% ceiling, long run calf-capped)` : baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
+      rationale: `${
+        this.prior && this.history.length < MIN_TRAIN
+          ? `Personalized from the population prior${this.history.length ? ` + ${this.history.length} weeks of your history` : " (your own weeks refine it as they land)"}`
+          : `Learned from ${this.history.length} weeks of your history`
+      }${peakEra ? ` (capability anchored on your ${peakEra.span} block)` : ""}: ${Math.round(raw)} TSS${guarded ? (goalFloorLift ? `, lifted to ${Math.round(clamped)} by the goal target (race needs peak CTL ~${Math.round(state.goalPeakCtl!)}; ramping at the +20% ceiling, long run calf-capped)` : baseFloorLift ? `, lifted to ${Math.round(clamped)} by the week-1 base floor (1.15× maintenance — the race is inside 14 weeks, so the opening week must build, not hold)` : `, held to ${Math.round(clamped)} by the ${useAnchor ? "anchor-v2" : ref.phase} guardrail`) : ""}. ${ref.rationale}`,
     };
   }
 }

@@ -66,6 +66,13 @@ export interface PlanRequest {
    *  Optional → every existing caller/harness stays valid; parsed engine-side,
    *  so an invalid/empty value simply leaves the goal target inert. */
   goalTime?: string;
+  /** Population-prior weights for the learned layer (refinement 2). The
+   *  CALLER loads the artifact (engine/learned.ts loadPopulationPrior) and
+   *  passes it explicitly — the engine never reads it implicitly, so the
+   *  backtest path and every existing caller are byte-identical when absent.
+   *  With it, a brand-new athlete gets a live learned layer from week 1,
+   *  refined toward their own history as weeks land. */
+  priorWeights?: number[];
   /** Tune-up races (B-races) inside the plan window — same plan-only seam as
    *  goalPeakCtl, invisible to the backtest path. Each reshapes ONLY its own
    *  week: the race replaces that week's quality at full race TSS, the day
@@ -578,7 +585,11 @@ export function generatePlan(
 ): Plan {
   // Anchor-v2 is the default; anchorLegacy (or env ANCHOR_LEGACY=1) opts out.
   // anchorV2 is threaded through only as the accepted no-op alias.
-  const engine = new TaperV1({ anchorLegacy: req.anchorLegacy, anchorV2: req.anchorV2 });
+  const engine = new TaperV1({
+    anchorLegacy: req.anchorLegacy,
+    anchorV2: req.anchorV2,
+    priorWeights: req.priorWeights,
+  });
   for (const h of history) engine.observe(h.state, h.actualTss, h.weekStart);
 
   // Race goal → required-CTL target (engine/goal.ts). Parsed once. Only run

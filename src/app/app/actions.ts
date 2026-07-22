@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
+import { loadPopulationPrior } from "../../../engine/learned.ts";
 import { getAthlete, getHistory, getStateAt, getWeekly, localToday } from "@/lib/athlete-data";
 import { recomputeRemaining } from "../../../engine/replan.ts";
 import { readPlan, retitleSession, setSessionStatus, writePlan } from "@/lib/plan-io";
@@ -44,7 +45,14 @@ function buildAndSave(request: PlanRequest): void {
   // and thread them onto the request. Empty ⇒ no caps ⇒ the plan is unchanged.
   // Persisted with the plan so an adaptive re-plan (recomputeRemaining) inherits
   // them through its reflow of stored.request.
-  const req: PlanRequest = { ...request, tissueConstraints: loadTissueConstraints(startDate) };
+  const req: PlanRequest = {
+    ...request,
+    tissueConstraints: loadTissueConstraints(startDate),
+    // Refinement 2: the population prior makes the learned layer live before
+    // 24 observed weeks. Explicitly threaded — absent artifact ⇒ undefined ⇒
+    // byte-identical plans (and the founder corpus is past the gate anyway).
+    priorWeights: loadPopulationPrior() ?? undefined,
+  };
   const plan = generatePlan(req, state, history, athlete.zones);
   carryStatusForward(plan);
   writePlan({ request: req, plan });
