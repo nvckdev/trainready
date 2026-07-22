@@ -6,6 +6,7 @@ import {
   goalCtlTarget,
   loadRaceAnchors,
   longRunKm,
+  LONG_FRACTION_MAX,
   qualityKmhFor,
   parseGoalTime,
   peakLongKm,
@@ -181,6 +182,10 @@ export interface Plan {
       meetsWeeklyFloor: boolean;
       meetsLongFloor: boolean;
       tissueActive: boolean;
+      /** Refinement 5: the ~35% volume-fraction rail (not a tissue cap) is
+       *  what holds the long run under its evidence floor. Optional so stored
+       *  pre-refinement plans still validate. */
+      longCappedByFraction?: boolean;
     };
     /** Adaptive re-plan (engine/replan.ts) — all optional/inert, absent on
      *  freshly generated plans so nothing pre-existing changes. Stamped by the
@@ -834,11 +839,28 @@ export function generatePlan(
         prevLongKm === undefined
           ? Math.min(longPeakKm, Math.max(baseLongHr * easyKmh, startKm))
           : longRunKm(prevLongKm, longPeakKm, p.phase === "recovery");
+      // Refinement 5: the long run may not exceed ~35% of the week's running
+      // km — the volume-FRACTION overuse pattern the absolute caps miss. The
+      // other days' km are computed at the SAME per-kind speeds the
+      // achieved-km measurement uses (a TSS-bridge estimate understates
+      // easy-heavy weeks ~1.8×), and the closed form long ≤ f/(1−f)·others
+      // makes the cap self-consistent with the long run it produces. It caps
+      // even the slot's natural budget (the max(targetHr, baseLongHr) below);
+      // freed TSS redistributes to the other days via otherScale.
+      const kmOfSlot = (s: Slot) => {
+        const t = TEMPLATES[s.kind];
+        if (t.discipline !== "run") return 0;
+        const tss = (trainableTss * s.weight) / totalWeight;
+        const dur = Math.min(1.6, Math.max(0.4, tss / (t.intensity * t.intensity * 100)));
+        return dur * (KIND_ZONE[s.kind] ? qualityKmh : easyKmh);
+      };
+      const othersKm = placed.filter((s) => s.kind !== "run-long").reduce((a, s) => a + kmOfSlot(s), 0);
+      const fracCapHr = ((LONG_FRACTION_MAX / (1 - LONG_FRACTION_MAX)) * othersKm) / easyKmh;
       // Duration follows the (tissue-capped) distance; the 2.6 h clamp is the
       // universal session-length sanity bound (was also a blanket 130-min calf
       // ceiling — removed with INJURY_CAP_KM, since targetKm is already tissue-capped).
       const targetHr = Math.min(targetKm / easyKmh, 2.6);
-      longFloorHr = Math.min(Math.max(targetHr, baseLongHr), capHr);
+      longFloorHr = Math.min(Math.max(targetHr, baseLongHr), capHr, fracCapHr);
     }
     const longFinalTss = longFloorHr !== undefined ? LONG_IF2 * longFloorHr : undefined;
     const otherBaseSum =
@@ -1176,6 +1198,13 @@ export function generatePlan(
         meetsWeeklyFloor: actualWeeklyKm >= floor.weeklyKm - 0.5,
         meetsLongFloor: actualLongKm >= floor.longRunKm - 0.5,
         tissueActive: caps != null,
+        // Refinement 5: true when the ~35% volume-fraction rail — not a
+        // tissue cap — is what holds the long run under its evidence floor.
+        // Drives the honest-tradeoff copy; never silently resolved.
+        longCappedByFraction:
+          actualLongKm < floor.longRunKm - 0.5 &&
+          LONG_FRACTION_MAX * actualWeeklyKm < floor.longRunKm - 0.5 &&
+          (caps?.longRunKm == null || caps.longRunKm >= floor.longRunKm),
       }
     : undefined;
 
@@ -1204,6 +1233,11 @@ export function generatePlan(
     if (tissueIsCause) {
       const xtrain = caps?.weeklyKm != null ? " Cross-training holds the aerobic side without the impact." : "";
       return ` Peak volume runs below the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor because your ${tissueLabel} constraint caps it — not by choice.${xtrain}`;
+    }
+    // Refinement 5: the fraction rail vs the Fokkema long-run floor is a real
+    // tradeoff — name it, with the numbers, instead of silently picking a side.
+    if (longMissed && volumeTargets.longCappedByFraction) {
+      return ` Weekly volume (~${Math.round(volumeTargets.peakWeeklyKmActual)} km) can't yet support a ${floor.longRunKm} km long run safely — the long run is held to ~${Math.round(LONG_FRACTION_MAX * 100)}% of the week (${Math.round(LONG_FRACTION_MAX * volumeTargets.peakWeeklyKmActual)} km) and grows as weekly volume does. The ${floor.longRunKm} km floor is the target, not tonight's assignment.`;
     }
     return ` Peak volume is still short of the ${floor.weeklyKm} km / ${floor.longRunKm} km evidence floor — the ramp needs more runway to build there safely.`;
   })();

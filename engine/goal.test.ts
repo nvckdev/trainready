@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  easyKmhFor,
   finishEstimate,
   goalCtlTarget,
   loadRaceAnchors,
@@ -16,7 +17,7 @@ import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
 import { declareTissue } from "./tissue.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
-import { deriveZones } from "./zones.ts";
+import { deriveZones, thresholdMpsFromZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
 
 /**
@@ -343,18 +344,28 @@ if (!fx) {
       `goal ${plan.meta.projectedRaceCtl} vs no-goal ${noGoal.meta.projectedRaceCtl}`);
   }
 
-  // ——— G. Long run (§5) ————————————————————————————————————————————
+  // ——— G. Long run (§5, as refined) ————————————————————————————————————
+  // Refinements 4+5 update this block deliberately: km is measured at the
+  // ATHLETE's easy pace (not 11.6), and the long run is fraction-railed to
+  // ~35% of the week's running km. The old [22,26] km band encoded a 42–50%
+  // fraction on this athlete's ~50 km weeks — the exact overuse pattern the
+  // rail now prevents. The §5 24 km figure remains the TARGET
+  // (volumeTargets.peakLongKmTarget), reached once weekly volume supports it.
   {
-    const EASY_KMH = 11.6;
+    const kmh = easyKmhFor(thresholdMpsFromZones(zones));
     const longRuns = full
       .flatMap((w) => w.sessions)
       .filter((s) => s.discipline === "run" && s.title.toLowerCase().startsWith("long run"));
     const peakMin = Math.max(...longRuns.map((s) => s.durationHr * 60));
-    const peakKmEq = Math.max(...longRuns.map((s) => s.durationHr * EASY_KMH));
-    check("G15a", "peak long run in [110,130] min and never > 156 min",
-      peakMin >= 110 && peakMin <= 130 && peakMin <= 156, `peak ${peakMin.toFixed(0)} min`);
-    check("G15b", "peak long run in [22,26] km-equivalent",
-      peakKmEq >= 22 && peakKmEq <= 26, `peak ${peakKmEq.toFixed(1)} km`);
+    const peakKmEq = Math.max(...longRuns.map((s) => s.durationHr * kmh));
+    const vt = plan.meta.volumeTargets;
+    check("G15a", "peak long run is a real long run in [80,130] min, never > 156",
+      peakMin >= 80 && peakMin <= 130 && peakMin <= 156, `peak ${peakMin.toFixed(0)} min`);
+    check("G15b", "peak long run ≤ ~35% of peak weekly km (fraction rail) and ≥ 14 km",
+      vt != null && peakKmEq <= 0.35 * vt.peakWeeklyKmActual + 1.5 && peakKmEq >= 14,
+      `peak ${peakKmEq.toFixed(1)} km of ${vt?.peakWeeklyKmActual} km/wk`);
+    check("G15b2", "the 24 km tissue-capped figure survives as the surfaced TARGET",
+      vt?.peakLongKmTarget === 24, `${vt?.peakLongKmTarget}`);
 
     // peakLongKm / longRunKm unit behavior (feature 4: distance-driven, capped
     // only by an active tissue constraint — no blanket INJURY_CAP_KM).

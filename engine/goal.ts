@@ -342,6 +342,14 @@ const LONG_MULT: Record<RaceType, number> = {
 // capped prophylactically — peakLongKm is distance-driven with an Infinity cap.
 const LONGRUN_STEP_KM = 2.0;
 const LONGRUN_RATE = 0.15;
+/** Long run ≤ ~35% of the week's running km (refinement 5). The absolute km
+ *  caps miss the volume-FRACTION pattern: a 21 km long run on a 40 km week is
+ *  >50% of weekly volume — the classic overuse shape for a low-volume athlete.
+ *  Elite-practice/heuristic tier (common coaching guidance, no controlled
+ *  trial): we say "coaches cap it here", not "research proves 35%". When this
+ *  rail conflicts with the Fokkema ≥21 km floor, the plan SURFACES the
+ *  tradeoff (goal-gap copy) rather than silently picking a side. */
+export const LONG_FRACTION_MAX = 0.35;
 
 /**
  * Direct volume/long-run targets by race distance (feature 2). The strongest
