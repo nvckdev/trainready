@@ -21,7 +21,21 @@ import type { RaceType } from "./plan.ts";
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
 // ——— constants (documented; none are safety rails) ————————————————————
-export const CVOL = 4.9; // TSS per weekly-km (avg training pace ~5:00–5:20, IF ~0.80)
+export const CVOL = 4.9; // TSS per weekly-km FALLBACK (≈ IF 0.80 mixed pace) — zone-less callers only
+
+/**
+ * Pace-derived km↔TSS bridge (refinement 3). TSS/km at a relative intensity
+ * IF and threshold speed vT is (IF²·100)/(IF·vT·3.6) = IF·100/(vT·3.6): at
+ * the same relative effort a slower athlete spends more time — more TSS —
+ * per km. EASY_MIX_IF is the easy-dominant training mix (mid of the 0.76–0.84
+ * easy zone), matching the assumption the old constant baked in. Clamped to
+ * a sane band; absent/invalid threshold falls back to the legacy 4.9.
+ */
+const EASY_MIX_IF = 0.8;
+export function cvolFor(thresholdMps?: number): number {
+  if (!thresholdMps || !Number.isFinite(thresholdMps) || thresholdMps <= 0) return CVOL;
+  return Math.min(9, Math.max(3.5, (EASY_MIX_IF * 100) / (thresholdMps * 3.6)));
+}
 const TAPER_RETENTION = 0.94; // CTL retained across a 2–3 wk taper (ATL sheds far more)
 
 // Distance → km. Tri types have no run-pace goal target (returns undefined).
@@ -332,18 +346,23 @@ export const EVIDENCE_FLOOR: Record<RaceType, { weeklyKm: number; longRunKm: num
   ironman: { weeklyKm: 0, longRunKm: 0 },
 };
 
-/** km → TSS at the training-volume norm (the "TSS follows km" bridge; inverse of
- *  the implicit km = weekTss/CVOL the CTL math already uses). */
-export function weeklyKmToTss(weeklyKm: number): number {
-  return weeklyKm * CVOL;
+/** km → TSS at the athlete's bridge (refinement 3): pace-derived when a
+ *  threshold speed is supplied, the legacy CVOL otherwise. */
+export function weeklyKmToTss(weeklyKm: number, thresholdMps?: number): number {
+  return weeklyKm * cvolFor(thresholdMps);
 }
 
 /** Peak weekly running-volume TARGET (km): the evidence floor, scaled UP toward
  *  the goal-appropriate volume, pulled DOWN only by an active tissue weekly cap
  *  (which may take it below the floor — the caller then surfaces the shortfall). */
-export function peakWeeklyKm(raceType: RaceType, goalWeeklyTss = 0, tissueWeeklyKmCap = Infinity): number {
+export function peakWeeklyKm(
+  raceType: RaceType,
+  goalWeeklyTss = 0,
+  tissueWeeklyKmCap = Infinity,
+  thresholdMps?: number
+): number {
   const floor = EVIDENCE_FLOOR[raceType].weeklyKm;
-  const goalKm = goalWeeklyTss / CVOL;
+  const goalKm = goalWeeklyTss / cvolFor(thresholdMps);
   return Math.min(Math.max(floor, goalKm), tissueWeeklyKmCap);
 }
 

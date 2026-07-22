@@ -1,5 +1,5 @@
 import {
-  CVOL,
+  cvolFor,
   EVIDENCE_FLOOR,
   finishEstimate,
   goalCtlTarget,
@@ -20,7 +20,7 @@ import { crossKindFor } from "./crosstrain.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { sessionZoneSeconds, targetDistribution, weekDistribution } from "./intensity.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure, Zone } from "./types.ts";
-import type { PaceRange, Zones } from "./zones.ts";
+import { thresholdMpsFromZones, type PaceRange, type Zones } from "./zones.ts";
 
 export type { Block, WorkoutStructure } from "./types.ts";
 
@@ -626,11 +626,18 @@ export function generatePlan(
   // stay byte-identical; the evidence km floor only lifts a modest-goal/goal-less
   // plan. A tissue weekly cap pulls it down (may go below the evidence floor →
   // the goal-gap surfaces the shortfall).
-  const tissueWeeklyCapTss = caps?.weeklyKm != null ? caps.weeklyKm * CVOL : Infinity;
+  // Refinement 3: the km↔TSS bridge is the ATHLETE's — derived from their
+  // threshold speed — not a population constant. Every km-priced quantity
+  // below (tissue caps, evidence floors, goal km) uses the same bridge, so
+  // caps and floors can never disagree about what a km costs.
+  const cvol = cvolFor(thresholdMpsFromZones(zones));
+  const tissueWeeklyCapTss = caps?.weeklyKm != null ? caps.weeklyKm * cvol : Infinity;
   const peakWeeklyTssFloor = isRunRace
-    ? Math.min(Math.max(EVIDENCE_FLOOR[req.raceType].weeklyKm * CVOL, goal ? goal.peakCtl * 7 : 0), tissueWeeklyCapTss)
+    ? Math.min(Math.max(EVIDENCE_FLOOR[req.raceType].weeklyKm * cvol, goal ? goal.peakCtl * 7 : 0), tissueWeeklyCapTss)
     : 0;
-  const peakWeeklyKmTarget = isRunRace ? peakWeeklyKm(req.raceType, goal ? goal.weeklyTss : 0, caps?.weeklyKm ?? Infinity) : 0;
+  const peakWeeklyKmTarget = isRunRace
+    ? peakWeeklyKm(req.raceType, goal ? goal.weeklyTss : 0, caps?.weeklyKm ?? Infinity, thresholdMpsFromZones(zones))
+    : 0;
   // Feature 3: base-richness → per-athlete ramp ceiling. Logged history plus a
   // demonstrated historical peak from the race anchors (a prior season's CTL
   // that predates the weekly window — how the calibration athlete's 2023 base is

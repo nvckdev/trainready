@@ -1,4 +1,4 @@
-import { CVOL } from "./goal.ts";
+import { cvolFor } from "./goal.ts";
 
 /**
  * Cross-training as volume substitution (feature 5). When a tissue constraint
@@ -38,9 +38,11 @@ export function crossTrainSplit(targetTss: number, runCapTss: number): CrossTrai
   return { active: crossTss > 1, runTss, crossTss, totalTss: runTss + crossTss };
 }
 
-/** km ⇄ TSS bridge for surfacing the cross-training volume as km-equivalent. */
-export function tssToAerobicKm(tss: number): number {
-  return tss / CVOL;
+/** km ⇄ TSS bridge for surfacing the cross-training volume as km-equivalent —
+ *  the athlete's pace-derived bridge when a threshold speed is known
+ *  (refinement 3), the legacy constant otherwise. */
+export function tssToAerobicKm(tss: number, thresholdMps?: number): number {
+  return tss / cvolFor(thresholdMps);
 }
 
 /** Which non-impact modality closes the gap. Bike is the default aerobic

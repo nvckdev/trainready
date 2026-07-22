@@ -80,6 +80,16 @@ function per100(mps: number): string {
   return `${m}:${String(r).padStart(2, "0")}/100m`;
 }
 
+/** Recover the run threshold speed (m/s) from derived zones — the midpoint of
+ *  the threshold pace band (0.97–1.02 of vT), so it inverts deriveZones to
+ *  within ~0.5%. Lets zone-consuming code reach the athlete pace model
+ *  (cvolFor / easyKmhFor) without re-plumbing raw thresholds. */
+export function thresholdMpsFromZones(z: Zones): number {
+  const t = z.runSec.threshold;
+  const midSecPerKm = (t.minSecPerKm + t.maxSecPerKm) / 2;
+  return midSecPerKm > 0 ? 1000 / midSecPerKm : 0;
+}
+
 export function deriveZones(t: Thresholds): Zones {
   const rt = t.runThresholdSpeedMps;
   const css = t.swimCssMps;
