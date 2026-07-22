@@ -1,11 +1,12 @@
 import {
   cvolFor,
+  easyKmhFor,
   EVIDENCE_FLOOR,
   finishEstimate,
   goalCtlTarget,
   loadRaceAnchors,
-  LONG_EASY_KMH,
   longRunKm,
+  qualityKmhFor,
   parseGoalTime,
   peakLongKm,
   peakWeeklyKm,
@@ -485,9 +486,6 @@ const KIND_ZONE: Partial<Record<Kind, Zone>> = {
 };
 const ZONE_RANK: Zone[] = ["recovery", "easy", "tempo", "threshold", "cv", "vo2", "race"];
 const zRank = (z: Zone) => ZONE_RANK.indexOf(z);
-// Blended pace for quality run sessions (~4:50/km) vs easy/long (LONG_EASY_KMH,
-// ~5:10/km) — used to estimate run km for the tissue weekly-km cap (feature 4/5).
-const RUN_QUALITY_KMH = 12.4;
 
 /** Downgrade a quality slot when an active tissue maxSessionIntensity cap forbids
  *  its zone (feature 4): vo2→tempo→easy, strides (inherently fast) drop to easy,
@@ -626,11 +624,14 @@ export function generatePlan(
   // stay byte-identical; the evidence km floor only lifts a modest-goal/goal-less
   // plan. A tissue weekly cap pulls it down (may go below the evidence floor →
   // the goal-gap surfaces the shortfall).
-  // Refinement 3: the km↔TSS bridge is the ATHLETE's — derived from their
-  // threshold speed — not a population constant. Every km-priced quantity
-  // below (tissue caps, evidence floors, goal km) uses the same bridge, so
-  // caps and floors can never disagree about what a km costs.
-  const cvol = cvolFor(thresholdMpsFromZones(zones));
+  // Refinements 3+4: every km-priced and km-timed quantity derives from the
+  // ATHLETE's threshold speed — the km↔TSS bridge (cvol) and the km↔duration
+  // speeds (easy/quality km/h) — so caps, floors, durations, and achieved-km
+  // measurement can never disagree about what a km costs or takes.
+  const vTmps = thresholdMpsFromZones(zones);
+  const cvol = cvolFor(vTmps);
+  const easyKmh = easyKmhFor(vTmps);
+  const qualityKmh = qualityKmhFor(vTmps);
   const tissueWeeklyCapTss = caps?.weeklyKm != null ? caps.weeklyKm * cvol : Infinity;
   const peakWeeklyTssFloor = isRunRace
     ? Math.min(Math.max(EVIDENCE_FLOOR[req.raceType].weeklyKm * cvol, goal ? goal.peakCtl * 7 : 0), tissueWeeklyCapTss)
@@ -831,12 +832,12 @@ export function generatePlan(
       const startKm = Math.min(13, longPeakKm * 0.6);
       const targetKm =
         prevLongKm === undefined
-          ? Math.min(longPeakKm, Math.max(baseLongHr * LONG_EASY_KMH, startKm))
+          ? Math.min(longPeakKm, Math.max(baseLongHr * easyKmh, startKm))
           : longRunKm(prevLongKm, longPeakKm, p.phase === "recovery");
       // Duration follows the (tissue-capped) distance; the 2.6 h clamp is the
       // universal session-length sanity bound (was also a blanket 130-min calf
       // ceiling — removed with INJURY_CAP_KM, since targetKm is already tissue-capped).
-      const targetHr = Math.min(targetKm / LONG_EASY_KMH, 2.6);
+      const targetHr = Math.min(targetKm / easyKmh, 2.6);
       longFloorHr = Math.min(Math.max(targetHr, baseLongHr), capHr);
     }
     const longFinalTss = longFloorHr !== undefined ? LONG_IF2 * longFloorHr : undefined;
@@ -860,12 +861,12 @@ export function generatePlan(
       if (isLong && longFloorHr !== undefined) durationHr = longFloorHr;
       const ceil =
         slot.kind === "run-long" && caps?.longRunKm != null
-          ? Math.min(2.6, longPeakKm / LONG_EASY_KMH)
+          ? Math.min(2.6, longPeakKm / easyKmh)
           : slot.kind === "run-long" ? 2.6 : slot.kind === "bike-long" ? 4.5 : 1.6;
       return { tss, durationHr: Math.min(ceil, Math.max(0.4, durationHr)) };
     };
     const slotRunKm = (slot: Slot) =>
-      TEMPLATES[slot.kind].discipline === "run" ? slotLoad(slot).durationHr * (KIND_ZONE[slot.kind] ? RUN_QUALITY_KMH : LONG_EASY_KMH) : 0;
+      TEMPLATES[slot.kind].discipline === "run" ? slotLoad(slot).durationHr * (KIND_ZONE[slot.kind] ? qualityKmh : easyKmh) : 0;
 
     // Feature 4/5: a tissue WEEKLY-KM cap caps RUNNING in km (not TSS — easy-heavy
     // weeks cost fewer TSS/km than CVOL assumes, so a TSS budget under-binds).
@@ -923,7 +924,7 @@ export function generatePlan(
       if (isLong && longFloorHr !== undefined && protectedScale >= 1) durationHr = longFloorHr;
       const runLongCeilHr =
         !substituted && slot.kind === "run-long" && caps?.longRunKm != null
-          ? Math.min(2.6, longPeakKm / LONG_EASY_KMH)
+          ? Math.min(2.6, longPeakKm / easyKmh)
           : kind === "run-long" ? 2.6 : kind === "bike-long" ? 4.5 : substituted ? 2.5 : 1.6;
       durationHr = Math.min(runLongCeilHr, Math.max(0.4, durationHr));
       const m = mins(durationHr);
@@ -1033,7 +1034,7 @@ export function generatePlan(
     // prevPrescribed). Only base/build/recovery weeks carry a run-long here.
     const emittedLong = sessions.find((s) => longSlot && s.date === iso(wStart + longSlot.weekdayIdx * DAY) && s.discipline === "run");
     if (goal && isRunRace && emittedLong && (p.phase === "base" || p.phase === "build" || p.phase === "recovery")) {
-      prevLongKm = emittedLong.durationHr * LONG_EASY_KMH;
+      prevLongKm = emittedLong.durationHr * easyKmh;
     }
 
     if (tuneup) {
@@ -1162,8 +1163,8 @@ export function generatePlan(
   // are the Fokkema minimum viable; a plan may fall below only when a tissue cap
   // legitimately holds it there (flagged, and named in the goal-gap copy).
   const floor = isRunRace ? EVIDENCE_FLOOR[req.raceType] : { weeklyKm: 0, longRunKm: 0 };
-  const actualWeeklyKm = peakWeekRunKm(weeks);
-  const actualLongKm = peakLongRunKm(weeks);
+  const actualWeeklyKm = peakWeekRunKm(weeks, easyKmh, qualityKmh);
+  const actualLongKm = peakLongRunKm(weeks, easyKmh);
   const volumeTargets = isRunRace
     ? {
         peakWeeklyKmTarget: r1(peakWeeklyKmTarget),

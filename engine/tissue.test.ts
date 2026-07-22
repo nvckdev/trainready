@@ -9,7 +9,8 @@ import {
   tissueReasons,
   type TissueConstraint,
 } from "./tissue.ts";
-import { peakLongKm } from "./goal.ts";
+import { easyKmhFor, peakLongKm } from "./goal.ts";
+import { thresholdMpsFromZones } from "./zones.ts";
 
 /**
  * Tissue-constraint tests (feature 4). tsx script; exit code = failure count.
@@ -91,7 +92,11 @@ const stable = (p: Plan) => JSON.stringify({ ...p, meta: { ...p.meta, generatedA
   const calf = declareTissue("calf", "tendinopathy", "rotation", "active lower-calf tendon constraint (rotation-provoked)");
   const constrained = generatePlan({ ...REQ, tissueConstraints: [calf] }, seed, [], zones);
   const healthy = generatePlan(REQ, seed, [], zones);
-  const longKm = (p: Plan) => Math.max(...p.weeks.flatMap((w) => w.sessions.filter((s) => /long/i.test(s.title)).map((s) => s.durationHr * 11.6)));
+  // Measure at the ATHLETE's easy pace (refinement 4): the engine now caps the
+  // long run's duration at capKm / easyKmhFor(vT), so the ruler must use the
+  // same bridge — the old hardcoded 11.6 read a correctly-capped session as 25.5.
+  const kmh = easyKmhFor(thresholdMpsFromZones(zones));
+  const longKm = (p: Plan) => Math.max(...p.weeks.flatMap((w) => w.sessions.filter((s) => /long/i.test(s.title)).map((s) => s.durationHr * kmh)));
   check("TT6a", "constrained peak long run ≤ 24 km (the cap binds)", longKm(constrained) <= 24 + 0.3, longKm(constrained).toFixed(1));
   check("TT6b", "healthy peak long run is NOT held to the old blanket 24 km cap", longKm(healthy) >= longKm(constrained) - 1e-9);
   check("TT6c", "meta.tissue surfaces the cap + why", constrained.meta.tissue?.caps.longRunKm === 24 && (constrained.meta.tissue?.why[0] ?? "").length > 10);

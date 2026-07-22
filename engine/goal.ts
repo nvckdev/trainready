@@ -305,7 +305,24 @@ function loadPmcCtl(): Map<string, number> {
 
 // ——— long-run progression (§5): distance-tied, injury-capped ——————————
 
-export const LONG_EASY_KMH = 11.6; // easy long-run pace
+export const LONG_EASY_KMH = 11.6; // easy long-run pace FALLBACK — zone-less callers only
+
+/**
+ * Athlete speed bridges (refinement 4): easy pace is the mid of the 0.76–0.84
+ * easy zone (0.80·vT), quality pace ~0.93·vT — the same fractions deriveZones
+ * prints on session cards, so durations and pace strings agree. The legacy
+ * constants (11.6 / 12.4 km/h) remain as zone-less fallbacks; both equal the
+ * derived value for a ~4:10/km-threshold athlete, which is what they always
+ * silently assumed.
+ */
+export function easyKmhFor(thresholdMps?: number): number {
+  if (!thresholdMps || !Number.isFinite(thresholdMps) || thresholdMps <= 0) return LONG_EASY_KMH;
+  return Math.min(16, Math.max(7, 0.8 * thresholdMps * 3.6));
+}
+export function qualityKmhFor(thresholdMps?: number): number {
+  if (!thresholdMps || !Number.isFinite(thresholdMps) || thresholdMps <= 0) return 12.4;
+  return Math.min(18, Math.max(8, 0.93 * thresholdMps * 3.6));
+}
 const LONG_MULT: Record<RaceType, number> = {
   "run-5k": 2.6,
   "run-10k": 1.6,
