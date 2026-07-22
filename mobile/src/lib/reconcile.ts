@@ -6,6 +6,7 @@ import { executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } 
 import { thresholdMpsFromZones } from "@engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "@engine/seed.ts";
 import { localToday, setPlan, zonesFor, type StoredAthlete, type StoredPlan } from "./store";
+import { readSync } from "./sync";
 
 /**
  * On-device weekly reconcile. Same gate and same engine as the dashboard; the
@@ -134,7 +135,12 @@ export async function reconcileIfDue(
   today = localToday()
 ): Promise<MobileReconcileResult> {
   const zones = zonesFor(athlete);
-  const executed = executedByWeek(stored.plan, [], [], {
+  // Imported activities are the authoritative signal when a source could
+  // vouch for the week; done-marks remain a positive-only fallback inside
+  // executedByWeek. With no importer connected this is empty, which leaves
+  // every week exactly as it was.
+  const sync = await readSync();
+  const executed = executedByWeek(stored.plan, sync.activities, sync.coverage, {
     runThresholdMps: thresholdMpsFromZones(zones),
     lthrBpm: athlete.thresholds.lthrBpm,
   });

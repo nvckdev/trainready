@@ -6,6 +6,7 @@ import { Body, Button, Display, Label } from "@/components/ui";
 import { C, FONT, R, type } from "@/lib/theme";
 import { setAthlete, setPlan, useAthlete, usePlan } from "@/lib/store";
 import { tapLight, tapSuccess } from "@/lib/haptics";
+import { runSync, readSync, type MobileSyncStore } from "@/lib/sync";
 import { decodePairCode } from "@/lib/pair";
 import { shareIcs } from "@/lib/ics";
 import {
@@ -55,6 +56,12 @@ export default function SettingsScreen() {
   const [saved, setSaved] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [sync, setSync] = useState<MobileSyncStore | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    void readSync().then(setSync);
+  }, []);
   const [pairInput, setPairInput] = useState("");
   const [pairMsg, setPairMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [reminders, setReminders] = useState(false);
@@ -126,6 +133,16 @@ export default function SettingsScreen() {
       return;
     }
     setReminders(next);
+  };
+
+  const doSync = async () => {
+    tapLight();
+    setSyncing(true);
+    try {
+      setSync(await runSync());
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const exportIcs = async () => {
@@ -220,6 +237,48 @@ export default function SettingsScreen() {
         <Body style={{ fontSize: 12, lineHeight: 18, marginTop: -8 }}>
           Applies to the next generated plan. The current plan keeps the thresholds it was drafted with.
         </Body>
+
+        <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 20 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Label>ACTIVITY SOURCES</Label>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sync activities now"
+              onPress={doSync}
+              disabled={syncing}
+              hitSlop={10}
+            >
+              <Label style={{ fontSize: 10, color: syncing ? C.boneFaint : C.signalText }}>
+                {syncing ? "SYNCING…" : "SYNC NOW"}
+              </Label>
+            </Pressable>
+          </View>
+          <Body style={{ fontSize: 13, lineHeight: 19 }}>
+            What you actually trained, read from connected sources and deduplicated so a run
+            recorded in several places counts once.
+          </Body>
+          {(sync?.sources ?? []).map((src) => (
+            <View key={src.source} style={{ marginTop: 12 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+                <Text style={[type.body, { fontSize: 14, color: C.bone }]}>{src.label}</Text>
+                <Label style={{ fontSize: 10, color: src.status === "ok" ? C.boneFaint : C.boneMuted }}>
+                  {src.status === "ok"
+                    ? `${src.activityCount} · ${String(src.lastSyncedAt ?? "").slice(0, 10)}`
+                    : src.status.replace("-", " ").toUpperCase()}
+                </Label>
+              </View>
+              {src.message && (
+                <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 4 }}>{src.message}</Body>
+              )}
+            </View>
+          ))}
+          {sync && sync.sources.every((x) => x.status !== "ok") && (
+            <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 10 }}>
+              With no source connected, weeks you don't mark done stay unknown rather than counting
+              as rest — the plan won't adapt on missing data.
+            </Body>
+          )}
+        </View>
 
         <View style={{ borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 20 }}>
           <Label style={{ marginBottom: 8 }}>IMPORT FROM DASHBOARD</Label>

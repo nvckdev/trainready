@@ -43,6 +43,11 @@ export interface Connector {
   label: string;
   /** False ⇒ the athlete has not connected it; never treated as a failure. */
   isConfigured(): boolean;
+  /** Why it is unconfigured, in the athlete's terms. Without this the UI can
+   *  only say "not connected", which is wrong for a source that is
+   *  unavailable for a STRUCTURAL reason — "Apple Health is iOS only" is a
+   *  different fact from "you haven't linked it yet". */
+  notConfiguredReason?(): string;
   /** Fetch activities on/after `since` (ISO date). Must NEVER throw — a thrown
    *  connector is converted to `unavailable` by `runConnector`. */
   fetchActivities(since: string): Promise<FetchResult>;
@@ -61,7 +66,7 @@ export function emptyResult(source: ActivitySource, status: FetchStatus, message
  */
 export async function runConnector(c: Connector, since: string, timeoutMs = 15000): Promise<FetchResult> {
   if (!c.isConfigured()) {
-    return emptyResult(c.source, "not-configured", `${c.label} is not connected.`);
+    return emptyResult(c.source, "not-configured", c.notConfiguredReason?.() ?? `${c.label} is not connected.`);
   }
   try {
     const timeout = new Promise<FetchResult>((_, rej) =>
@@ -158,5 +163,27 @@ export function rateSpend(state: RateState, budget: RateBudget, n = 1, now = Dat
     recent,
     dayStart: rolled ? now : state.dayStart,
     dayCount: (rolled ? 0 : state.dayCount) + n,
+  };
+}
+
+/**
+ * A connector whose backing implementation is not present on this platform or
+ * in this build — the seam for a source that is wired but dormant.
+ *
+ * This is deliberately a first-class concept rather than an omission. A source
+ * the athlete could connect but hasn't, a source that needs a native module
+ * this build lacks, and a source that FAILED are three different facts, and
+ * only the third means "the picture is incomplete". A dormant connector
+ * reports `not-configured`, contributes no activities and no coverage, and so
+ * leaves every week exactly as unknown as it was before — the reconcile path
+ * is byte-identical whether it is in the list or not.
+ */
+export function dormantConnector(source: ActivitySource, label: string, reason: string): Connector {
+  return {
+    source,
+    label,
+    isConfigured: () => false,
+    notConfiguredReason: () => reason,
+    fetchActivities: async () => emptyResult(source, "not-configured", reason),
   };
 }

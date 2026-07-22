@@ -201,8 +201,21 @@ export function localToday(): string {
  *  here so every screen shares one trigger — the first screen the athlete
  *  opens after a week closes is the one that reflows, and the store's
  *  subscription pushes the adjusted plan to all the others. */
+const syncTried = new Set<string>();
+/** On-app-open activity sync: debounced in sync.ts, fired at most once per
+ *  day per app session here, and always BEFORE the reconcile reads evidence. */
+export function useActivitySync(): void {
+  const today = useToday();
+  useEffect(() => {
+    if (syncTried.has(today)) return;
+    syncTried.add(today);
+    void import("./sync").then((m) => m.syncIfDue()).catch(() => {});
+  }, [today]);
+}
+
 const reconcileTried = new Set<string>();
 export function useWeeklyReconcile(): void {
+  useActivitySync();
   const plan = usePlan();
   const athlete = useAthlete();
   const today = useToday();

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import {
   emptyRateState,
+  dormantConnector,
   emptyResult,
   rateCheck,
   rateSpend,
@@ -103,6 +104,24 @@ async function main() {
     const u = await runConnector(unconfigured, "2026-07-01");
     check("C2f", "an unconnected source is not-configured, distinct from a failure",
       u.status === "not-configured" && u.coverage.length === 0);
+  }
+
+  // ——— C2g. the dormant seam is inert, not a failure ————————————————————
+  {
+    const hk = dormantConnector("healthkit", "Apple Health", "Needs a build with the Health module.");
+    const d = await runConnector(hk, "2026-07-01");
+    check("C2g", "a dormant source reports not-configured, never unavailable",
+      d.status === "not-configured" && d.activities.length === 0 && d.coverage.length === 0, d.status);
+    check("C2h", "…and does NOT mark the sync degraded (nothing is broken)",
+      (await syncAll([hk], "2026-07-01")).degraded === false);
+    // The load-bearing property: adding it to the list changes nothing.
+    const withOut = await syncAll([], "2026-07-01");
+    const withIt = await syncAll([hk], "2026-07-01");
+    check("C2j", "…and it explains ITSELF rather than defaulting to 'not connected'",
+      (d.message ?? "").includes("Health module"), d.message);
+    check("C2i", "…so the evidence with it present is identical to without it",
+      JSON.stringify({ a: withIt.activities, c: withIt.coverage, d: withIt.degraded }) ===
+        JSON.stringify({ a: withOut.activities, c: withOut.coverage, d: withOut.degraded }));
   }
 
   // ——— C3. unknown never triggers a reflow (end-to-end with the rollup) ————
