@@ -5,6 +5,10 @@ import { loadPopulationPrior } from "../../engine/learned.ts";
 import { getAthlete, getHistory, getStateAt, getWeekly, localToday } from "@/lib/athlete-data";
 import { readPlan, writePlan } from "@/lib/plan-io";
 import { loadTissueConstraints } from "@/lib/tissue-constraints";
+import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "../../engine/activity.ts";
+import { thresholdMpsFromZones } from "../../engine/zones.ts";
+import { corpusWeeklyMeasured } from "@/lib/connectors";
+import { readSyncStore } from "@/lib/sync-io";
 
 /**
  * The reconcile runner (rule 12 gateway): all corpus I/O for the adaptive
@@ -36,27 +40,30 @@ export function currentWeekIndex(weeks: Plan["weeks"], today: string): number {
  * precedence the manual re-plan has always used.
  */
 export function executedTssByWeek(plan: Plan): Map<string, number> {
-  const weekly = getWeekly();
-  const logged = new Map(weekly.map((r) => [r.weekStart, r.tss]));
-  // How far the extraction pipeline has actually reached. Beyond this the
-  // corpus is SILENT, not empty — a week with no row and no done-marks is
-  // unknown, and the gate must refuse rather than assume zero training.
-  const coveredThrough = weekly.length ? weekly[weekly.length - 1].weekStart : null;
-  const out = new Map<string, number>();
+  const weekStarts = plan.weeks.map((w) => w.weekStart);
+  const athlete = getAthlete();
+  const ctx = athlete
+    ? { runThresholdMps: thresholdMpsFromZones(athlete.zones), lthrBpm: athlete.thresholds.lthrBpm }
+    : {};
+
+  // Imported activities are the primary signal — what the athlete actually
+  // trained, deduped across sources so a run pushed to three platforms counts
+  // once. The corpus enters separately as measured WEEKLY load (it is a
+  // rollup, not a session stream; summing the two would double-count).
+  const sync = readSyncStore();
+  const corpus = corpusWeeklyMeasured();
+  const stream: ImportedActivity[] = dedupeActivities(sync.activities);
+  const coverage: Coverage[] = [...corpus.coverage, ...sync.coverage];
+  const fromImports = rollupByWeek(weekStarts, stream, coverage, ctx, corpus.measured);
+
+  // Done-marks remain a LAST-RESORT positive signal: they can raise a week the
+  // importers never saw, but they can never authorize a zero — an athlete who
+  // forgets to tap has not proven they rested.
+  const out = new Map(fromImports);
   for (const w of plan.weeks) {
-    const row = logged.get(w.weekStart);
-    if (row !== undefined) {
-      out.set(w.weekStart, Math.round(row));
-      continue;
-    }
+    if (out.has(w.weekStart)) continue;
     const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
-    if (done > 0) {
-      out.set(w.weekStart, Math.round(done));
-      continue;
-    }
-    // No logged row, no done-marks. Only trustworthy as a real zero if the
-    // corpus demonstrably covers this week; otherwise leave it unknown.
-    if (coveredThrough !== null && w.weekStart <= coveredThrough) out.set(w.weekStart, 0);
+    if (done > 0) out.set(w.weekStart, Math.round(done));
   }
   return out;
 }

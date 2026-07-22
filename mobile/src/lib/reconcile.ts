@@ -2,6 +2,8 @@ import type { Plan, PlanRequest } from "@engine/plan.ts";
 import type { AthleteState } from "@engine/types.ts";
 import { recomputeRemaining, type WeekActual } from "@engine/replan.ts";
 import { reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
+import { executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
+import { thresholdMpsFromZones } from "@engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "@engine/seed.ts";
 import { localToday, setPlan, zonesFor, type StoredAthlete, type StoredPlan } from "./store";
 
@@ -23,11 +25,28 @@ const DAY = 86400000;
 const at = (d: string) => Date.parse(d + "T12:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-/** Executed TSS per plan week, from done marks. */
-export function executedByWeek(plan: Plan): Map<string, number> {
-  const out = new Map<string, number>();
+/**
+ * Executed TSS per plan week.
+ *
+ * Done-marks are POSITIVE-ONLY evidence: they can raise a week, but they can
+ * never authorize a zero. An athlete who trained and forgot to tap has not
+ * proven they rested — claiming otherwise is the same "absence is not zero"
+ * bug the dashboard fixed, and it was live here until imports landed.
+ * Imported activities (with real coverage windows) are what make a zero
+ * authoritative on the phone.
+ */
+export function executedByWeek(
+  plan: Plan,
+  imported: ImportedActivity[] = [],
+  coverage: Coverage[] = [],
+  ctx: { runThresholdMps?: number; lthrBpm?: number } = {}
+): Map<string, number> {
+  const weekStarts = plan.weeks.map((w) => w.weekStart);
+  const out = rollupByWeek(weekStarts, imported, coverage, ctx);
   for (const w of plan.weeks) {
-    out.set(w.weekStart, w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0));
+    if (out.has(w.weekStart)) continue;
+    const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
+    if (done > 0) out.set(w.weekStart, done);
   }
   return out;
 }
@@ -69,7 +88,10 @@ function buildLedger(plan: Plan, asOf: string, executed: Map<string, number>): W
   const completed = plan.weeks.filter((w) => at(w.weekStart) + 7 * DAY <= at(asOf));
   return completed.map((wk, i) => {
     const prev = completed[i - 1];
-    const rampRef = prev ? (executed.get(prev.weekStart) ?? prev.targetTss) : wk.targetTss;
+    // `||` not `??`: a zero-executed previous week is a real value but a
+    // useless ramp reference — coalescing it to 0 makes rampCapTss 0, which
+    // disables replan's forced-recovery rule entirely (same fix as dashboard).
+    const rampRef = prev ? (executed.get(prev.weekStart) || prev.targetTss) : wk.targetTss;
     return {
       weekStart: wk.weekStart,
       actualTss: Math.round(executed.get(wk.weekStart) ?? 0),
@@ -111,7 +133,11 @@ export async function reconcileIfDue(
   athlete: StoredAthlete,
   today = localToday()
 ): Promise<MobileReconcileResult> {
-  const executed = executedByWeek(stored.plan);
+  const zones = zonesFor(athlete);
+  const executed = executedByWeek(stored.plan, [], [], {
+    runThresholdMps: thresholdMpsFromZones(zones),
+    lthrBpm: athlete.thresholds.lthrBpm,
+  });
   const decision = reconcileGate({
     weeks: stored.plan.weeks,
     raceDate: stored.request.raceDate,
@@ -140,7 +166,7 @@ export async function reconcileIfDue(
       ledger: buildLedger(stored.plan, decision.asOf, executed),
       asOf: decision.asOf,
       history: [],
-      zones: zonesFor(athlete),
+      zones,
     });
   } catch (e) {
     // The gate is the primary defence; this guarantees a failed reflow can

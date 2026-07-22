@@ -8,6 +8,8 @@ import {
 } from "@/lib/athlete-data";
 import { DISC_COLOR, EmptyState, StatChip } from "@/components/app/bits";
 import { PairPhone } from "@/components/app/pair-phone";
+import { readSyncStore } from "@/lib/sync-io";
+import { syncActivitiesAction } from "../actions";
 import { loadPopulationPrior } from "../../../../engine/learned.ts";
 
 /** `TAPER1.` + base64url(JSON) — decoded by the mobile app's Settings screen. */
@@ -40,9 +42,18 @@ function fmtDuration(hr: number): string {
 export default async function ImportPage() {
   const store = readImports();
   const synced = await getIntervalsActivities();
-  const all = [...store.activities, ...synced].sort((a, b) =>
-    a.date < b.date ? 1 : a.date > b.date ? -1 : 0
-  );
+  // Dedupe by (date, sport, rounded duration) before totalling — the raw
+  // concat double-counted any session present in both the file store and
+  // intervals.icu.
+  const seen = new Set<string>();
+  const all = [...store.activities, ...synced]
+    .filter((a) => {
+      const k = `${a.date}|${a.sport}|${Math.round(a.durationHr * 60)}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   const recent = all.slice(0, SHOW_MAX);
   const totalTss = all.reduce((s, a) => s + a.tssEst, 0);
   const batch = store.lastBatch;
@@ -114,6 +125,51 @@ export default async function ImportPage() {
               </div>
             </div>
           )}
+
+          {(() => {
+            const sync = readSyncStore();
+            return (
+              <div className="border border-hairline">
+                <div className="px-4 py-3 border-b border-hairline flex items-center justify-between">
+                  <span className="label-mono text-bone-faint">Connected sources</span>
+                  <form action={syncActivitiesAction}>
+                    <button className="label-mono text-[10px] border border-hairline px-2 py-1 text-bone hover:border-bone-faint">
+                      Sync now
+                    </button>
+                  </form>
+                </div>
+                <div className="px-4 py-4 space-y-3">
+                  {sync.sources.length === 0 && (
+                    <p className="text-[13px] leading-relaxed text-bone-muted">
+                      No sync has run yet. Sync now pulls recent activities from every connected
+                      source and deduplicates them, so a run pushed to several platforms counts once.
+                    </p>
+                  )}
+                  {sync.sources.map((src) => (
+                    <div key={src.source} className="flex items-baseline justify-between gap-4">
+                      <div className="min-w-0">
+                        <span className="font-mono text-[12.5px] text-bone">{src.label}</span>
+                        {src.message && (
+                          <p className="text-[12.5px] leading-relaxed text-signal-bright">{src.message}</p>
+                        )}
+                      </div>
+                      <span className="label-mono text-[10px] text-bone-faint whitespace-nowrap">
+                        {src.status === "ok"
+                          ? `${src.activityCount} · synced ${String(src.lastSyncedAt ?? "").slice(0, 10)}`
+                          : src.status.toUpperCase()}
+                      </span>
+                    </div>
+                  ))}
+                  {sync.sources.some((s2) => s2.status !== "ok" && s2.status !== "not-configured") && (
+                    <p className="text-[12.5px] leading-relaxed text-bone-muted">
+                      A source that failed is reported as unknown, never as a week without training —
+                      the plan will not adapt on missing data.
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {(() => {
             const code = pairCode();

@@ -5,6 +5,7 @@ import { readPlan } from "@/lib/plan-io";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { reconcileIfDue } from "@/lib/replan-auto";
+import { syncIfDue } from "@/lib/sync-io";
 import { replanAction } from "./actions";
 import { weeklyDigest } from "@/lib/digest";
 import { getWeekly } from "@/lib/athlete-data";
@@ -112,6 +113,12 @@ export default async function TodayPage() {
   // visit renders the adjusted plan (not the stale one), persisted in after()
   // so nothing mutates during render — revalidate/cookies throw in the render
   // phase, and after() runs with phase 'after' where they are legal.
+  // On-app-open activity sync, debounced to 30 min and deferred so it never
+  // blocks the response. It writes evidence only; the reconcile gate acts on
+  // it from the next render, which keeps the two concerns independent.
+  after(async () => {
+    await syncIfDue();
+  });
   const reconciled = reconcileIfDue();
   if (reconciled.commit) {
     const commit = reconciled.commit;

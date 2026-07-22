@@ -6,6 +6,7 @@ import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../
 import { loadPopulationPrior } from "../../../engine/learned.ts";
 import { getAthlete, getHistory, getStateAt, localToday } from "@/lib/athlete-data";
 import { reconcileNow, regenerateFromToday } from "@/lib/replan-auto";
+import { runSync } from "@/lib/sync-io";
 import { readPlan, retitleSession, setSessionStatus, writePlan } from "@/lib/plan-io";
 import {
   parseDisciplineMode,
@@ -141,6 +142,14 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   buildAndSave(request);
   revalidatePath("/app", "layout");
   redirect("/app/plan");
+}
+
+/** Manual "Sync now": fetch every connector, then let the next render's
+ *  reconcile gate act on the refreshed evidence. */
+export async function syncActivitiesAction(): Promise<void> {
+  await runSync();
+  revalidatePath("/app", "layout");
+  redirect("/app/import");
 }
 
 /**
