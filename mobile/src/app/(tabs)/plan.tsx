@@ -249,7 +249,9 @@ export default function PlanScreen() {
                   <Body style={{ fontSize: 12, lineHeight: 18, marginTop: 8 }}>
                     {vt.tissueActive
                       ? "A cap holds volume under the usual floor. The plan compensates where it safely can."
-                      : "Volume is still building toward the floor. The ramp needs more runway to get there safely."}
+                      : vt.longCappedByFraction
+                        ? `Weekly volume can't yet support a ${vt.longFloorKm} km long run safely — it's held to ~35% of the week and grows as volume does.`
+                        : "Volume is still building toward the floor. The ramp needs more runway to get there safely."}
                   </Body>
                 )}
               </View>

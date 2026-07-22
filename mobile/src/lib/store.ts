@@ -32,6 +32,10 @@ export interface StoredAthlete {
   seed: AthleteState;
   /** True while the seed is the bundled demo, not imported history. */
   demo: boolean;
+  /** Population-prior weights carried by the dashboard pairing code
+   *  (refinement 2) — makes the learned layer live from week 1 on-device.
+   *  Absent ⇒ engine behavior byte-identical. */
+  priorWeights?: number[];
 }
 
 export interface StoredPlan {

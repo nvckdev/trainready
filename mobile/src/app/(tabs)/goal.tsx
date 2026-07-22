@@ -195,10 +195,13 @@ export default function GoalScreen() {
     if (busy.current || dateInvalid || !athlete) return;
     busy.current = true;
     setError(null);
-    // Mount the drafting screen first, run the engine a frame later — the
-    // tap answers instantly instead of freezing until the plan is done.
+    // Mount the drafting screen first, run the engine a beat later — the tap
+    // answers instantly instead of freezing until the plan is done. A plain
+    // timer, NOT requestAnimationFrame: rAF only fires while frames are being
+    // produced, so a backgrounded app (or a non-compositing webview — how
+    // this was caught) would never run the engine at all.
     setGenerating({ sessions: 0, weeks: Math.max(wk ?? 0, 1) });
-    requestAnimationFrame(() => {
+    {
       setTimeout(() => {
         try {
           const request: PlanRequest = {
@@ -209,6 +212,7 @@ export default function GoalScreen() {
             longDay,
             startDate: today,
             goalTime: goalTime.trim() || undefined,
+            priorWeights: athlete.priorWeights,
             ...(tuneupDate
               ? { tuneups: [{ date: tuneupDate, raceType: tuneupType, name: tuneupName.trim() || undefined }] }
               : {}),
@@ -232,8 +236,8 @@ export default function GoalScreen() {
           setGenerating(null);
           setError(e instanceof Error ? e.message : "Plan generation failed.");
         }
-      }, 0);
-    });
+      }, 50);
+    }
   };
 
   if (generating) {

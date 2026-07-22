@@ -142,7 +142,16 @@ multisport athletes during build/taper.
 
 A deliberately small model: **ridge regression (λ=12) over 11 features**,
 trained walk-forward (zero look-ahead) on the athlete's own executed weeks,
-active only after **24 observed weeks**. Features (`featurize`): intercept,
+active after **24 observed weeks** — or from **week 0** when an explicit
+**population prior** is supplied (refinement 2, `priorWeights` on
+`PlanRequest`/`TaperV1Options`): weights start AS the prior and each observed
+week refits ridge *centered on it* (fit the residual y − X·w0, add w0 back),
+so per-athlete data shrinks toward the population instead of toward zero and
+dominates as history grows. The artifact is fit by
+`scripts/train-population-prior.ts` (`fitPriorFromExamples`, the same
+featurize+ridge) into gitignored `data/models/population-prior.json`; callers
+load it via `loadPopulationPrior()` — never auto-loaded inside `TaperV1`, so
+the backtest can never see it. Features (`featurize`): intercept,
 CTL, ATL, TSB, mean & slope of last-4-week TSS, breakRatio,
 min(30, daysSinceLastSession), taper-window flag (≤21d), race-week flag (≤7d),
 cutback-slot flag.
@@ -169,7 +178,10 @@ order (this ordering is load-bearing — see the rationale strings in code):
    base-rich, floored at 1.0 so an acute-tissue 1.05 cap can bind.
    Recovery weeks additionally cap at `prev non-zero week × 1.2`.
 4. **Week-1 base floor** (plan-only): first plan week, base/build, race ≤14
-   weeks out ⇒ floor at `1.15 × CTL×7`, itself min-capped by the ramp rails.
+   weeks out ⇒ floor at `1.15 × max(CTL×7, decayedPeakWeek)` (refinement 6 —
+   demonstrated capacity, the same `decayedPeakWeek` term the anchor-v2
+   ceiling trusts), min-capped by the per-athlete ramp rails so it can never
+   exceed the ceiling.
    Trigger is the explicit `isFirstPlanWeek` signal — the earlier proxy
    (`prevPrescribedTss === undefined`) leaked onto every backtest week and
    regressed the pins; that incident is the canonical example of why plan-only
@@ -200,8 +212,14 @@ Pipeline, in execution order:
   goal time → VDOT → the weekly km / CTL a athlete of that VDOT typically
   holds, with taper retention 0.94. An implausible goal (< 140 s/km) is
   **inert**, not an error.
-- Volume targets (feature 2): `CVOL = 4.9` TSS per weekly-km converts between
-  km and TSS. Evidence floors (`EVIDENCE_FLOOR`, Fokkema 2020, observational):
+- Volume targets (feature 2): the km↔TSS bridge is the ATHLETE's
+  (refinement 3): `cvolFor(vT) = IF·100/(vT·3.6)` at easy-mix IF 0.80, clamped
+  [3.5, 9] — a 4:05 vs 6:00/km-threshold athlete pays 5.44 vs 8.00 TSS/km.
+  `thresholdMpsFromZones` recovers vT from zones; `CVOL = 4.9` survives only
+  as the zone-less fallback. Likewise all km↔duration conversions use
+  `easyKmhFor` (0.80·vT) / `qualityKmhFor` (0.93·vT) with 11.6 / 12.4 as
+  fallbacks (refinement 4) — construction and achieved-km measurement share
+  one ruler (volume.ts takes the speeds as parameters). Evidence floors (`EVIDENCE_FLOOR`, Fokkema 2020, observational):
   e.g. run-half ⇒ ≥32 weekly km, ≥21 km longest run. `peakWeeklyTssFloor`
   feeds clamp №5 above; tissue weekly caps pull it down.
 - Base richness (feature 3, engine/history.ts): logged history + historical
@@ -241,9 +259,13 @@ Pipeline, in execution order:
    returns that load; see the TU3d bug story in §12).
 6. **Long-run progression** (goal run plans, base/build/recovery): the long
    run's *distance* is decoupled from weekly TSS — starts near
-   `min(13km, 0.6×peak)`, steps ≤ +2 km/week toward the (tissue-capped) peak
-   (`LONG_MULT` per race, cap 24 km default), flat on cutbacks, duration =
-   km / 11.6 kmh clamped ≤ 2.6 h, and ≤60% of the week's TSS. Remaining TSS
+   `min(13km, 0.6×peak)`, steps ≤ +2 km/week toward the (tissue-capped) peak,
+   flat on cutbacks, duration = km / easyKmhFor(vT) clamped ≤ 2.6 h, ≤60% of
+   the week's TSS, and (refinement 5) ≤ **~35% of the week's running km**
+   (`LONG_FRACTION_MAX`, closed form `long ≤ f/(1−f)·othersKm` with the other
+   days priced at measurement speeds). When the rail conflicts with the
+   Fokkema ≥21 km floor, `volumeTargets.longCappedByFraction` + goal-gap copy
+   surface the tradeoff — `meetsLongFloor` is never fudged. Remaining TSS
    redistributes over the other slots so the week total still equals the
    prescription.
 7. **Weekly-km tissue cap** (feature 5): if kept running km exceed
@@ -251,7 +273,12 @@ Pipeline, in execution order:
    (bike/pool) preserving the day and its load; if quality+long alone still
    overshoot, shrink them (`protectedScale`) and move the freed TSS onto the
    cross days. Total aerobic load holds; running impact drops.
-8. **Session build:** each slot → dated session via its `TEMPLATE` (title,
+8. **Session build:** each slot → dated session via its `TEMPLATE`, then
+   (refinement 1) base/build run weeks are SHAPED to the phase Z1 target
+   (±2%): TSS transfers between the quality session and an easy day, duration
+   following under the build's own clamps; a duration-floored session can't
+   donate (micro-weeks pass through byte-identical); the long run is never
+   donor/recipient. Original build: (title,
    structure text + machine-readable `workout.blocks` built from zones,
    `why` rationale). TSS = `weight/totalWeight × trainable`, duration =
    `tss / (intensity² × 100)`, clamped to sane bounds (0.4–1.6 h easy,
@@ -291,7 +318,7 @@ output; a dedicated test pins the neutrality.
 
 | Feature | Signal | Mechanism | Neutrality pin |
 |---|---|---|---|
-| 1. Intensity distribution | (always on, run plans) | 3-zone model (`ZONE3`), base/build target ≈88–92% Z1, hard floor `Z1_FLOOR=0.8` checked over built weeks | intensity.test.ts |
+| 1. Intensity distribution | (always on, run plans) | 3-zone model; base/build weeks CONSTRUCTED to the phase Z1 target ±2% (rct: Muñoz 2014), floor `z1FloorFor` = 0.85 base/build / 0.80 else | intensity + polarized.test.ts |
 | 2. Volume floors | `goalTime` presence | `peakWeeklyTssFloor` in clamp №5; Fokkema floors surfaced as targets | volume.test.ts |
 | 3. Ramp by richness | `rampCap` (from history) | per-athlete ceiling 1.10–1.30 in every rail | history.test.ts (E11a/T5) |
 | 4. Tissue constraints | `tissueConstraints[]` | targeted caps (§6a), never prophylactic | tissue.test.ts (TT7 byte-identity) |
@@ -442,7 +469,7 @@ Ranked, with the constraint that every improvement must keep §9 intact:
 | TSB | Training Stress Balance — yesterday's CTL−ATL ("form") |
 | IF | Intensity Factor — session intensity relative to threshold; TSS/h = IF²×100 |
 | VDOT | Daniels' aerobic capacity number linking race times across distances |
-| CVOL | 4.9 — TSS per weekly running km at typical easy pace |
+| CVOL / cvolFor | athlete km↔TSS bridge (IF·100/(vT·3.6)); 4.9 is the zone-less fallback |
 | Trailing mean | mean of `last4WeeksTss` — the ramp/bound reference |
 | Maintenance | `CTL × 7` weekly TSS — holds CTL exactly flat |
 | Anchor-v2 | the peak-decay load ceiling replacing raw trailing-mean (§5.3) |

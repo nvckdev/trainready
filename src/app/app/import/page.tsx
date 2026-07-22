@@ -8,6 +8,7 @@ import {
 } from "@/lib/athlete-data";
 import { DISC_COLOR, EmptyState, StatChip } from "@/components/app/bits";
 import { PairPhone } from "@/components/app/pair-phone";
+import { loadPopulationPrior } from "../../../../engine/learned.ts";
 
 /** `TAPER1.` + base64url(JSON) — decoded by the mobile app's Settings screen. */
 function pairCode(): string | null {
@@ -20,6 +21,9 @@ function pairCode(): string | null {
     thresholds: athlete.thresholds,
     seed,
     anchor: localToday(),
+    // Refinement 2 parity: the phone has no data/models artifact, so the
+    // population prior rides the pairing code (null → field absent).
+    ...(loadPopulationPrior() ? { prior: loadPopulationPrior() } : {}),
   };
   return "TAPER1." + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }

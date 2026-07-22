@@ -13,6 +13,7 @@ interface PairPayload {
   thresholds: StoredAthlete["thresholds"];
   seed: StoredAthlete["seed"];
   anchor?: string;
+  prior?: number[];
 }
 
 function b64urlToUtf8(s: string): string {
@@ -47,12 +48,17 @@ export function decodePairCode(raw: string): { athlete: StoredAthlete; anchor?: 
   if (!s || !num(s.ctl) || !num(s.atl) || !num(s.tsb) || !Array.isArray(s.last4WeeksTss)) {
     return { error: "Code is missing the fitness seed." };
   }
+  const prior =
+    Array.isArray(payload.prior) && payload.prior.length === 11 && payload.prior.every(num)
+      ? payload.prior
+      : undefined;
   return {
     athlete: {
       name: typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : "Athlete",
       thresholds: t,
       seed: s,
       demo: false,
+      ...(prior ? { priorWeights: prior } : {}),
     },
     anchor: typeof payload.anchor === "string" ? payload.anchor : undefined,
   };
