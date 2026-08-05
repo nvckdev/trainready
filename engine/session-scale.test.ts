@@ -154,6 +154,13 @@ function easy(mins = 60): PlannedSessionOut {
   check("S6a", "retitle replaces only the first integer",
     retitle("Easy 45 + strides", 32) === "Easy 32 + strides", retitle("Easy 45 + strides", 32));
   check("S6b", "retitle is identity with no integer", retitle("Tempo intervals", 20) === "Tempo intervals");
+  check("S6b2", "the LAST number is the duration — a zone number in the title is not",
+    retitle("Zone 2 ride 44", 60) === "Zone 2 ride 60", retitle("Zone 2 ride 44", 60));
+  check("S6b3", "an hours-denominated title is rewritten in hours, not minutes",
+    retitle("Long ride 1.5h", 90) === "Long ride 1.5h" && retitle("Long ride 1.5h", 60) === "Long ride 1h",
+    `${retitle("Long ride 1.5h", 90)} / ${retitle("Long ride 1.5h", 60)}`);
+  check("S6b4", "a decimal is never half-rewritten", !/\d\.\d*\d{2,}/.test(retitle("Long ride 2.5h", 45)),
+    retitle("Long ride 2.5h", 45));
   const txt = renderBlocks([
     { kind: "warmup", zone: "easy", durationSec: 600, paceMinSecPerKm: 291, paceMaxSecPerKm: 322 },
     { kind: "main", zone: "vo2", reps: 3, durationSec: 120, recoverySec: 60, recoveryNote: "easy", paceMinSecPerKm: 223, paceMaxSecPerKm: 233 },

@@ -548,6 +548,80 @@ check("G0", `all ${CASES.length} grid cells generate`, thrown === 0, `${thrown} 
     swapsFound > 200, `${swapsFound} swaps`);
 }
 
+// ——— FS. a FRESH session describes itself honestly ——————————————————————————
+// The same rule as DS1, one layer up: declared duration and structured content
+// are one quantity measured two ways, so they must agree at CONSTRUCTION and
+// not merely survive a damp. Before this, six templates could not express
+// their own declared duration — bike-vo2 built a fixed 47 minutes whatever it
+// was handed, bike-long added its tempo set on top of a ride that already
+// spanned the duration, and run-tempo's 15-minute work floor overran a
+// 25-minute slot by a quarter. See engine/session-fit.ts.
+
+/** Seconds a block occupies on the clock — reps and inter-rep recovery in. */
+const blockSec = (b: { reps?: number; durationSec?: number; recoverySec?: number }) => {
+  const reps = b.reps ?? 1;
+  return (b.durationSec ?? 0) * reps + (b.recoverySec ?? 0) * Math.max(0, reps - 1);
+};
+/** The duration the session STATES, in whole seconds. durationHr is stored to
+ *  2dp and 3600 × 0.01 is an integer, so this is exact — but the float product
+ *  is not (1.11 × 3600 is 3996.0000000000005), which is why the comparison is
+ *  made in integer seconds rather than as a ratio. */
+const declaredSec = (s: PlanWeekSession) => Math.round(s.durationHr * 3600);
+/**
+ * The seconds a session's structure actually accounts for, or null when it has
+ * none to account for.
+ *
+ * A session counts as time-defined only if some block carries a durationSec.
+ * The swim templates are DISTANCE-defined by design — swimmers train in metres
+ * and a Block cannot imply seconds without the athlete's pace — so they state
+ * no structured time to disagree with. Note this must test for durationSec
+ * specifically and not merely a non-zero total: a CSS swim set's rest periods
+ * sum to 4.5 minutes, which would otherwise read as a 24-minute session
+ * structured at 0.19x.
+ */
+const structuredSec = (s: PlanWeekSession): number | null => {
+  if (s.discipline === "race") return null;
+  const blocks = s.workout?.blocks ?? [];
+  if (!blocks.some((b) => b.durationSec) || !(s.durationHr > 0)) return null;
+  return blocks.reduce((a, b) => a + blockSec(b), 0);
+};
+/** The duration a title states, when it states one. Mirrors retitle's pattern:
+ *  the LAST standalone number, which may be hours ("Long ride 1.5h"). */
+const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
+
+{
+  const bad: string[] = [];
+  let checked = 0;
+  let timeDefined = 0;
+  for (const c of CASES) {
+    const plan = plans.get(c.id);
+    if (!plan) continue;
+    for (const w of plan.weeks) {
+      for (const s of w.sessions) {
+        const sec = structuredSec(s);
+        if (sec === null) continue;
+        timeDefined++;
+        // Zero tolerance, in whole seconds: the blocks are budgeted FROM the
+        // stored duration, so anything other than equality is a template that
+        // cannot express what it was asked for.
+        if (sec !== declaredSec(s)) {
+          bad.push(`${c.id}: "${s.title}" declares ${declaredSec(s)}s, structures ${sec}s`);
+        }
+        const m = TITLE_DURATION.exec(s.title);
+        if (m && !m[2]) {
+          checked++;
+          const want = Math.max(1, Math.round(s.durationHr * 60));
+          if (Number(m[1]) !== want) bad.push(`${c.id}: "${s.title}" on a ${want}-minute session`);
+        }
+      }
+    }
+  }
+  check("FS1", `a fresh session's structure and title match its declared duration exactly (${timeDefined} time-defined, ${checked} titled)`,
+    bad.length === 0, bad.slice(0, 3).join("; "));
+  check("FS2", "the sweep actually saw structured sessions (not vacuously green)",
+    timeDefined > 2000, `${timeDefined} time-defined`);
+}
+
 // ——— DS. a damped session still describes itself honestly ————————————————————
 // scaleWeek rescales tss and durationHr. Until 2026-08-05 it stopped there, so
 // title, structure and workout.blocks kept describing the session as first
@@ -567,17 +641,11 @@ check("G0", `all ${CASES.length} grid cells generate`, thrown === 0, `${thrown} 
   const bad: string[] = [];
   let damped = 0;
   let sessionsChecked = 0;
-  /** Seconds a block occupies on the clock — reps and inter-rep recovery in. */
-  const blockSec = (b: { reps?: number; durationSec?: number; recoverySec?: number }) => {
-    const reps = b.reps ?? 1;
-    return (b.durationSec ?? 0) * reps + (b.recoverySec ?? 0) * Math.max(0, reps - 1);
-  };
   /** How far a session's structure disagrees with its own stated duration. */
   const drift = (s: PlanWeekSession): number | null => {
-    if (s.discipline === "race") return null;
-    const tot = (s.workout?.blocks ?? []).reduce((a, b) => a + blockSec(b), 0);
-    if (!tot || !(s.durationHr > 0)) return null;
-    return Math.abs(tot / (s.durationHr * 3600) - 1);
+    const sec = structuredSec(s);
+    if (sec === null) return null;
+    return Math.abs(sec / declaredSec(s) - 1);
   };
   const worstDrift = (weeks: Plan["weeks"]) =>
     Math.max(0, ...weeks.flatMap((w) => w.sessions.map(drift).filter((x): x is number => x !== null)));

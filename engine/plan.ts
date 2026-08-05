@@ -1,4 +1,5 @@
 import type { RaceAnchor } from "./goal.ts";
+import { fitAround, repsWithin, splitAround } from "./session-fit.ts";
 import {
   CVOL,
   cvolFor,
@@ -260,11 +261,45 @@ interface Template {
   discipline: "swim" | "bike" | "run";
   intensity: number; // IF for TSS→duration
   title: (min: number) => string;
-  build: (z: Zones, min: number) => Built;
+  /**
+   * Build the session's blocks for an exact budget IN SECONDS.
+   *
+   * Every time-defined template's blocks must sum to `sec`. It used to take
+   * minutes already rounded to the nearest 5 by mins(), which put the template
+   * up to 2.5 minutes away from the duration the session would actually store
+   * before its own arithmetic was even considered. See engine/session-fit.ts
+   * for why the budget is hard and the interval set is what yields to it.
+   */
+  build: (z: Zones, sec: number) => Built;
   why: string;
 }
 
-const mins = (hr: number) => Math.round((hr * 60) / 5) * 5;
+/** Whole minutes for prose. Blocks carry exact seconds; the text rounds them
+ *  for readability, the way a coach writes a session down. */
+const mm = (sec: number) => Math.round(sec / 60);
+
+/** A quality session gets a real warmup and cooldown before the set gets its
+ *  reps — going straight into VO2 work is an injury, not a short session. */
+const MIN_WARM_SEC = 300;
+const MIN_COOL_SEC = 180;
+
+// Interval shapes. Named because the budget arithmetic reads them twice —
+// once to size the set and once to write the session down — and a literal
+// that drifted between the two is exactly the class of bug being fixed here.
+const STRIDE_REPS = 5;
+const STRIDE_SEC = 20;
+const STRIDE_REC_SEC = 60; // walk-back after a 20s stride; real time, so budgeted
+const TEMPO_REP_SEC = 480;
+const TEMPO_REC_SEC = 120;
+const TEMPO_MIN_WORK_SEC = 900; // below this it is not a tempo session
+const VO2_REP_SEC = 180;
+const VO2_REC_SEC = 90;
+const VO2_MIN_REPS = 3;
+const BIKE_THR_REC_SEC = 300;
+const BIKE_VO2_REP_SEC = 120;
+const BIKE_VO2_REC_SEC = 120;
+const BIKE_LONG_TEMPO_REPS = 2;
+const BIKE_LONG_TEMPO_SEC = 1200;
 
 /** Spread a run PaceRange into the two Block pace fields. */
 const rp = (r: PaceRange) => ({ paceMinSecPerKm: r.minSecPerKm, paceMaxSecPerKm: r.maxSecPerKm });
@@ -274,17 +309,17 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "run",
     intensity: 0.67,
     title: (m) => `Easy ${m}`,
-    build: (z, m) => ({
+    build: (z, sec) => ({
       blocks: [
         {
           kind: "main",
           zone: "easy",
-          durationSec: m * 60,
+          durationSec: sec,
           ...rp(z.runSec.easy),
           effortNote: "HR is the governor; slow down before you speed up.",
         },
       ],
-      text: `${m} min easy @ ${z.run.easy}. HR is the governor; slow down before you speed up.`,
+      text: `${mm(sec)} min easy @ ${z.run.easy}. HR is the governor; slow down before you speed up.`,
     }),
     why: "Aerobic volume at low cost: the base everything else stands on.",
   },
@@ -292,30 +327,46 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "run",
     intensity: 0.68,
     title: (m) => `Easy ${m} + strides`,
-    build: (z, m) => ({
-      blocks: [
-        { kind: "segment", zone: "easy", durationSec: (m - 5) * 60, ...rp(z.runSec.easy) },
-        { kind: "strides", zone: "vo2", reps: 5, durationSec: 20, recoveryNote: "full recovery", effortNote: z.run.strides },
-      ],
-      text: `${m - 5} min easy @ ${z.run.easy}\nthen 5 × strides @ ${z.run.strides}, full recovery`,
-    }),
+    build: (z, sec) => {
+      // "Full recovery" is real time on the clock, so it is budgeted rather
+      // than left implicit: 5 × 20s on 60s walk-back is 340s. The old template
+      // reserved 5 minutes for strides and built 100 seconds of them, which is
+      // why a strides session structured at 0.87x its declared duration.
+      const set = STRIDE_REPS * STRIDE_SEC + STRIDE_REC_SEC * (STRIDE_REPS - 1);
+      const easy = Math.max(60, sec - set);
+      return {
+        blocks: [
+          { kind: "segment", zone: "easy", durationSec: easy, ...rp(z.runSec.easy) },
+          {
+            kind: "strides",
+            zone: "vo2",
+            reps: STRIDE_REPS,
+            durationSec: STRIDE_SEC,
+            recoverySec: STRIDE_REC_SEC,
+            recoveryNote: "full recovery",
+            effortNote: z.run.strides,
+          },
+        ],
+        text: `${mm(easy)} min easy @ ${z.run.easy}\nthen ${STRIDE_REPS} × strides @ ${z.run.strides}, full recovery`,
+      };
+    },
     why: "Easy volume plus neuromuscular touch: turnover stays sharp while the aerobic system does the work.",
   },
   "run-long": {
     discipline: "run",
     intensity: 0.72,
     title: (m) => `Long run ${m}`,
-    build: (z, m) => {
-      const first = Math.round(m * 0.3);
-      const last = Math.round(m * 0.15);
-      const middle = m - first - last;
+    build: (z, sec) => {
+      const first = Math.round(sec * 0.3);
+      const last = Math.round(sec * 0.15);
+      const middle = sec - first - last; // takes the remainder, so the three are exact
       return {
         blocks: [
-          { kind: "segment", zone: "easy", durationSec: first * 60, ...rp(z.runSec.easy) },
-          { kind: "segment", zone: "easy", durationSec: middle * 60, ...rp(z.runSec.easy), effortNote: "settling into rhythm" },
-          { kind: "segment", zone: "easy", durationSec: last * 60, ...rp(z.runSec.steady), effortNote: "may drift to steady if form holds" },
+          { kind: "segment", zone: "easy", durationSec: first, ...rp(z.runSec.easy) },
+          { kind: "segment", zone: "easy", durationSec: middle, ...rp(z.runSec.easy), effortNote: "settling into rhythm" },
+          { kind: "segment", zone: "easy", durationSec: last, ...rp(z.runSec.steady), effortNote: "may drift to steady if form holds" },
         ],
-        text: `${m} min continuous:\n· first ${first} min @ ${z.run.easy}\n· middle @ ${z.run.easy} settling into rhythm\n· last ${last} min may drift to ${z.run.steady} if form holds`,
+        text: `${mm(sec)} min continuous:\n· first ${mm(first)} min @ ${z.run.easy}\n· middle @ ${z.run.easy} settling into rhythm\n· last ${mm(last)} min may drift to ${z.run.steady} if form holds`,
       };
     },
     why: "The week's cornerstone: durability, fuel economy, and time on feet.",
@@ -324,19 +375,30 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "run",
     intensity: 0.8,
     title: () => "Tempo intervals",
-    build: (z, m) => {
-      const warm = Math.round(m * 0.3);
-      const work = Math.max(15, Math.round(m * 0.4));
-      const reps = Math.max(2, Math.round(work / 8));
-      const repMin = Math.round(work / reps);
-      const cool = Math.round(m * 0.2);
+    build: (z, sec) => {
+      // The 15-minute work floor is a coaching constraint, not a licence to
+      // overrun: it applies where the budget allows it and yields where it
+      // does not. A 25-minute slot used to build 31 minutes because the floor
+      // simply ignored the room available.
+      const room = Math.max(0, sec - MIN_WARM_SEC - MIN_COOL_SEC);
+      const wantWork = Math.max(TEMPO_MIN_WORK_SEC, Math.round(sec * 0.4));
+      let reps = Math.min(6, Math.max(2, Math.round(wantWork / TEMPO_REP_SEC)));
+      const setRoom = Math.min(room, wantWork + TEMPO_REC_SEC * (reps - 1));
+      let repSec = Math.max(120, Math.floor((setRoom - TEMPO_REC_SEC * (reps - 1)) / reps));
+      let set = reps * repSec + TEMPO_REC_SEC * (reps - 1);
+      if (set > room) {
+        reps = repsWithin(room, repSec, TEMPO_REC_SEC, 2, reps);
+        repSec = Math.max(120, Math.floor((room - TEMPO_REC_SEC * (reps - 1)) / reps));
+        set = reps * repSec + TEMPO_REC_SEC * (reps - 1);
+      }
+      const { warmSec, coolSec } = fitAround(sec, set, 0.6);
       return {
         blocks: [
-          { kind: "warmup", zone: "easy", durationSec: warm * 60, ...rp(z.runSec.easy), effortNote: "+ 2 strides" },
-          { kind: "main", zone: "tempo", reps, durationSec: repMin * 60, ...rp(z.runSec.tempo), recoverySec: 120, recoveryNote: "easy" },
-          { kind: "cooldown", zone: "easy", durationSec: cool * 60, ...rp(z.runSec.easy) },
+          { kind: "warmup", zone: "easy", durationSec: warmSec, ...rp(z.runSec.easy), effortNote: "+ 2 strides" },
+          { kind: "main", zone: "tempo", reps, durationSec: repSec, ...rp(z.runSec.tempo), recoverySec: TEMPO_REC_SEC, recoveryNote: "easy" },
+          { kind: "cooldown", zone: "easy", durationSec: coolSec, ...rp(z.runSec.easy) },
         ],
-        text: `WARMUP ${warm} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × ${repMin} min @ ${z.run.tempo} on 2 min easy\nCOOLDOWN ${cool} min easy`,
+        text: `WARMUP ${mm(warmSec)} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × ${mm(repSec)} min @ ${z.run.tempo} on ${mm(TEMPO_REC_SEC)} min easy\nCOOLDOWN ${mm(coolSec)} min easy`,
       };
     },
     why: "Raises the sustainable-pace ceiling: the engine's race-day workhorse.",
@@ -345,17 +407,23 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "run",
     intensity: 0.84,
     title: () => "VO2 set",
-    build: (z, m) => {
-      const warm = Math.round(m * 0.33);
-      const reps = Math.max(4, Math.round((m * 0.3) / 3));
-      const cool = Math.round(m * 0.25);
+    build: (z, sec) => {
+      // Reps are 3 minutes by definition, so the rep COUNT is what absorbs a
+      // short budget. Three reps in a 24-minute slot is a short VO2 session;
+      // four reps in a slot that cannot hold them was a 30-minute session
+      // wearing a 24-minute label.
+      const room = Math.max(0, sec - MIN_WARM_SEC - MIN_COOL_SEC);
+      const want = Math.max(VO2_MIN_REPS, Math.round((sec * 0.3) / VO2_REP_SEC));
+      const reps = Math.min(want, repsWithin(room, VO2_REP_SEC, VO2_REC_SEC, VO2_MIN_REPS, 8));
+      const set = reps * VO2_REP_SEC + VO2_REC_SEC * (reps - 1);
+      const { warmSec, coolSec } = fitAround(sec, set, 0.57);
       return {
         blocks: [
-          { kind: "warmup", zone: "easy", durationSec: warm * 60, ...rp(z.runSec.easy), effortNote: "+ 2 strides" },
-          { kind: "main", zone: "vo2", reps, durationSec: 180, ...rp(z.runSec.vo2), recoverySec: 90, recoveryNote: "easy" },
-          { kind: "cooldown", zone: "easy", durationSec: cool * 60, ...rp(z.runSec.easy) },
+          { kind: "warmup", zone: "easy", durationSec: warmSec, ...rp(z.runSec.easy), effortNote: "+ 2 strides" },
+          { kind: "main", zone: "vo2", reps, durationSec: VO2_REP_SEC, ...rp(z.runSec.vo2), recoverySec: VO2_REC_SEC, recoveryNote: "easy" },
+          { kind: "cooldown", zone: "easy", durationSec: coolSec, ...rp(z.runSec.easy) },
         ],
-        text: `WARMUP ${warm} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × 3 min @ ${z.run.vo2} on 90s easy\nCOOLDOWN ${cool} min easy`,
+        text: `WARMUP ${mm(warmSec)} min easy @ ${z.run.easy} + 2 strides\nMAIN ${reps} × ${mm(VO2_REP_SEC)} min @ ${z.run.vo2} on ${VO2_REC_SEC}s easy\nCOOLDOWN ${mm(coolSec)} min easy`,
       };
     },
     why: "Touches the aerobic ceiling so threshold has somewhere to grow.",
@@ -364,30 +432,41 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "bike",
     intensity: 0.65,
     title: (m) => `Zone 2 ride ${m}`,
-    build: (z, m) => ({
-      blocks: [
-        { kind: "warmup", zone: "easy", durationSec: 600, effortNote: `ramp to ${z.bike.z2}` },
-        { kind: "main", zone: "easy", durationSec: (m - 15) * 60, effortNote: `steady @ ${z.bike.z2}` },
-        { kind: "cooldown", zone: "recovery", durationSec: 300, effortNote: "easy spin" },
-      ],
-      text: `WARMUP 10 min ramp to ${z.bike.z2}\nMAIN ${m - 15} min steady @ ${z.bike.z2}\nCOOLDOWN 5 min easy spin`,
-    }),
+    build: (z, sec) => {
+      const main = Math.max(300, sec - 900);
+      const { warmSec, coolSec } = fitAround(sec, main, 2 / 3); // 10 min ramp / 5 min spin at the nominal 15
+      return {
+        blocks: [
+          { kind: "warmup", zone: "easy", durationSec: warmSec, effortNote: `ramp to ${z.bike.z2}` },
+          { kind: "main", zone: "easy", durationSec: main, effortNote: `steady @ ${z.bike.z2}` },
+          { kind: "cooldown", zone: "recovery", durationSec: coolSec, effortNote: "easy spin" },
+        ],
+        text: `WARMUP ${mm(warmSec)} min ramp to ${z.bike.z2}\nMAIN ${mm(main)} min steady @ ${z.bike.z2}\nCOOLDOWN ${mm(coolSec)} min easy spin`,
+      };
+    },
     why: "Aerobic load with zero impact: volume the legs don't have to pay for.",
   },
   "bike-threshold": {
     discipline: "bike",
     intensity: 0.8,
     title: () => "Threshold intervals",
-    build: (z, m) => {
-      const reps = m >= 75 ? 3 : 2;
-      const repMin = m >= 75 ? 12 : 10;
+    build: (z, sec) => {
+      // Was fixed at 2–3 reps regardless of duration: 1.80x a 25-minute slot
+      // and 0.44x a 150-minute one. Both the rep length and the rep count now
+      // come from the room available.
+      const room = Math.max(0, sec - MIN_WARM_SEC * 2 - MIN_COOL_SEC * 2);
+      const nominal = sec >= 4500 ? 720 : 600;
+      const repSec = Math.max(240, Math.min(nominal, Math.floor((room - BIKE_THR_REC_SEC) / 2)));
+      const reps = repsWithin(room, repSec, BIKE_THR_REC_SEC, 2, 5);
+      const set = reps * repSec + BIKE_THR_REC_SEC * (reps - 1);
+      const { warmSec, coolSec } = fitAround(sec, set, 0.6);
       return {
         blocks: [
-          { kind: "warmup", zone: "easy", durationSec: 720, effortNote: `ramp + 3 × 30s @ ${z.bike.vo2}` },
-          { kind: "main", zone: "threshold", reps, durationSec: repMin * 60, recoverySec: 300, recoveryNote: "easy", effortNote: `@ ${z.bike.threshold}` },
-          { kind: "cooldown", zone: "recovery", durationSec: 480, effortNote: "spin" },
+          { kind: "warmup", zone: "easy", durationSec: warmSec, effortNote: `ramp + 3 × 30s @ ${z.bike.vo2}` },
+          { kind: "main", zone: "threshold", reps, durationSec: repSec, recoverySec: BIKE_THR_REC_SEC, recoveryNote: "easy", effortNote: `@ ${z.bike.threshold}` },
+          { kind: "cooldown", zone: "recovery", durationSec: coolSec, effortNote: "spin" },
         ],
-        text: `WARMUP 12 min ramp + 3 × 30s @ ${z.bike.vo2}\nMAIN ${reps} × ${repMin} min @ ${z.bike.threshold} on 5 min easy\nCOOLDOWN 8 min spin`,
+        text: `WARMUP ${mm(warmSec)} min ramp + 3 × 30s @ ${z.bike.vo2}\nMAIN ${reps} × ${mm(repSec)} min @ ${z.bike.threshold} on ${mm(BIKE_THR_REC_SEC)} min easy\nCOOLDOWN ${mm(coolSec)} min spin`,
       };
     },
     why: "FTP work: moves the number every other bike target hangs off.",
@@ -396,37 +475,65 @@ const TEMPLATES: Record<Kind, Template> = {
     discipline: "bike",
     intensity: 0.83,
     title: () => "VO2 bike set",
-    build: (z) => ({
-      blocks: [
-        { kind: "warmup", zone: "easy", durationSec: 900, effortNote: "with 4 × 20s openers" },
-        { kind: "main", zone: "vo2", reps: 6, durationSec: 120, recoverySec: 120, recoveryNote: "easy", effortNote: `@ ${z.bike.vo2}` },
-        { kind: "cooldown", zone: "recovery", durationSec: 600, effortNote: "spin" },
-      ],
-      text: `WARMUP 15 min with 4 × 20s openers\nMAIN 6 × 2 min @ ${z.bike.vo2} on 2 min easy\nCOOLDOWN 10 min spin`,
-    }),
+    build: (z, sec) => {
+      // This one ignored its argument entirely and built a fixed 47 minutes —
+      // 1.88x a 25-minute slot, 0.31x a 150-minute one, the worst of the set.
+      const room = Math.max(0, sec - MIN_WARM_SEC * 2 - MIN_COOL_SEC * 2);
+      const reps = repsWithin(room, BIKE_VO2_REP_SEC, BIKE_VO2_REC_SEC, 4, 10);
+      const set = reps * BIKE_VO2_REP_SEC + BIKE_VO2_REC_SEC * (reps - 1);
+      const { warmSec, coolSec } = fitAround(sec, set, 0.6);
+      return {
+        blocks: [
+          { kind: "warmup", zone: "easy", durationSec: warmSec, effortNote: "with 4 × 20s openers" },
+          { kind: "main", zone: "vo2", reps, durationSec: BIKE_VO2_REP_SEC, recoverySec: BIKE_VO2_REC_SEC, recoveryNote: "easy", effortNote: `@ ${z.bike.vo2}` },
+          { kind: "cooldown", zone: "recovery", durationSec: coolSec, effortNote: "spin" },
+        ],
+        text: `WARMUP ${mm(warmSec)} min with 4 × 20s openers\nMAIN ${reps} × ${mm(BIKE_VO2_REP_SEC)} min @ ${z.bike.vo2} on ${mm(BIKE_VO2_REC_SEC)} min easy\nCOOLDOWN ${mm(coolSec)} min spin`,
+      };
+    },
     why: "Short hard repeats lift aerobic power without wrecking the week.",
   },
   "bike-long": {
     discipline: "bike",
     intensity: 0.68,
-    title: (m) => `Long ride ${Math.round(m / 60 * 10) / 10}h`,
-    build: (z, m) => ({
-      blocks: [
-        { kind: "main", zone: "easy", durationSec: m * 60, effortNote: `mostly @ ${z.bike.z2}` },
-        { kind: "segment", zone: "tempo", reps: 2, durationSec: 1200, effortNote: `@ ${z.bike.tempo} in the middle if legs agree` },
-      ],
+    title: (m) => `Long ride ${Math.round((m / 60) * 10) / 10}h`,
+    build: (z, sec) => {
+      // The 2 × 20 min tempo happens INSIDE the ride. It used to be appended
+      // to a main block that already spanned the whole duration, so a ride
+      // structured at 2.60x its declared length at the short end.
+      const insert = BIKE_LONG_TEMPO_REPS * BIKE_LONG_TEMPO_SEC;
+      const { leadSec, tailSec, fits } = splitAround(sec, insert);
+      const blocks: Block[] = fits
+        ? [
+            { kind: "main", zone: "easy", durationSec: leadSec, effortNote: `mostly @ ${z.bike.z2}` },
+            { kind: "segment", zone: "tempo", reps: BIKE_LONG_TEMPO_REPS, durationSec: BIKE_LONG_TEMPO_SEC, effortNote: `@ ${z.bike.tempo} if legs agree` },
+            { kind: "main", zone: "easy", durationSec: tailSec, effortNote: `mostly @ ${z.bike.z2}` },
+          ]
+        : [{ kind: "main", zone: "easy", durationSec: sec, effortNote: `mostly @ ${z.bike.z2}` }];
       // The fuel line is coaching prose, not a training block; it lives in the
       // derived text only (see docs/workout-structure.md).
-      text: `${m} min mostly @ ${z.bike.z2}\ninclude 2 × 20 min @ ${z.bike.tempo} in the middle if legs agree\nfuel: 60–90g carbs/hr from minute 20`,
-    }),
+      const tempoLine = fits
+        ? `\ninclude ${BIKE_LONG_TEMPO_REPS} × ${mm(BIKE_LONG_TEMPO_SEC)} min @ ${z.bike.tempo} in the middle if legs agree`
+        : "";
+      return {
+        blocks,
+        text: `${mm(sec)} min mostly @ ${z.bike.z2}${tempoLine}\nfuel: 60–90g carbs/hr from minute 20`,
+      };
+    },
     why: "Race-day durability and fueling practice in one session.",
   },
+  // The two swim templates are DISTANCE-defined and carry no block durations:
+  // swimmers train in metres, and a block's seconds cannot be derived without
+  // the athlete's pace, which a Block does not carry. They therefore declare
+  // no structured time to disagree with, and the fresh-session duration
+  // assertion skips them by construction rather than by exception. Classifying
+  // their intensity is engine/readiness.ts's job, not a duration question.
   "swim-endurance": {
     discipline: "swim",
     intensity: 0.6,
     title: (m) => `Endurance swim ${m}`,
-    build: (z, m) => {
-      const main = Math.max(3, Math.round((m - 20) / 8));
+    build: (z, sec) => {
+      const main = Math.max(3, Math.round((sec / 60 - 20) / 8));
       return {
         blocks: [
           { kind: "warmup", zone: "easy", distanceM: 400, effortNote: "easy mixed" },
@@ -454,6 +561,23 @@ const TEMPLATES: Record<Kind, Template> = {
     why: "Critical-swim-speed work: open-water pace without open-water chaos.",
   },
 };
+
+/**
+ * Build every duration-bearing field of a session from ONE duration, so the
+ * stored duration, the title and the blocks cannot disagree.
+ *
+ * `hr` must already be quantised the way the caller intends to store it (the
+ * long-run rail FLOORS rather than rounds, deliberately — see its call site),
+ * because the budget is derived from the stored value, not the other way
+ * round. Five sites used to repeat this by hand and all five computed the
+ * title from mins(), a nearest-5 rounding of a duration they then stored to
+ * two decimals.
+ */
+function fitSession(t: Template, zones: Zones, hr: number): { title: string; structure: string; blocks: Block[] } {
+  const sec = Math.round(hr * 3600);
+  const built = t.build(zones, sec);
+  return { title: t.title(Math.round(sec / 60)), structure: built.text, blocks: built.blocks };
+}
 
 // ——— weekly slot layout ————————————————————————————————————————
 
@@ -1022,18 +1146,20 @@ export function generatePlan(
           ? Math.min(2.6, longPeakKm / easyKmh)
           : kind === "run-long" ? 2.6 : kind === "bike-long" ? 4.5 : substituted ? 2.5 : 1.6;
       durationHr = Math.min(runLongCeilHr, Math.max(0.4, durationHr));
-      const m = mins(durationHr);
       const date = iso(wStart + slot.weekdayIdx * DAY);
-      const built = t.build(zones, m);
+      // Quantise FIRST: the blocks are budgeted from the duration that gets
+      // stored, so the two agree by construction rather than by luck.
+      const storedHr = Math.round(durationHr * 100) / 100;
+      const fit = fitSession(t, zones, storedHr);
       return {
         date,
         weekday: WEEKDAYS[slot.weekdayIdx],
         discipline: t.discipline,
-        title: substituted ? `${t.title(m)} · cross-train` : t.title(m),
-        durationHr: Math.round(durationHr * 100) / 100,
+        title: substituted ? `${fit.title} · cross-train` : fit.title,
+        durationHr: storedHr,
         tss: Math.round(tss),
-        structure: built.text,
-        workout: { blocks: built.blocks },
+        structure: fit.structure,
+        workout: { blocks: fit.blocks },
         why: substituted
           ? `Non-impact aerobic volume replacing a run your ${site} can't absorb — holds total aerobic load while running impact drops. Builds the engine, not the legs (it does not count toward running fitness).`
           : t.why,
@@ -1069,12 +1195,11 @@ export function generatePlan(
         const t = TEMPLATES[easyKind];
         const rate = t.intensity * t.intensity * 100;
         const durationHr = Math.min(1.6, Math.max(0.4, q.tss / rate));
-        const m = mins(durationHr);
-        const built = t.build(zones, m);
         q.durationHr = Math.round(durationHr * 100) / 100;
-        q.title = t.title(m);
-        q.structure = built.text;
-        q.workout = { blocks: built.blocks };
+        const fit = fitSession(t, zones, q.durationHr);
+        q.title = fit.title;
+        q.structure = fit.structure;
+        q.workout = { blocks: fit.blocks };
         sessionKinds[qi] = easyKind;
         weekZ1FloorAction = "demoted-quality";
         return true;
@@ -1151,13 +1276,12 @@ export function generatePlan(
         const rebuildInto = (s: PlannedSessionOut, kind: Kind, tss: number) => {
           const t = TEMPLATES[kind];
           const durationHr = Math.min(1.6, Math.max(0.4, tss / rateOf(kind)));
-          const m = mins(durationHr);
-          const built = t.build(zones, m);
           s.durationHr = Math.round(durationHr * 100) / 100;
           s.tss = Math.round(tss);
-          s.title = t.title(m);
-          s.structure = built.text;
-          s.workout = { blocks: built.blocks };
+          const fit = fitSession(t, zones, s.durationHr);
+          s.title = fit.title;
+          s.structure = fit.structure;
+          s.workout = { blocks: fit.blocks };
         };
         rebuildInto(q, qKind, qTssNew);
         rebuildInto(e, eKind, eTssNew);
@@ -1191,13 +1315,12 @@ export function generatePlan(
           // measures, and rounding up would put the week back over the rail
           // by a hair — a rail that rounds against itself is not a rail.
           const capHrRounded = Math.floor(newHr * 100) / 100;
-          const m = mins(capHrRounded);
-          const built = t.build(zones, m);
+          const fit = fitSession(t, zones, capHrRounded);
           sessions[li].durationHr = capHrRounded;
           sessions[li].tss = Math.round(rate * capHrRounded);
-          sessions[li].title = t.title(m);
-          sessions[li].structure = built.text;
-          sessions[li].workout = { blocks: built.blocks };
+          sessions[li].title = fit.title;
+          sessions[li].structure = fit.structure;
+          sessions[li].workout = { blocks: fit.blocks };
           // The week is conserved: freed load goes to the easiest non-long
           // EASY run day, the safest place to put volume. Except when a tissue
           // weekly-RUNNING-km cap is active — then adding running km is
@@ -1220,13 +1343,12 @@ export function generatePlan(
               const et = TEMPLATES[ek];
               const erate = et.intensity * et.intensity * 100;
               const eHr = Math.min(1.6, Math.max(0.4, (sessions[ei].tss + freed) / erate));
-              const em = mins(eHr);
-              const ebuilt = et.build(zones, em);
               sessions[ei].durationHr = Math.round(eHr * 100) / 100;
               sessions[ei].tss = Math.round(erate * eHr);
-              sessions[ei].title = et.title(em);
-              sessions[ei].structure = ebuilt.text;
-              sessions[ei].workout = { blocks: ebuilt.blocks };
+              const efit = fitSession(et, zones, sessions[ei].durationHr);
+              sessions[ei].title = efit.title;
+              sessions[ei].structure = efit.structure;
+              sessions[ei].workout = { blocks: efit.blocks };
             }
           }
         }

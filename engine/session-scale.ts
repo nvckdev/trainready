@@ -81,17 +81,29 @@ export function renderBlocks(blocks: Block[]): string {
 }
 
 /**
- * Replace the minute count a title states, when it states one.
+ * Replace the duration a title states, when it states one.
  *
- * Titles carry duration ("Easy 60", "Long run 115") or do not ("Tempo
- * intervals", "VO2 set"). Only the first integer moves; the phrasing, and
- * anything after it such as "+ strides", is left exactly as generated.
+ * Titles carry a duration ("Easy 60", "Long run 115", "Long ride 1.5h") or do
+ * not ("Tempo intervals", "VO2 set"). The phrasing, and anything after the
+ * number such as "+ strides", is left exactly as generated.
+ *
+ * Three things the pattern has to get right, each of which it got wrong at
+ * some point while this was being written:
+ *
+ *  - The number must stand alone. The "2" in "VO2 set" is part of the name,
+ *    so a bare \d+ rewrote it to "VO32 set".
+ *  - It is the LAST number that carries the duration, not the first. "Zone 2
+ *    ride 44" names its zone before its minutes, so taking the first integer
+ *    turned a 60-minute ride into "Zone 60 ride 44".
+ *  - "Long ride 1.5h" states HOURS. Rewriting that slot with minutes gives
+ *    "Long ride 90h"; the trailing h is what distinguishes the two.
  */
+const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
+
 export function retitle(title: string, minutes: number): string {
-  // \b on both sides so the digit must stand alone: the "2" in "VO2 set" is
-  // preceded by a word character and is part of the name, not a duration.
-  // Without the boundaries this produced "VO32 set".
-  return title.replace(/\b\d+\b/, String(Math.max(1, Math.round(minutes))));
+  return title.replace(TITLE_DURATION, (_m, _num, h: string) =>
+    h ? `${Math.max(0.1, Math.round((minutes / 60) * 10) / 10)}h` : String(Math.max(1, Math.round(minutes)))
+  );
 }
 
 /**
