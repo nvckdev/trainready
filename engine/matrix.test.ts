@@ -11,6 +11,7 @@ import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { fitPriorFromExamples } from "./learned.ts";
 import { declareTissue } from "./tissue.ts";
 import { applyReadinessSwap, planReadinessSwap, qualityAdjacencyCost } from "./readiness.ts";
+import { recomputeRemaining, type WeekActual } from "./replan.ts";
 
 /**
  * The synthetic-athlete matrix (audit Part 2's recommended harness).
@@ -282,9 +283,12 @@ function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZon
 const t0 = Date.now();
 const digests: Record<string, string> = {};
 const results = new Map<string, CellResult>();
-/** Generated plans, retained so later sweeps (readiness) can re-derive from
- *  the same grid rather than regenerating it. */
+/** Generated plans, retained so later sweeps (readiness, damp) can re-derive
+ *  from the same grid rather than regenerating it. */
 const plans = new Map<string, Plan>();
+/** The request each plan came from — the damp sweep reflows through it. */
+const requests = new Map<string, PlanRequest>();
+type PlanWeekSession = Plan["weeks"][number]["sessions"][number];
 
 /** The zones a grid cell's athlete has — one definition, used by generation
  *  and by every sweep that follows. */
@@ -309,6 +313,7 @@ for (const c of CASES) {
     generated++;
     results.set(c.id, assertStructure(c, plan, zones));
     plans.set(c.id, plan);
+    requests.set(c.id, req);
     digests[c.id] = digest(plan);
   } catch (e) {
     thrown++;
@@ -541,6 +546,122 @@ check("G0", `all ${CASES.length} grid cells generate`, thrown === 0, `${thrown} 
     bad.length === 0, bad.slice(0, 3).join("; "));
   check("R2", "the sweep actually exercised the mechanism (not vacuously green)",
     swapsFound > 200, `${swapsFound} swaps`);
+}
+
+// ——— DS. a damped session still describes itself honestly ————————————————————
+// scaleWeek rescales tss and durationHr. Until 2026-08-05 it stopped there, so
+// title, structure and workout.blocks kept describing the session as first
+// built — "Long run 115" scheduled as 22 minutes, a ~5x contradiction live on
+// the Today screen that disqualified 36 of 65 stored sessions from watch
+// export. One quantity, one ruler.
+//
+// The control is the SAME reflow with a clean ledger, so nothing damps. That
+// isolates the damp's contribution: both runs generate identical remaining
+// weeks, and only the shaping differs. Comparing against the ORIGINAL plan
+// would be the wrong ruler — a reflow regenerates shorter sessions, and
+// run-tempo floors its work segment at 15 minutes, so a 21-minute tempo
+// structures at 1.29x before anything is damped. That is a real defect (see
+// the report) but it is generation's, and charging it to the damp would hide
+// whether the damp itself is honest.
+{
+  const bad: string[] = [];
+  let damped = 0;
+  let sessionsChecked = 0;
+  /** Seconds a block occupies on the clock — reps and inter-rep recovery in. */
+  const blockSec = (b: { reps?: number; durationSec?: number; recoverySec?: number }) => {
+    const reps = b.reps ?? 1;
+    return (b.durationSec ?? 0) * reps + (b.recoverySec ?? 0) * Math.max(0, reps - 1);
+  };
+  /** How far a session's structure disagrees with its own stated duration. */
+  const drift = (s: PlanWeekSession): number | null => {
+    if (s.discipline === "race") return null;
+    const tot = (s.workout?.blocks ?? []).reduce((a, b) => a + blockSec(b), 0);
+    if (!tot || !(s.durationHr > 0)) return null;
+    return Math.abs(tot / (s.durationHr * 3600) - 1);
+  };
+  const worstDrift = (weeks: Plan["weeks"]) =>
+    Math.max(0, ...weeks.flatMap((w) => w.sessions.map(drift).filter((x): x is number => x !== null)));
+
+  for (const c of CASES) {
+    const plan = plans.get(c.id);
+    if (!plan || plan.weeks.length < 5) continue;
+    const led = (i: number, tss: number): WeekActual => ({
+      weekStart: plan.weeks[i].weekStart,
+      actualTss: Math.round(tss),
+      plannedTss: plan.weeks[i].targetTss,
+      rampCapTss: Math.round(plan.weeks[i].targetTss),
+      sessionsMissed: 0,
+      sessionsPlanned: plan.weeks[i].sessions.length,
+    });
+    const reflow = (lastWeekTss: number) =>
+      recomputeRemaining({
+        stored: { request: requests.get(c.id)!, plan },
+        actualState: athleteState(c.ctl),
+        actualTrailingTss: [c.ctl * 7, c.ctl * 7, c.ctl * 7],
+        ledger: [led(0, plan.weeks[0].targetTss), led(1, plan.weeks[1].targetTss), led(2, lastWeekTss)],
+        asOf: plan.weeks[3].weekStart,
+        history: makeHistory(c.history, c.ctl),
+        zones: zonesFor(c),
+      });
+    let hot, control;
+    try {
+      // Rule 2: the last completed week ran far over its ramp ceiling, forcing
+      // the first remaining week down to maintenance — the damp. The control
+      // runs the same week exactly on plan, so no rule fires.
+      hot = reflow(plan.weeks[2].targetTss * 1.6);
+      control = reflow(plan.weeks[2].targetTss);
+    } catch (e) {
+      bad.push(`${c.id}: reflow threw — ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (!hot.forcedRecoveryWeek || control.forcedRecoveryWeek) continue;
+    damped++;
+
+    // A session counts as damped only when its duration actually MOVED against
+    // the control. A forced-recovery week whose target already sits under
+    // maintenance never reaches scaleWeek, and its untouched titles carry
+    // generation's own +/-2.4 min from mins() rounding to the nearest 5 —
+    // charging that to the damp would make this check fail for the wrong
+    // reason and stop meaning anything.
+    const week = hot.plan.weeks.find((w) => w.weekStart === hot.forcedRecoveryWeek);
+    const ctrlWeek = control.plan.weeks.find((w) => w.weekStart === hot.forcedRecoveryWeek);
+    if (week && ctrlWeek && week.sessions.length === ctrlWeek.sessions.length) {
+      for (let i = 0; i < week.sessions.length; i++) {
+        const s = week.sessions[i];
+        const undamped = ctrlWeek.sessions[i];
+        if (s.discipline === "race" || s.date !== undamped.date) continue;
+        if (s.durationHr === undamped.durationHr) continue;
+        sessionsChecked++;
+        // Zero tolerance: retitle derives the number from durationHr, so any
+        // gap here is a description left behind by the rescale.
+        const m = s.title.match(/\b\d+\b/);
+        if (m) {
+          const want = Math.max(1, Math.round(s.durationHr * 60));
+          if (Number(m[0]) !== want) bad.push(`${c.id}: "${s.title}" on a ${want}-minute session`);
+        }
+        // And the structure moved with it rather than describing the original.
+        const blocks = s.workout?.blocks ?? [];
+        const wasBlocks = undamped.workout?.blocks ?? [];
+        if (blocks.length && blocks.length === wasBlocks.length) {
+          const now = blocks.reduce((a, b) => a + blockSec(b), 0);
+          const was = wasBlocks.reduce((a, b) => a + blockSec(b), 0);
+          if (now === was) bad.push(`${c.id}: "${s.title}" structure unchanged while duration moved`);
+        }
+      }
+    }
+    // And the damp leaves no session less honest than the undamped reflow.
+    // Proportional scaling preserves the structure-to-duration ratio exactly;
+    // the allowance is for durationHr's 2dp storage (36-second granularity) and
+    // per-block whole-second rounding. Pre-fix a damped long run sat at ~5x.
+    const after = worstDrift(hot.plan.weeks);
+    const before = worstDrift(control.plan.weeks);
+    if (after > before + 0.02) {
+      bad.push(`${c.id}: damped drift ${(after * 100).toFixed(0)}% > undamped ${(before * 100).toFixed(0)}%`);
+    }
+  }
+  check("DS1", `a damped session's title, structure and durationHr agree (${sessionsChecked} sessions across ${damped} damped cells)`,
+    bad.length === 0, bad.slice(0, 3).join("; "));
+  check("DS2", "the sweep actually damped weeks (not vacuously green)", damped > 100, `${damped} damped`);
 }
 
 // ——— golden digests ———————————————————————————————————————————————————————

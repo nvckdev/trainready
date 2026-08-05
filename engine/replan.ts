@@ -1,4 +1,5 @@
 import { generatePlan, type Plan, type PlanRequest, type PlanWeek } from "./plan.ts";
+import { scaleSessionStructure } from "./session-scale.ts";
 import type { AthleteState } from "./types.ts";
 import type { Zones } from "./zones.ts";
 
@@ -172,7 +173,13 @@ function resimulateProjected(weeks: PlanWeek[], seedCtl: number, seedAtl: number
 }
 
 /** Scale a week's session TSS/duration to a new weekly target, preserving the
- *  long session's share (the redistribution template lives in plan.ts). */
+ *  long session's share (the redistribution template lives in plan.ts).
+ *
+ *  The session's DESCRIPTION scales with it. Until 2026-08-05 this touched only
+ *  tss and durationHr, so title, structure and workout.blocks kept describing
+ *  the session as first built — "Long run 115" scheduled as 22 minutes, "Easy
+ *  60" as 12. One quantity, one ruler: the blocks scale by the same factor and
+ *  the text and title are derived from the result. */
 function scaleWeek(week: PlanWeek, newTargetTss: number): void {
   const cur = week.sessions.reduce((s, x) => s + x.tss, 0);
   if (cur <= 0) return;
@@ -181,6 +188,8 @@ function scaleWeek(week: PlanWeek, newTargetTss: number): void {
     if (s.discipline === "race") continue;
     s.tss = Math.max(0, round(s.tss * factor));
     s.durationHr = Math.round(s.durationHr * factor * 100) / 100;
+    // After durationHr, never before — the title is regenerated from it.
+    scaleSessionStructure(s, factor);
   }
   week.targetTss = week.sessions.reduce((s, x) => s + x.tss, 0);
 }
