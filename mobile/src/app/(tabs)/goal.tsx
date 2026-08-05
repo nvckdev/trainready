@@ -73,13 +73,19 @@ function Chip({ label, selected, onPress }: { label: string; selected: boolean; 
  *  finished plan appears. Reduced motion jumps straight to the result. */
 function GeneratingScreen({ sessionCount, weekCount }: { sessionCount: number; weekCount: number }) {
   const reduce = useReduceMotion();
-  const [counter, setCounter] = useState(reduce ? sessionCount : 0);
+  // Reduce-motion shows the real number DERIVED, never animated into state.
+  // The effect used to sync it — which was not redundant, because this screen
+  // mounts with sessionCount 0 and is re-rendered with the real count when
+  // the engine finishes; deleting that sync outright would have frozen a
+  // reduce-motion athlete on "0 SESSIONS PLACED". Deriving removes the extra
+  // render pass AND the dependency.
+  const [animated, setAnimated] = useState(0);
+  const counter = reduce ? sessionCount : animated;
   const bars = [useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current];
   const { width } = useWindowDimensions();
 
   useEffect(() => {
     if (reduce) {
-      setCounter(sessionCount);
       bars.forEach((b) => b.setValue(1));
       return;
     }
@@ -87,7 +93,7 @@ function GeneratingScreen({ sessionCount, weekCount }: { sessionCount: number; w
     const id = setInterval(() => {
       const p = Math.min(1, (Date.now() - t0) / 1400);
       const e = 1 - Math.pow(1 - p, 3);
-      setCounter(Math.round(sessionCount * e));
+      setAnimated(Math.round(sessionCount * e));
       if (p >= 1) clearInterval(id);
     }, 40);
     bars.forEach((b, i) => {

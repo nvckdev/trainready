@@ -50,12 +50,29 @@ const fieldStyle = {
 export default function SettingsScreen() {
   const athlete = useAthlete();
   const stored = usePlan();
-  const [name, setName] = useState("");
-  const [pace, setPace] = useState("");
-  const [lthr, setLthr] = useState("");
   const [saved, setSaved] = useState(false);
   const [cleared, setCleared] = useState(false);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // The threshold form is DERIVED from the athlete, with the athlete's own
+  // edits layered on top while they belong to the same identity. It used to
+  // be three useStates re-synced by an effect keyed on a loadedFor sentinel —
+  // an extra render pass on every load, and a second copy of the athlete's
+  // values that could disagree with the store. Re-pairing changes the
+  // identity, the edits stop matching, and the fields show the new athlete.
+  const identity = athlete ? `${athlete.name}|${athlete.thresholds.runThresholdSpeedMps}` : null;
+  const [edits, setEdits] = useState<{ id: string | null; name: string; pace: string; lthr: string } | null>(null);
+  const fields =
+    edits && edits.id === identity
+      ? edits
+      : {
+          id: identity,
+          name: athlete && !athlete.demo ? athlete.name : "",
+          pace: athlete ? mpsToPace(athlete.thresholds.runThresholdSpeedMps) : "",
+          lthr: athlete ? String(athlete.thresholds.lthrBpm) : "",
+        };
+  const { name, pace, lthr } = fields;
+  const setName = (v: string) => setEdits({ ...fields, id: identity, name: v });
+  const setPace = (v: string) => setEdits({ ...fields, id: identity, pace: v });
+  const setLthr = (v: string) => setEdits({ ...fields, id: identity, lthr: v });
   const [sync, setSync] = useState<MobileSyncStore | null>(null);
   const [syncing, setSyncing] = useState(false);
 
@@ -70,15 +87,6 @@ export default function SettingsScreen() {
   useEffect(() => {
     void readRemindersEnabled().then(setReminders);
   }, []);
-
-  // Populate once per athlete identity — not on every keystroke re-render.
-  useEffect(() => {
-    if (!athlete || loadedFor === athlete.name + athlete.thresholds.runThresholdSpeedMps) return;
-    setName(athlete.demo ? "" : athlete.name);
-    setPace(mpsToPace(athlete.thresholds.runThresholdSpeedMps));
-    setLthr(String(athlete.thresholds.lthrBpm));
-    setLoadedFor(athlete.name + athlete.thresholds.runThresholdSpeedMps);
-  }, [athlete, loadedFor]);
 
   const mps = paceToMps(pace);
   const lthrNum = Number(lthr);

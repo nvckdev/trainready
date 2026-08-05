@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -106,19 +106,24 @@ function WeekRow({
 export default function PlanScreen() {
   useWeeklyReconcile();
   const stored = usePlan();
-  const [openWeek, setOpenWeek] = useState<string | null>(null);
+  // Which week is expanded, DERIVED rather than synced by an effect: the
+  // athlete's own toggle wins while it belongs to this plan, otherwise the
+  // current week opens by default. Same behaviour as before — open the
+  // current week once per plan, then let the expand state survive tab
+  // switches — without the extra render pass, and a reflow that changes the
+  // plan re-opens the current week because the key no longer matches.
+  const [toggled, setToggled] = useState<{ planKey: string; week: string | null } | null>(null);
 
   const today = useToday();
   const curIdx = stored ? currentWeekIndex(stored.plan.weeks, today) : -1;
   const curWeek = curIdx >= 0 ? stored!.plan.weeks[curIdx].weekStart : null;
 
-  // Open the current week once per plan; after that the user's expand state
-  // survives tab switches instead of snapping back on every focus.
   const planKey = stored ? `${stored.plan.meta.raceDate}|${stored.plan.weeks[0]?.weekStart}` : null;
-  useEffect(() => {
-    if (stored) setOpenWeek(curWeek ?? stored.plan.weeks[0]?.weekStart ?? null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planKey]);
+  const defaultOpen = stored ? (curWeek ?? stored.plan.weeks[0]?.weekStart ?? null) : null;
+  const openWeek = toggled && toggled.planKey === planKey ? toggled.week : defaultOpen;
+  const setOpenWeek = (week: string | null) => {
+    if (planKey) setToggled({ planKey, week });
+  };
 
   if (stored === undefined) {
     return <SafeAreaView style={{ flex: 1, backgroundColor: C.field }} edges={["top"]} />;
