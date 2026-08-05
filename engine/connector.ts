@@ -1,3 +1,4 @@
+import { dedupeActivities } from "./activity.ts";
 import type { ActivitySource, Coverage, ImportedActivity } from "./activity.ts";
 
 /**
@@ -186,4 +187,116 @@ export function dormantConnector(source: ActivitySource, label: string, reason: 
     notConfiguredReason: () => reason,
     fetchActivities: async () => emptyResult(source, "not-configured", reason),
   };
+}
+
+// ——— sync evidence store: additive by construction ————————————————————————
+
+export interface SyncSourceStatus {
+  source: ActivitySource;
+  label: string;
+  status: FetchStatus;
+  message?: string;
+  /** Last time this source SUCCEEDED. */
+  lastSyncedAt?: string;
+  /** Last time a sync ATTEMPTED this source — the gate's liveness signal. */
+  lastAttemptAt?: string;
+  activityCount: number;
+}
+
+export interface SyncEvidence {
+  activities: ImportedActivity[];
+  coverage: Coverage[];
+  sources: SyncSourceStatus[];
+  lastSyncAt?: string;
+}
+
+const covDay = 86400000;
+const covNext = (d: string) => new Date(Date.parse(d + "T12:00:00Z") + covDay).toISOString().slice(0, 10);
+
+/** Merge overlapping or adjacent same-source windows into envelopes. Windows
+ *  with an uncovered day between them stay separate — a gap is a real hole in
+ *  the evidence, and papering over it would fabricate coverage. */
+export function mergeCoverage(windows: Coverage[]): Coverage[] {
+  const bySource = new Map<ActivitySource, Coverage[]>();
+  for (const w of windows) {
+    const list = bySource.get(w.source) ?? [];
+    list.push(w);
+    bySource.set(w.source, list);
+  }
+  const out: Coverage[] = [];
+  for (const [source, list] of bySource) {
+    const sorted = [...list].sort((a, b) => (a.from < b.from ? -1 : 1));
+    let cur = { ...sorted[0] };
+    for (const w of sorted.slice(1)) {
+      if (w.from <= covNext(cur.to)) {
+        if (w.to > cur.to) cur.to = w.to;
+      } else {
+        out.push(cur);
+        cur = { ...w };
+      }
+    }
+    out.push({ ...cur, source });
+  }
+  return out.sort((a, b) => (a.from < b.from ? -1 : 1));
+}
+
+/**
+ * Fold one sync round into the stored evidence — the ONE merge both surfaces
+ * use, and it is ADDITIVE by construction:
+ *
+ *  - activities union and dedupe; a new fetch can only add or corroborate,
+ *    never erase. The old merge REPLACED a source's evidence with its latest
+ *    fetch, so a 120-day refetch silently deleted week-1..n of an 18-week
+ *    plan — and those weeks then read as fabricated total misses.
+ *  - coverage accumulates and merges into envelopes; a source's honest
+ *    window only ever grows (until pruned).
+ *  - a failed source keeps everything it ever contributed; only its status
+ *    row changes. An outage degrades freshness, never content.
+ *
+ * `pruneBefore` (ISO date) is the retention cutoff — evidence older than the
+ * caller's horizon (plan start minus margin) may be dropped.
+ */
+export function mergeSyncEvidence(
+  prev: SyncEvidence,
+  summary: SyncSummary,
+  connectors: Connector[],
+  now: string,
+  pruneBefore?: string
+): SyncEvidence {
+  let activities = dedupeActivities([...prev.activities, ...summary.activities]);
+  let coverage = mergeCoverage([...prev.coverage, ...summary.coverage]);
+  if (pruneBefore) {
+    activities = activities.filter((a) => a.startTime.slice(0, 10) >= pruneBefore);
+    coverage = coverage
+      .filter((c) => c.to >= pruneBefore)
+      .map((c) => (c.from < pruneBefore ? { ...c, from: pruneBefore } : c));
+  }
+  const sources: SyncSourceStatus[] = connectors.map((c) => {
+    const r = summary.results.find((x) => x.source === c.source);
+    const before = prev.sources.find((x) => x.source === c.source);
+    const ok = r?.status === "ok";
+    return {
+      source: c.source,
+      label: c.label,
+      status: r?.status ?? "unavailable",
+      message: r?.message,
+      lastSyncedAt: ok ? now : before?.lastSyncedAt,
+      lastAttemptAt: r?.attemptedAt ?? now,
+      activityCount: ok ? (r?.activities.length ?? 0) : (before?.activityCount ?? 0),
+    };
+  });
+  return { activities, coverage, sources, lastSyncAt: now };
+}
+
+/** Default sync lookback when no plan bounds it. */
+export const SYNC_LOOKBACK_DAYS = 120;
+
+/** The fetch-window start: the plan's first week when that reaches further
+ *  back than the default lookback — an 18-week plan is longer than 120 days,
+ *  and a window shorter than the plan silently un-covers its early weeks. */
+export function sinceForSync(planStart: string | undefined, todayIso: string, lookbackDays = SYNC_LOOKBACK_DAYS): string {
+  const dflt = new Date(Date.parse(todayIso.slice(0, 10) + "T12:00:00Z") - lookbackDays * covDay)
+    .toISOString()
+    .slice(0, 10);
+  return planStart && planStart < dflt ? planStart : dflt;
 }

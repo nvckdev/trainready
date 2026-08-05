@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Coverage, ImportedActivity } from "../../engine/activity.ts";
 import { dedupeActivities } from "../../engine/activity.ts";
-import { syncAll, type FetchResult } from "../../engine/connector.ts";
+import { mergeSyncEvidence, sinceForSync, syncAll, type SyncEvidence, type SyncSourceStatus } from "../../engine/connector.ts";
 import { dashboardConnectors } from "@/lib/connectors";
+import { readPlan } from "@/lib/plan-io";
 import { localToday } from "@/lib/athlete-data";
 
 /**
@@ -21,22 +22,10 @@ const LOOKBACK_DAYS = 120;
 /** On-app-open syncs are debounced to this; the manual button ignores it. */
 export const SYNC_DEBOUNCE_MS = 30 * 60 * 1000;
 
-export interface SourceStatus {
-  source: string;
-  label: string;
-  status: FetchResult["status"];
-  message?: string;
-  lastSyncedAt?: string;
-  lastAttemptAt: string;
-  activityCount: number;
-}
+// Aliases of the engine's evidence shape — one definition, zero drift.
+export type SourceStatus = SyncSourceStatus;
 
-export interface SyncStore {
-  activities: ImportedActivity[];
-  coverage: Coverage[];
-  sources: SourceStatus[];
-  lastSyncAt?: string;
-}
+export type SyncStore = SyncEvidence;
 
 const empty: SyncStore = { activities: [], coverage: [], sources: [] };
 
@@ -77,37 +66,22 @@ export function syncDue(now = Date.now()): boolean {
  */
 export async function runSync(): Promise<SyncStore> {
   const prev = readSyncStore();
-  const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString();
+  // The window must reach the plan's first week — an 18-week plan outruns
+  // the default 120-day lookback, and a window shorter than the plan
+  // silently un-covers its early weeks (E10).
+  const planStart = readPlan()?.plan.weeks[0]?.weekStart;
+  const since = sinceForSync(planStart, todayIso);
   const connectors = dashboardConnectors();
   const summary = await syncAll(connectors, since);
-  const now = new Date().toISOString();
-
-  const okSources = new Set(summary.results.filter((r) => r.status === "ok").map((r) => r.source));
-  // Keep prior evidence from sources that did NOT succeed this round.
-  const retainedActivities = prev.activities.filter((a) => !okSources.has(a.source));
-  const retainedCoverage = prev.coverage.filter((c) => !okSources.has(c.source));
-
-  const sources: SourceStatus[] = connectors.map((c) => {
-    const r = summary.results.find((x) => x.source === c.source);
-    const before = prev.sources.find((x) => x.source === c.source);
-    const ok = r?.status === "ok";
-    return {
-      source: c.source,
-      label: c.label,
-      status: r?.status ?? "unavailable",
-      message: r?.message,
-      lastSyncedAt: ok ? now : before?.lastSyncedAt,
-      lastAttemptAt: r?.attemptedAt ?? now,
-      activityCount: ok ? (r?.activities.length ?? 0) : (before?.activityCount ?? 0),
-    };
-  });
-
-  const store: SyncStore = {
-    activities: dedupeActivities([...retainedActivities, ...summary.activities]),
-    coverage: [...retainedCoverage, ...summary.coverage],
-    sources,
-    lastSyncAt: now,
-  };
+  // Additive by construction (engine mergeSyncEvidence): a refetch can add
+  // or corroborate evidence but never erase it, coverage only grows, and a
+  // failed source keeps everything it ever contributed. Retention prunes
+  // only what precedes the plan by more than a month.
+  const pruneBefore = planStart
+    ? new Date(Date.parse(planStart + "T12:00:00Z") - 30 * 86400000).toISOString().slice(0, 10)
+    : since;
+  const store = mergeSyncEvidence(prev, summary, connectors, todayIso, pruneBefore);
   writeSyncStore(store);
   return store;
 }

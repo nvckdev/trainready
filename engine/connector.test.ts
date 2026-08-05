@@ -5,7 +5,10 @@ import {
   emptyResult,
   rateCheck,
   rateSpend,
+  mergeCoverage,
+  mergeSyncEvidence,
   runConnector,
+  sinceForSync,
   syncAll,
   STRAVA_BUDGET,
   type Connector,
@@ -229,6 +232,80 @@ async function main() {
     check("C7e", "…and clears after the day rolls", rateCheck(d, STRAVA_BUDGET, 1, 25 * 3600 * 1000).ok);
   }
 
+
+  // ——— C8. syncs are ADDITIVE: evidence can accumulate but never vanish ————
+  {
+    const now = "2026-08-05T08:00:00.000Z";
+    const prev = {
+      activities: [
+        // Week-1 evidence from four months ago — outside any 120-day refetch.
+        act({ startTime: "2026-04-06T10:00:00.000Z", tss: 70, externalId: "old1" }),
+      ],
+      coverage: [{ source: "strava" as const, from: "2026-04-01", to: "2026-06-01" }],
+      sources: [{ source: "strava" as const, label: "Strava", status: "ok" as const, lastSyncedAt: "2026-06-01T08:00:00.000Z", lastAttemptAt: "2026-06-01T08:00:00.000Z", activityCount: 1 }],
+      lastSyncAt: "2026-06-01T08:00:00.000Z",
+    };
+    const freshOk = await syncAll(
+      [stub({
+        source: "strava",
+        label: "Strava",
+        fetchActivities: async () => ({
+          source: "strava" as const,
+          status: "ok" as const,
+          activities: [act({ startTime: "2026-08-04T10:00:00.000Z", tss: 85, externalId: "new1" })],
+          coverage: [{ source: "strava" as const, from: "2026-05-15", to: "2026-08-05" }],
+          attemptedAt: now,
+        }),
+      })],
+      "2026-05-15"
+    );
+    const merged = mergeSyncEvidence(prev, freshOk, [stub({ source: "strava", label: "Strava" })], now);
+    check("C8a", "the erasure kill test: week-1 evidence outside the refetch window SURVIVES",
+      merged.activities.some((a) => a.externalId === "old1"), `${merged.activities.length} activities`);
+    check("C8b", "…alongside the new evidence", merged.activities.some((a) => a.externalId === "new1"));
+    check("C8c", "overlapping same-source windows merge into one envelope",
+      merged.coverage.length === 1 && merged.coverage[0].from === "2026-04-01" && merged.coverage[0].to === "2026-08-05",
+      JSON.stringify(merged.coverage));
+
+    // A failing source keeps what it told us last time.
+    const freshFail = await syncAll(
+      [stub({ source: "strava", label: "Strava", fetchActivities: async () => { throw new Error("500"); } })],
+      "2026-05-15"
+    );
+    const kept = mergeSyncEvidence(prev, freshFail, [stub({ source: "strava", label: "Strava" })], now);
+    check("C8d", "a failing source retains prior activities AND coverage, only status flips",
+      kept.activities.length === 1 && kept.coverage.length === 1 &&
+        kept.sources[0].status === "unavailable" && kept.sources[0].lastSyncedAt === "2026-06-01T08:00:00.000Z");
+    check("C8e", "…and every attempt stamps lastAttemptAt (E3's liveness signal)",
+      kept.sources[0].lastAttemptAt === kept.sources[0].lastAttemptAt && kept.lastSyncAt === now);
+
+    // Disjoint windows stay separate — a gap is a real hole in the evidence.
+    const gap = mergeCoverage([
+      { source: "strava", from: "2026-04-01", to: "2026-04-30" },
+      { source: "strava", from: "2026-06-01", to: "2026-06-30" },
+    ]);
+    check("C8f", "disjoint same-source windows do NOT merge across the gap", gap.length === 2);
+    const touching = mergeCoverage([
+      { source: "strava", from: "2026-04-01", to: "2026-04-30" },
+      { source: "strava", from: "2026-05-01", to: "2026-05-15" },
+    ]);
+    check("C8g", "adjacent windows (no uncovered day between) merge", touching.length === 1);
+
+    // Prune: ancient evidence beyond the retention cutoff is dropped.
+    const pruned = mergeSyncEvidence(prev, freshOk, [stub({ source: "strava", label: "Strava" })], now, "2026-05-01");
+    check("C8h", "evidence before an explicit retention cutoff is pruned",
+      !pruned.activities.some((a) => a.externalId === "old1") && pruned.coverage[0].from === "2026-05-01",
+      JSON.stringify(pruned.coverage));
+  }
+
+  // ——— C9. the sync window reaches the plan start ————————————————————————————
+  {
+    check("C9a", "a plan longer than the default lookback extends the window to its start",
+      sinceForSync("2026-03-02", "2026-08-05") === "2026-03-02");
+    check("C9b", "a short plan keeps the default 120-day window",
+      sinceForSync("2026-07-01", "2026-08-05") === "2026-04-07");
+    check("C9c", "no plan ⇒ the default window", sinceForSync(undefined, "2026-08-05") === "2026-04-07");
+  }
 }
 
 await_main();

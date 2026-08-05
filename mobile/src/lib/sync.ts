@@ -1,6 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { dedupeActivities, type Coverage, type ImportedActivity } from "@engine/activity.ts";
-import { syncAll, type Connector, type FetchStatus } from "@engine/connector.ts";
+import { mergeSyncEvidence, sinceForSync, syncAll, type Connector, type SyncEvidence, type SyncSourceStatus } from "@engine/connector.ts";
 import { healthKitConnector } from "./healthkit";
 
 /**
@@ -14,24 +13,12 @@ import { healthKitConnector } from "./healthkit";
  */
 
 const KEY = "taper.sync.v1";
-const LOOKBACK_DAYS = 120;
 export const SYNC_DEBOUNCE_MS = 30 * 60 * 1000;
 
-export interface MobileSourceStatus {
-  source: string;
-  label: string;
-  status: FetchStatus;
-  message?: string;
-  lastSyncedAt?: string;
-  activityCount: number;
-}
-
-export interface MobileSyncStore {
-  activities: ImportedActivity[];
-  coverage: Coverage[];
-  sources: MobileSourceStatus[];
-  lastSyncAt?: string;
-}
+// The store IS the engine's evidence shape — aliasing (not re-declaring)
+// is what stops this surface drifting behind the dashboard again.
+export type MobileSourceStatus = SyncSourceStatus;
+export type MobileSyncStore = SyncEvidence;
 
 const EMPTY: MobileSyncStore = { activities: [], coverage: [], sources: [] };
 
@@ -67,37 +54,19 @@ export function peekSync(): MobileSyncStore | null {
   return snapshot;
 }
 
-export async function runSync(): Promise<MobileSyncStore> {
+export async function runSync(planStart?: string): Promise<MobileSyncStore> {
   const prev = await readSync();
-  const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString();
+  // Window reaches the plan start; merge is the shared ADDITIVE engine
+  // merge — evidence accumulates, a failed source keeps its contribution,
+  // and (the drift the audit flagged) lastAttemptAt now exists here too.
+  const since = sinceForSync(planStart, todayIso);
   const connectors = mobileConnectors();
   const summary = await syncAll(connectors, since);
-  const now = new Date().toISOString();
-
-  const okSources = new Set(summary.results.filter((r) => r.status === "ok").map((r) => r.source));
-  const retainedActivities = prev.activities.filter((a) => !okSources.has(a.source));
-  const retainedCoverage = prev.coverage.filter((c) => !okSources.has(c.source));
-
-  const sources: MobileSourceStatus[] = connectors.map((c) => {
-    const r = summary.results.find((x) => x.source === c.source);
-    const before = prev.sources.find((x) => x.source === c.source);
-    const ok = r?.status === "ok";
-    return {
-      source: c.source,
-      label: c.label,
-      status: r?.status ?? "unavailable",
-      message: r?.message,
-      lastSyncedAt: ok ? now : before?.lastSyncedAt,
-      activityCount: ok ? (r?.activities.length ?? 0) : (before?.activityCount ?? 0),
-    };
-  });
-
-  const next: MobileSyncStore = {
-    activities: dedupeActivities([...retainedActivities, ...summary.activities]),
-    coverage: [...retainedCoverage, ...summary.coverage],
-    sources,
-    lastSyncAt: now,
-  };
+  const pruneBefore = planStart
+    ? new Date(Date.parse(planStart + "T12:00:00Z") - 30 * 86400000).toISOString().slice(0, 10)
+    : since;
+  const next = mergeSyncEvidence(prev, summary, connectors, todayIso, pruneBefore);
   snapshot = next;
   try {
     await AsyncStorage.setItem(KEY, JSON.stringify(next));
@@ -108,11 +77,11 @@ export async function runSync(): Promise<MobileSyncStore> {
 }
 
 /** On-app-open sync: debounced, never throws. Returns null when skipped. */
-export async function syncIfDue(now = Date.now()): Promise<MobileSyncStore | null> {
+export async function syncIfDue(now = Date.now(), planStart?: string): Promise<MobileSyncStore | null> {
   const cur = await readSync();
   if (cur.lastSyncAt && now - Date.parse(cur.lastSyncAt) < SYNC_DEBOUNCE_MS) return null;
   try {
-    return await runSync();
+    return await runSync(planStart);
   } catch {
     return null;
   }
