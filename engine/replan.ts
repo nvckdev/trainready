@@ -35,11 +35,80 @@ export interface StoredPlan {
 
 export interface WeekActual {
   weekStart: string; // Monday ISO — joins PlanWeek.weekStart
-  actualTss: number; // executed weekly TSS
+  /**
+   * Executed weekly TSS. `null` means UNKNOWN — no source could vouch for the
+   * week. A number (including 0) is authoritative evidence. The type carries
+   * the distinction so a caller cannot fabricate a zero for a week nobody
+   * measured: that fabrication once fed missStreak and recalibrated a
+   * season's goal off silence. Beware JS coercion — `null <= x` is true
+   * (null coerces to 0), so every consumer must test `!== null` explicitly
+   * before comparing.
+   */
+  actualTss: number | null;
   plannedTss: number; // the stored PlanWeek.targetTss for that week
   rampCapTss?: number; // the +20% anchor ramp ceiling that governed the week
   sessionsMissed: number;
   sessionsPlanned: number;
+}
+
+/** The minimum a plan week must carry for ledger construction. */
+export interface LedgerWeekInput {
+  weekStart: string;
+  targetTss: number;
+  sessions: Array<{ discipline: string; tss: number; status?: string }>;
+}
+
+const LEDGER_DAY = 86400000;
+const ledgerAt = (d: string) => Date.parse(d + "T12:00:00Z");
+
+/**
+ * Per-week ledger for recomputeRemaining — ONE implementation for both
+ * surfaces. Every mobile-lags-dashboard incident in this repo's history
+ * lived in duplicated copies of exactly this function.
+ *
+ * A completed week absent from `executed` becomes `actualTss: null`
+ * (unknown), never 0 — an unknown week breaks streaks instead of counting
+ * as a total miss. `rampRef` uses `||`, not `??`: an authoritative
+ * zero-executed week is real evidence but a useless ramp reference, and
+ * coalescing it to 0 disables the forced-recovery rule entirely.
+ */
+export function buildLedger(
+  weeks: LedgerWeekInput[],
+  asOf: string,
+  executed: Map<string, number>
+): WeekActual[] {
+  const completed = weeks.filter((w) => ledgerAt(w.weekStart) + 7 * LEDGER_DAY <= ledgerAt(asOf));
+  return completed.map((wk, i) => {
+    const prev = completed[i - 1];
+    const rampRef = prev ? (executed.get(prev.weekStart) || prev.targetTss) : wk.targetTss;
+    const known = executed.get(wk.weekStart);
+    return {
+      weekStart: wk.weekStart,
+      actualTss: known === undefined ? null : Math.round(known),
+      plannedTss: wk.targetTss,
+      rampCapTss: Math.round(rampRef * 1.2),
+      sessionsMissed: wk.sessions.filter((s) => s.discipline !== "race" && s.status !== "done").length,
+      sessionsPlanned: wk.sessions.length,
+    };
+  });
+}
+
+/**
+ * Trailing executed TSS of KNOWN completed weeks only, oldest → newest.
+ * Unknown weeks are omitted, not zero-filled — a fabricated zero here
+ * depressed the demonstrated-capacity terms that the rebaseline reads,
+ * throttling the very lift it was meant to grant.
+ */
+export function knownTrailingTss(
+  weeks: LedgerWeekInput[],
+  asOf: string,
+  executed: Map<string, number>,
+  n = 8
+): number[] {
+  return weeks
+    .filter((w) => ledgerAt(w.weekStart) + 7 * LEDGER_DAY <= ledgerAt(asOf) && executed.has(w.weekStart))
+    .slice(-n)
+    .map((w) => Math.round(executed.get(w.weekStart)!));
 }
 
 export interface ReplanInput {
@@ -129,17 +198,20 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
   const req = stored.request;
 
   // ── Ledger analysis ───────────────────────────────────────────────
-  const overshootStreak = trailingStreak(ledger, (w) => w.actualTss > w.plannedTss);
+  const overshootStreak = trailingStreak(ledger, (w) => w.actualTss !== null && w.actualTss > w.plannedTss);
+  // Explicit null guard — `null <= x` coerces null to 0 and would count an
+  // UNKNOWN week as a total miss, which is the exact fabrication the null
+  // exists to prevent. An unknown week breaks the streak.
   const missStreak = trailingStreak(
     ledger,
-    (w) => w.plannedTss > 0 && w.actualTss <= w.plannedTss * (1 - MISS_FRAC)
+    (w) => w.actualTss !== null && w.plannedTss > 0 && w.actualTss <= w.plannedTss * (1 - MISS_FRAC)
   );
   const last = ledger[ledger.length - 1];
   const rebaselined = overshootStreak >= OVERSHOOT_STREAK;
 
   // Forced recovery: the last completed week ran hard over its ramp ceiling.
   let forcedRecovery = false;
-  if (last) {
+  if (last && last.actualTss !== null) {
     const cap = last.rampCapTss ?? last.plannedTss;
     forcedRecovery = cap > 0 && last.actualTss > cap * HARD_OVERSHOOT_OVER_CAP;
   }
@@ -208,7 +280,7 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
     first.phase = "recovery";
     forcedRecoveryWeek = first.weekStart;
     modified = true;
-  } else if (last && last.plannedTss > 0 && last.actualTss > last.plannedTss) {
+  } else if (last && last.actualTss !== null && last.plannedTss > 0 && last.actualTss > last.plannedTss) {
     // Overshoot damp: give back exactly the excess, then lower further (down to
     // the weekly-60 rail) until projected end-of-week TSB clears the safe band.
     // (plannedTss > 0 guards the ratio — a 0-target week never damps.)
@@ -271,8 +343,10 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
 
   // ── Note (priority: forced > recalibration > rebaseline > damp > ahead) ──
   let note: string | null = null;
-  if (forcedRecovery) {
-    note = `last week ran ${fmtPct((last!.actualTss / (last!.rampCapTss ?? last!.plannedTss) - 1) * 100)} over the ramp ceiling → this week held to a recovery load (${round(actualState.ctl * 7)} TSS) before building again`;
+  // forcedRecovery already implies a non-null last.actualTss; the repeated
+  // guard is for the type system, not a second behavior branch.
+  if (forcedRecovery && last && last.actualTss !== null) {
+    note = `last week ran ${fmtPct((last.actualTss / (last.rampCapTss ?? last.plannedTss) - 1) * 100)} over the ramp ceiling → this week held to a recovery load (${round(actualState.ctl * 7)} TSS) before building again`;
   } else if (recalibration) {
     note = `${missStreak} light weeks → goal reprojected ${oldFinish ?? "—"}→${recalibration.revisedFinish}`;
   } else if (rebaselined) {

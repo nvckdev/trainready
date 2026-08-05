@@ -5,7 +5,8 @@ import { reconcileGate, reflowSafeRequest } from "../../engine/reconcile.ts";
 import { deriveZones } from "../../engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "../../engine/seed.ts";
 import type { AthleteState } from "../../engine/types.ts";
-import { buildLedger, carryStatusForward, currentWeekIndex, preserveCompletedWeeks } from "./replan-auto";
+import { carryStatusForward, currentWeekIndex, preserveCompletedWeeks } from "./replan-auto";
+import { buildLedger, type WeekActual } from "../../engine/replan.ts";
 
 /**
  * End-to-end reconcile-runner tests (app layer — runs under app:tests, not
@@ -82,10 +83,10 @@ if (!fx) {
       plan.weeks[currentWeekIndex(plan.weeks, "2026-07-29")].weekStart === "2026-07-27",
       plan.weeks[currentWeekIndex(plan.weeks, "2026-07-29")].weekStart);
     const executed = new Map(plan.weeks.map((w) => [w.weekStart, w.targetTss]));
-    const ledger = buildLedger(plan, asOf, executed);
+    const ledger = buildLedger(plan.weeks, asOf, executed);
     check("RR1b", "ledger covers exactly the completed weeks", ledger.length === 3, `${ledger.length}`);
     check("RR1c", "ledger rows carry planned + actual + a ramp reference",
-      ledger.every((l) => l.plannedTss > 0 && l.actualTss > 0 && (l.rampCapTss ?? 0) > 0));
+      ledger.every((l) => l.plannedTss > 0 && l.actualTss !== null && l.actualTss > 0 && (l.rampCapTss ?? 0) > 0));
     // Status must survive a reflow — that is the athlete's log.
     const before = generatePlan(REQ, seed, [], zones);
     before.weeks[0].sessions[0].status = "done";
@@ -112,7 +113,7 @@ if (!fx) {
       stored: { request: reflowSafeRequest(REQ, decision.asOf), plan },
       actualState: state,
       actualTrailingTss: [110, 120, 118, 130],
-      ledger: buildLedger(plan, decision.asOf, executed),
+      ledger: buildLedger(plan.weeks, decision.asOf, executed),
       asOf: decision.asOf,
       history,
       zones,
@@ -152,7 +153,7 @@ if (!fx) {
       reflowed.weeks.length === before + 3, `${before} -> ${reflowed.weeks.length}`);
     check("RR5b", "…chronological, no duplicates",
       reflowed.weeks.every((x, i, arr) => i === 0 || arr[i - 1].weekStart < x.weekStart));
-    const led2 = buildLedger(reflowed, reflowed.weeks[4].weekStart, new Map(reflowed.weeks.map((x) => [x.weekStart, x.targetTss])));
+    const led2 = buildLedger(reflowed.weeks, reflowed.weeks[4].weekStart, new Map(reflowed.weeks.map((x) => [x.weekStart, x.targetTss])));
     check("RR5c", "…so the ledger keeps multi-week history (2-undershoot recalibration stays reachable)",
       led2.length >= 2, `${led2.length} rows`);
   }
@@ -161,7 +162,7 @@ if (!fx) {
   {
     const executed = new Map(plan.weeks.map((w) => [w.weekStart, w.targetTss]));
     executed.set(plan.weeks[0].weekStart, 0);
-    const ledger = buildLedger(plan, asOf, executed);
+    const ledger = buildLedger(plan.weeks, asOf, executed);
     check("RR6", "rampCapTss stays positive after a zero-executed week",
       ledger.every((l) => (l.rampCapTss ?? 0) > 0), ledger.map((l) => l.rampCapTss).join(","));
   }

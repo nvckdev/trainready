@@ -1,5 +1,5 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
-import { recomputeRemaining, type WeekActual } from "../../engine/replan.ts";
+import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
 import { reconcileGate, reflowSafeRequest, type ReconcileDecision } from "../../engine/reconcile.ts";
 import { loadPopulationPrior } from "../../engine/learned.ts";
 import { getAthlete, getHistory, getStateAt, getWeekly, localToday } from "@/lib/athlete-data";
@@ -66,27 +66,6 @@ export function executedTssByWeek(plan: Plan): Map<string, number> {
     if (done > 0) out.set(w.weekStart, Math.round(done));
   }
   return out;
-}
-
-/** Per-week ledger for recomputeRemaining, covering completed weeks only. */
-export function buildLedger(plan: Plan, today: string, executed: Map<string, number>): WeekActual[] {
-  const curIdx = currentWeekIndex(plan.weeks, today);
-  const completed = plan.weeks.slice(0, Math.max(0, curIdx));
-  return completed.map((wk, i) => {
-    const prev = completed[i - 1];
-    // `|| targetTss`, not `?? targetTss`: a zero-executed previous week is a
-    // real value but a useless ramp reference — coalescing it to 0 makes
-    // rampCapTss 0, which disables replan's forced-recovery rule entirely.
-    const rampRef = prev ? (executed.get(prev.weekStart) || prev.targetTss) : wk.targetTss;
-    return {
-      weekStart: wk.weekStart,
-      actualTss: executed.get(wk.weekStart) ?? 0,
-      plannedTss: wk.targetTss,
-      rampCapTss: Math.round(rampRef * 1.2),
-      sessionsMissed: wk.sessions.filter((s) => s.discipline !== "race" && s.status !== "done").length,
-      sessionsPlanned: wk.sessions.length,
-    };
-  });
 }
 
 /** Copy done/skipped marks from the old plan onto matching sessions in the new
@@ -205,7 +184,7 @@ function runReconcile(
       stored: { request, plan: stored.plan },
       actualState,
       actualTrailingTss: getWeekly().slice(-8).map((r) => Math.round(r.tss)),
-      ledger: buildLedger(stored.plan, decision.asOf, executed),
+      ledger: buildLedger(stored.plan.weeks, decision.asOf, executed),
       asOf: decision.asOf,
       history: getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss, weekStart: h.weekStart })),
       zones: athlete.zones,

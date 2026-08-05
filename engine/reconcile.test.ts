@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
-import { recomputeRemaining, type WeekActual } from "./replan.ts";
+import { buildLedger, knownTrailingTss, recomputeRemaining, type WeekActual } from "./replan.ts";
 import { deriveZones } from "./zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import type { AthleteState } from "./types.ts";
@@ -99,6 +99,37 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
     !unknown.due && unknown.reason === "no-execution-data", unknown.reason);
   check("RC3g", "an AUTHORITATIVE zero still reflows (a truly missed week)",
     at(0).due === true && at(0).deltaPct === -1);
+}
+
+// ——— RC8 (pure). buildLedger: unknown is null, never a fabricated zero ————
+{
+  const weeks = [
+    { weekStart: "2026-07-06", targetTss: 200, sessions: [{ discipline: "run", tss: 100, status: "done" as const }, { discipline: "run", tss: 100 }] },
+    { weekStart: "2026-07-13", targetTss: 210, sessions: [{ discipline: "run", tss: 210 }] },
+    { weekStart: "2026-07-20", targetTss: 220, sessions: [{ discipline: "run", tss: 220 }] },
+    { weekStart: "2026-07-27", targetTss: 230, sessions: [] },
+  ];
+  const executed = new Map([
+    ["2026-07-06", 195],
+    // 2026-07-13 deliberately ABSENT — unknown, not zero.
+    ["2026-07-20", 0], // authoritative zero (covered, nothing trained)
+  ]);
+  const rows = buildLedger(weeks, "2026-07-27", executed);
+  check("RC8a", "three completed weeks enter the ledger (the current week does not)",
+    rows.length === 3 && rows[2].weekStart === "2026-07-20");
+  check("RC8b", "a known week carries its number", rows[0].actualTss === 195);
+  check("RC8c", "an UNKNOWN week is null — the type can no longer express a fabricated zero",
+    rows[1].actualTss === null, String(rows[1].actualTss));
+  check("RC8d", "an authoritative zero stays a real 0 (present in the map ⇒ evidence)",
+    rows[2].actualTss === 0);
+  check("RC8e", "rampRef falls back to target across a zero-executed week (|| semantics kept)",
+    rows[2].rampCapTss === Math.round(210 * 1.2), String(rows[2].rampCapTss));
+  check("RC8f", "sessionsMissed still counts unmarked non-race sessions",
+    rows[0].sessionsMissed === 1);
+
+  const trail = knownTrailingTss(weeks, "2026-07-27", executed);
+  check("RC8g", "the trailing array contains ONLY known weeks — no zeros invented",
+    JSON.stringify(trail) === JSON.stringify([195, 0]), JSON.stringify(trail));
 }
 
 // ——— RC4/RC5/RC6. against the real engine, with the real corpus ——————————
@@ -288,6 +319,55 @@ if (!fx) {
     check("RC7", "a mid-week reconcile still starts at the current Monday (no lost week)",
       r.plan.weeks[0].weekStart === mondayOnOrBefore(midWeek),
       `${r.plan.weeks[0].weekStart} vs ${mondayOnOrBefore(midWeek)}`);
+  }
+
+  // ——— RC8h+. unknown weeks break streaks — the recalibration kill test ————
+  {
+    const unknownLed = (i: number): WeekActual => ({ ...led(i, 0), actualTss: null });
+    const base = {
+      stored,
+      actualState: state(),
+      actualTrailingTss: [110, 120, 118, 130],
+      asOf: w(3).weekStart,
+      history,
+      zones,
+    };
+    // One light week PRECEDED BY an unknown week: missStreak must be 1, and
+    // the 2-miss recalibration card must NOT fire off silence.
+    const withUnknown = recomputeRemaining({
+      ...base,
+      ledger: [led(0, w(0).targetTss), unknownLed(1), led(2, w(2).targetTss * 0.5)],
+    });
+    check("RC8h", "light week after an UNKNOWN week: no recalibration fires off silence",
+      !withUnknown.recalibration, withUnknown.recalibration?.message ?? "none");
+
+    // Control: two genuinely light KNOWN weeks still fire it.
+    const twoMisses = recomputeRemaining({
+      ...base,
+      ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss * 0.5), led(2, w(2).targetTss * 0.5)],
+    });
+    check("RC8i", "control: two known light weeks still recalibrate",
+      !!twoMisses.recalibration, twoMisses.recalibration ? "fired" : "did not fire");
+
+    // The JS coercion trap: null <= number coerces null to 0, so a naive
+    // pred would count an unknown LAST week as a miss AND as an over-cap
+    // trigger. An unknown last week must trigger neither.
+    const unknownLast = recomputeRemaining({
+      ...base,
+      ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss), unknownLed(2)],
+    });
+    check("RC8j", "an unknown LAST week triggers no forced recovery and no recalibration",
+      !unknownLast.recalibration && unknownLast.forcedRecoveryWeek === null,
+      `forced=${unknownLast.forcedRecoveryWeek ?? "none"}`);
+
+    // Neutrality: an all-known ledger produces byte-identical output to the
+    // same input before this change (no null anywhere ⇒ old arithmetic).
+    const allKnown = recomputeRemaining({
+      ...base,
+      ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss), led(2, w(2).targetTss * 1.4)],
+    });
+    check("RC8k", "neutrality: all-known ledger still damps the overshoot exactly as RC4",
+      allKnown.plan.weeks[0].targetTss < w(3).targetTss);
   }
 }
 

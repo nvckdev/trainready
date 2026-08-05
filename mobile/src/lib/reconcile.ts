@@ -1,6 +1,6 @@
 import type { Plan, PlanRequest } from "@engine/plan.ts";
 import type { AthleteState } from "@engine/types.ts";
-import { recomputeRemaining, type WeekActual } from "@engine/replan.ts";
+import { buildLedger, knownTrailingTss, recomputeRemaining } from "@engine/replan.ts";
 import { reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
 import { dailyExecutedTss, dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
 import { thresholdMpsFromZones } from "@engine/zones.ts";
@@ -104,25 +104,6 @@ export function executedDailyPmc(
   return series;
 }
 
-function buildLedger(plan: Plan, asOf: string, executed: Map<string, number>): WeekActual[] {
-  const completed = plan.weeks.filter((w) => at(w.weekStart) + 7 * DAY <= at(asOf));
-  return completed.map((wk, i) => {
-    const prev = completed[i - 1];
-    // `||` not `??`: a zero-executed previous week is a real value but a
-    // useless ramp reference — coalescing it to 0 makes rampCapTss 0, which
-    // disables replan's forced-recovery rule entirely (same fix as dashboard).
-    const rampRef = prev ? (executed.get(prev.weekStart) || prev.targetTss) : wk.targetTss;
-    return {
-      weekStart: wk.weekStart,
-      actualTss: Math.round(executed.get(wk.weekStart) ?? 0),
-      plannedTss: wk.targetTss,
-      rampCapTss: Math.round(rampRef * 1.2),
-      sessionsMissed: wk.sessions.filter((s) => s.discipline !== "race" && s.status !== "done").length,
-      sessionsPlanned: wk.sessions.length,
-    };
-  });
-}
-
 /** Copy done/skipped marks onto the reflowed plan, keyed (date, discipline). */
 function carryStatusForward(prev: Plan, next: Plan): void {
   const marks = new Map<string, "done" | "skipped">();
@@ -186,11 +167,10 @@ export async function reconcileIfDue(
     result = recomputeRemaining({
       stored: { request, plan: stored.plan },
       actualState,
-      actualTrailingTss: stored.plan.weeks
-        .filter((w) => at(w.weekStart) < at(decision.asOf))
-        .slice(-8)
-        .map((w) => Math.round(executed.get(w.weekStart) ?? 0)),
-      ledger: buildLedger(stored.plan, decision.asOf, executed),
+      // Known weeks only — a fabricated zero here depressed the very
+      // capacity terms the rebaseline reads (E2).
+      actualTrailingTss: knownTrailingTss(stored.plan.weeks, decision.asOf, executed),
+      ledger: buildLedger(stored.plan.weeks, decision.asOf, executed),
       asOf: decision.asOf,
       history: [],
       zones,
