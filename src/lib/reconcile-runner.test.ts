@@ -105,7 +105,7 @@ if (!fx) {
       raceDate: REQ.raceDate,
       lastRecomputed: undefined,
       today: asOf,
-      executedTssFor: (ws) => executed.get(ws),
+      executedTssFor: (ws) => { const v = executed.get(ws); return v === undefined ? undefined : { tss: v, complete: true }; },
     });
     check("RR2a", "gate is due", decision.due && decision.closedWeekStart === plan.weeks[2].weekStart);
 
@@ -135,7 +135,7 @@ if (!fx) {
       raceDate: REQ.raceDate,
       lastRecomputed: undefined,
       today: asOf,
-      executedTssFor: (ws) => executed.get(ws),
+      executedTssFor: (ws) => { const v = executed.get(ws); return v === undefined ? undefined : { tss: v, complete: true }; },
     });
     check("RR3a", "gate refuses: within tolerance", !decision.due && decision.reason === "within-tolerance");
     const shape = (p: Plan) => JSON.stringify({ weeks: p.weeks, note: p.meta.replanNote ?? null });
@@ -176,7 +176,7 @@ if (!fx) {
       raceDate: REQ.raceDate,
       lastRecomputed: asOf, // stamped by the first reconcile
       today: asOf,
-      executedTssFor: (ws) => executed.get(ws),
+      executedTssFor: (ws) => { const v = executed.get(ws); return v === undefined ? undefined : { tss: v, complete: true }; },
     });
     check("RR4", "already reconciled this week ⇒ refuses (no churn on every page view)",
       !second.due && second.reason === "already-reconciled", second.reason);

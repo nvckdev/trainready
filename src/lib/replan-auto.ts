@@ -1,8 +1,8 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
 import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
-import { reconcileGate, reflowSafeRequest, type ReconcileDecision } from "../../engine/reconcile.ts";
+import { evidenceComplete, reconcileGate, reflowSafeRequest, type ReconcileDecision, type WeekEvidence } from "../../engine/reconcile.ts";
 import { loadPopulationPrior } from "../../engine/learned.ts";
-import { getAthlete, getHistory, getStateAt, getWeekly, localToday } from "@/lib/athlete-data";
+import { getAthlete, getHistory, getStateAt, getWeekly, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readPlan, writePlan } from "@/lib/plan-io";
 import { loadTissueConstraints } from "@/lib/tissue-constraints";
 import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "../../engine/activity.ts";
@@ -35,10 +35,31 @@ export function currentWeekIndex(weeks: Plan["weeks"], today: string): number {
 }
 
 /**
- * Executed weekly TSS: real logged load from the corpus, falling back to the
- * sum of done-marked sessions when a week has no logged activities. Same
- * precedence the manual re-plan has always used.
+ * Evidence for the gate's closed-week check: the executed number plus whether
+ * it is COMPLETE — settled past upload lag, with a post-close sync when a
+ * remote source is configured, or corpus-measured outright. The gate treats
+ * an incomplete number as a lower bound and refuses to lock an undershoot
+ * verdict on it (evidence-settling).
  */
+export function closedWeekEvidence(
+  executed: Map<string, number>,
+  weekStart: string,
+  today: string
+): WeekEvidence | undefined {
+  const v = executed.get(weekStart);
+  if (v === undefined) return undefined;
+  return {
+    tss: v,
+    complete: evidenceComplete({
+      weekStart,
+      today,
+      hasRemoteSource: stravaConfigured(),
+      lastSyncAt: readSyncStore().lastSyncAt,
+      measured: corpusWeeklyMeasured().measured.has(weekStart),
+    }),
+  };
+}
+
 export function executedTssByWeek(plan: Plan): Map<string, number> {
   const weekStarts = plan.weeks.map((w) => w.weekStart);
   const athlete = getAthlete();
@@ -146,7 +167,7 @@ export function reconcileIfDue(today = localToday()): ReconcileOutcome {
     raceDate: stored.request.raceDate,
     lastRecomputed: stored.plan.meta.lastRecomputed,
     today,
-    executedTssFor: (ws) => executed.get(ws),
+    executedTssFor: (ws) => closedWeekEvidence(executed, ws, today),
   });
   return runReconcile(stored, decision, executed);
 }
@@ -248,7 +269,13 @@ export function reconcileNow(today = localToday()): ReconcileOutcome {
     weeks: stored.plan.weeks,
     raceDate: stored.request.raceDate,
     today,
-    executedTssFor: (ws) => executed.get(ws),
+    // complete: true — the manual button is the athlete explicitly saying
+    // "judge with what you have, now". The settling refusal exists to stop
+    // AUTOMATIC verdicts on arriving evidence, not to overrule a person.
+    executedTssFor: (ws) => {
+      const v = executed.get(ws);
+      return v === undefined ? undefined : { tss: v, complete: true };
+    },
     tolerance: -1,
   });
   return runReconcile(stored, decision, executed);

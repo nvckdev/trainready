@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
 import { buildLedger, knownTrailingTss, recomputeRemaining, type WeekActual } from "./replan.ts";
+import { evidenceComplete } from "./reconcile.ts";
 import { deriveZones } from "./zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
 import type { AthleteState } from "./types.ts";
@@ -50,7 +51,7 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
       weeks,
       raceDate: "2026-10-18",
       today: "2026-07-20",
-      executedTssFor: () => 210,
+      executedTssFor: () => ({ tss: 210, complete: true }),
       ...over,
     } as Parameters<typeof reconcileGate>[0]);
 
@@ -82,7 +83,7 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
       weeks,
       raceDate: "2026-10-18",
       today: "2026-07-20",
-      executedTssFor: () => executed,
+      executedTssFor: () => (executed === undefined ? undefined : { tss: executed, complete: true }),
     });
   check("RC3a", "exactly on plan ⇒ within-tolerance, not due", at(200).reason === "within-tolerance" && !at(200).due);
   check("RC3b", `${RECONCILE_TOLERANCE * 100}% over is still tolerated`, at(220).reason === "within-tolerance");
@@ -99,6 +100,67 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
     !unknown.due && unknown.reason === "no-execution-data", unknown.reason);
   check("RC3g", "an AUTHORITATIVE zero still reflows (a truly missed week)",
     at(0).due === true && at(0).deltaPct === -1);
+}
+
+// ——— RC9. evidence freshness: never lock a verdict on arriving data ————————
+{
+  // A 10-week plan; the closed week is w2. Fixture mirrors RC2's shape.
+  const mon = (i: number) => {
+    const d = new Date(Date.parse("2026-07-06T12:00:00Z") + i * 7 * 86400000);
+    return d.toISOString().slice(0, 10);
+  };
+  const weeks = Array.from({ length: 10 }, (_, i) => ({ weekStart: mon(i), targetTss: 200 }));
+  const gate = (evidence: { tss: number; complete: boolean } | undefined, today = mon(3)) =>
+    reconcileGate({
+      weeks,
+      raceDate: mon(12),
+      today,
+      executedTssFor: (ws) => (ws === mon(2) ? evidence : { tss: 200, complete: true }),
+    });
+
+  // The Sunday-long-run failure: Monday's read misses the not-yet-uploaded
+  // run, the week LOOKS 35% under — the verdict must wait, not lock.
+  const r1 = gate({ tss: 130, complete: false });
+  check("RC9a", "incomplete + apparent undershoot ⇒ evidence-settling, NOT due",
+    !r1.due && r1.reason === "evidence-settling", r1.reason);
+
+  // A lower bound already over the band proves the overshoot — no waiting.
+  const r2 = gate({ tss: 280, complete: false });
+  check("RC9b", "incomplete + overshoot beyond tolerance ⇒ due (lower bound proves it)",
+    r2.due && r2.reason === "due", r2.reason);
+
+  const r3 = gate({ tss: 130, complete: true });
+  check("RC9c", "complete undershoot ⇒ due, exactly as before", r3.due && r3.reason === "due");
+
+  const r4 = gate({ tss: 205, complete: false });
+  check("RC9d", "incomplete within-band ⇒ settling (no on-plan claim on partial data)",
+    !r4.due && r4.reason === "evidence-settling", r4.reason);
+
+  const r5 = gate({ tss: 205, complete: true });
+  check("RC9e", "complete within-band ⇒ within-tolerance, unchanged", r5.reason === "within-tolerance");
+
+  const r6 = gate(undefined);
+  check("RC9f", "no evidence at all is still no-execution-data (settling never replaces it)",
+    r6.reason === "no-execution-data");
+}
+
+// ——— RC10. evidenceComplete: the shared completeness rule ————————————————————
+{
+  const ws = "2026-07-06"; // closed week Mon Jul 6 – Sun Jul 12; end (excl) Jul 13
+  const base = { weekStart: ws, hasRemoteSource: false };
+  check("RC10a", "a corpus-measured week is complete immediately",
+    evidenceComplete({ ...base, today: "2026-07-13", measured: true }));
+  check("RC10b", "Monday after close: NOT complete (watches upload, athletes tap late)",
+    !evidenceComplete({ ...base, today: "2026-07-13" }));
+  check("RC10c", "Tuesday: still settling", !evidenceComplete({ ...base, today: "2026-07-14" }));
+  check("RC10d", "Wednesday: complete when no remote source is configured",
+    evidenceComplete({ ...base, today: "2026-07-15" }));
+  check("RC10e", "with a remote source, settle alone is not enough — a post-close sync is required",
+    !evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-12T21:00:00Z" }));
+  check("RC10f", "…and a sync AFTER the week closed completes it",
+    evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-13T07:00:00Z" }));
+  check("RC10g", "a failing remote source does not block forever — attempts stamp lastSyncAt",
+    evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-15T07:00:00Z" }));
 }
 
 // ——— RC8 (pure). buildLedger: unknown is null, never a fabricated zero ————
@@ -200,7 +262,7 @@ if (!fx) {
       weeks: stored.plan.weeks,
       raceDate: REQ.raceDate,
       today: asOf,
-      executedTssFor: (ws) => (ws === w(2).weekStart ? Math.round(w(2).targetTss * 1.4) : w(2).targetTss),
+      executedTssFor: (ws) => ({ tss: ws === w(2).weekStart ? Math.round(w(2).targetTss * 1.4) : w(2).targetTss, complete: true }),
     });
     check("RC4a", "gate fires on a 40% overshoot in the closed week",
       gate.due && gate.reason === "due" && gate.closedWeekStart === w(2).weekStart,
@@ -229,7 +291,7 @@ if (!fx) {
       weeks: stored.plan.weeks,
       raceDate: REQ.raceDate,
       today: asOf,
-      executedTssFor: (ws) => stored.plan.weeks.find((x) => x.weekStart === ws)?.targetTss,
+      executedTssFor: (ws) => { const t = stored.plan.weeks.find((x) => x.weekStart === ws)?.targetTss; return t === undefined ? undefined : { tss: t, complete: true }; },
     });
     check("RC5a", "gate does NOT fire when the closed week landed on plan",
       !gate.due && gate.reason === "within-tolerance", gate.reason);
@@ -273,7 +335,7 @@ if (!fx) {
       weeks: stored.plan.weeks,
       raceDate: REQ.raceDate,
       today: late,
-      executedTssFor: () => 0,
+      executedTssFor: () => ({ tss: 0, complete: true }),
     });
     check("RC6e", "a date deep in the taper is refused by the lock, not by luck",
       !g.due && g.reason === "taper-lock", g.reason);
@@ -288,7 +350,7 @@ if (!fx) {
         weeks: stored.plan.weeks,
         raceDate: REQ.raceDate,
         today: day,
-        executedTssFor: () => 0,
+        executedTssFor: () => ({ tss: 0, complete: true }),
       });
       if (!d.due) continue;
       const remaining = stored.plan.weeks.filter((x) => x.weekStart >= d.asOf).length;
@@ -305,7 +367,7 @@ if (!fx) {
       weeks: stored.plan.weeks,
       raceDate: REQ.raceDate,
       today: midWeek,
-      executedTssFor: () => 0,
+      executedTssFor: () => ({ tss: 0, complete: true }),
     });
     const r = recomputeRemaining({
       stored,

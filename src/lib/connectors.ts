@@ -11,7 +11,7 @@ import {
   type FetchResult,
   type RateState,
 } from "../../engine/connector.ts";
-import { getStravaTokens, getWeekly, readImports, stravaConfigured } from "@/lib/athlete-data";
+import { getPmc, getStravaTokens, getWeekly, readImports, stravaConfigured } from "@/lib/athlete-data";
 import type { ImportedActivity as FileImportRow } from "@/lib/imports-io";
 
 /**
@@ -226,15 +226,23 @@ export const fileConnector: Connector = {
  */
 export function corpusWeeklyMeasured(): { measured: Map<string, number>; coverage: Coverage[] } {
   const weekly = getWeekly();
-  const measured = new Map(weekly.map((w) => [w.weekStart, Math.round(w.tss)]));
-  if (!weekly.length) return { measured, coverage: [] };
-  // Coverage runs to the END of the last derived week — a stale extraction
-  // then reads as "unknown beyond here", never as weeks of no training.
-  const last = weekly[weekly.length - 1].weekStart;
-  const to = new Date(Date.parse(last + "T12:00:00Z") + 6 * 86400000).toISOString().slice(0, 10);
+  if (!weekly.length) return { measured: new Map(), coverage: [] };
+  // A weekly row is authoritative only when the extraction demonstrably
+  // reached PAST its week: deriveWeekly emits a row for the in-progress week
+  // at extraction time, and that partial row is indistinguishable from a
+  // complete one by shape. The best available extracted-through signal is the
+  // last daily pmc date (the last day with any recorded activity) — a week
+  // whose END is beyond it may be a partial read and must not override
+  // fresher session-stream evidence or claim coverage (E3).
+  const pmc = getPmc();
+  const extractedThrough = pmc.length ? pmc[pmc.length - 1].date : "";
+  const weekEnd = (ws: string) => new Date(Date.parse(ws + "T12:00:00Z") + 6 * 86400000).toISOString().slice(0, 10);
+  const complete = weekly.filter((w) => weekEnd(w.weekStart) <= extractedThrough);
+  const measured = new Map(complete.map((w) => [w.weekStart, Math.round(w.tss)]));
+  if (!complete.length) return { measured, coverage: [] };
   return {
     measured,
-    coverage: [{ source: "trainingpeaks", from: weekly[0].weekStart, to }],
+    coverage: [{ source: "trainingpeaks", from: complete[0].weekStart, to: weekEnd(complete[complete.length - 1].weekStart) }],
   };
 }
 

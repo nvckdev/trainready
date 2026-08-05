@@ -59,6 +59,7 @@ export type ReconcileReason =
   | "already-reconciled"
   | "too-few-weeks"
   | "no-execution-data"
+  | "evidence-settling"
   | "within-tolerance";
 
 export interface ReconcileDecision {
@@ -98,8 +99,56 @@ export interface ReconcileGateInput {
    * corpus lagging the plan (the ordinary state between syncs) fabricated a
    * fully-missed week and rewrote the season. The gate now refuses instead.
    */
-  executedTssFor: (weekStart: string) => number | undefined;
+  executedTssFor: (weekStart: string) => WeekEvidence | undefined;
   tolerance?: number;
+}
+
+/**
+ * Evidence for a closed week. `tss` is a LOWER BOUND until `complete` is
+ * true: activities reach the store only after watches upload and athletes
+ * tap, so a Monday-morning reading of a Sunday-closed week is structurally
+ * missing whatever hasn't arrived yet. An overshoot beyond tolerance is
+ * provable from a lower bound; an undershoot is not — and the idempotence
+ * stamp makes a wrong verdict permanent, which is why the incomplete case
+ * gets its own refusal instead of a guess.
+ */
+export interface WeekEvidence {
+  tss: number;
+  complete: boolean;
+}
+
+/** Days after a week closes before its evidence is considered settled —
+ *  device-upload lag plus the athlete tapping yesterday's session. */
+export const EVIDENCE_SETTLE_DAYS = 2;
+
+/**
+ * The ONE completeness rule, shared by both surfaces.
+ *
+ *  - a corpus-measured week was measured after the fact ⇒ complete now;
+ *  - otherwise wait EVIDENCE_SETTLE_DAYS past the week's end;
+ *  - and when a remote source (upload-lag-prone: Strava, HealthKit) is
+ *    configured, additionally require a sync ATTEMPT after the week closed —
+ *    attempts stamp lastSyncAt even when the source fails, so a broken
+ *    source degrades to the settle rule instead of blocking forever.
+ */
+export function evidenceComplete(opts: {
+  weekStart: string;
+  /** Athlete-local today. */
+  today: string;
+  hasRemoteSource: boolean;
+  /** ISO datetime of the last sync attempt, when any remote source exists. */
+  lastSyncAt?: string;
+  /** True when this week's number is a post-hoc measurement (corpus). */
+  measured?: boolean;
+}): boolean {
+  if (opts.measured) return true;
+  const end = iso(at(opts.weekStart) + 7 * DAY);
+  const settled = iso(at(opts.weekStart) + (7 + EVIDENCE_SETTLE_DAYS) * DAY);
+  if (opts.today < settled) return false;
+  if (opts.hasRemoteSource) {
+    if (!opts.lastSyncAt || opts.lastSyncAt.slice(0, 10) < end) return false;
+  }
+  return true;
 }
 
 /**
@@ -154,10 +203,18 @@ export function reconcileGate(input: ReconcileGateInput): ReconcileDecision {
     // week — never reflow on an absence of data.
     return { ...withClosed, due: false, reason: "no-execution-data" };
   }
-  const executed = Math.round(raw);
+  const executed = Math.round(raw.tss);
   const planned = closed.targetTss;
   const deltaPct = planned > 0 ? (executed - planned) / planned : 0;
   const full = { ...withClosed, executedTss: executed, deltaPct };
+  // Incomplete evidence is a lower bound. It can PROVE an overshoot (already
+  // past the band with more possibly arriving) but never an undershoot or an
+  // on-plan week — and a verdict here would be locked by the idempotence
+  // stamp, so the gate waits instead. No stamp is written on this branch:
+  // the next visit re-evaluates with whatever has arrived since.
+  if (!raw.complete && deltaPct <= tolerance) {
+    return { ...full, due: false, reason: "evidence-settling" };
+  }
   // The week landed on plan — byte-identical no-op, no reflow, no note.
   if (planned > 0 && Math.abs(deltaPct) <= tolerance) {
     return { ...full, due: false, reason: "within-tolerance" };

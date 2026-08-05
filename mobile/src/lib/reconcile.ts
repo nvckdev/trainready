@@ -1,12 +1,13 @@
 import type { Plan, PlanRequest } from "@engine/plan.ts";
 import type { AthleteState } from "@engine/types.ts";
 import { buildLedger, knownTrailingTss, recomputeRemaining } from "@engine/replan.ts";
-import { reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
+import { evidenceComplete, reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
 import { dailyExecutedTss, dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
 import { thresholdMpsFromZones } from "@engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "@engine/seed.ts";
 import { localToday, setPlan, zonesFor, type StoredAthlete, type StoredPlan } from "./store";
 import { readSync } from "./sync";
+import { healthKitPossible } from "./healthkit";
 
 /**
  * On-device weekly reconcile. Same gate and same engine as the dashboard; the
@@ -151,7 +152,23 @@ export async function reconcileIfDue(
     raceDate: stored.request.raceDate,
     lastRecomputed: stored.plan.meta.lastRecomputed,
     today,
-    executedTssFor: (ws) => executed.get(ws),
+    // Same completeness rule as the dashboard: a just-closed week's number is
+    // a lower bound until upload lag settles (and, when a remote source like
+    // HealthKit is live, until a post-close sync has run). The gate refuses
+    // to lock an undershoot verdict on arriving evidence.
+    executedTssFor: (ws) => {
+      const v = executed.get(ws);
+      if (v === undefined) return undefined;
+      return {
+        tss: v,
+        complete: evidenceComplete({
+          weekStart: ws,
+          today,
+          hasRemoteSource: healthKitPossible(),
+          lastSyncAt: sync.lastSyncAt,
+        }),
+      };
+    },
   });
   if (!decision.due) return { changed: false, reason: decision.reason, note: null };
 
