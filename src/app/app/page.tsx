@@ -13,6 +13,8 @@ import { getWeekly } from "@/lib/athlete-data";
 import { readPainLog, readProtocolsState, isStrengthDone } from "@/lib/strength-io";
 import { activeProtocols, scheduleStrengthWeek } from "@/lib/strength-schedule";
 import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
+import { loadTissueConstraintsTagged } from "@/lib/tissue-constraints";
+import { tissueCapSummary, tissueReason } from "../../../engine/tissue.ts";
 import { INJURY_LABEL } from "@/lib/athlete-context";
 import { QUALITY, briefForWeek, currentWeek, easedVersion } from "@/lib/week-insights";
 import {
@@ -20,6 +22,7 @@ import {
   EmptyState,
   PainAlertBanner,
   PainQuickEntry,
+  TissueDeclare,
   SessionCard,
   StatChip,
   SupplementalCard,
@@ -168,6 +171,16 @@ export default async function TodayPage() {
   // never altered without the athlete's click.
   const painEntries = readPainLog();
   const painAlerts = surfaceAlerts(painEntries, today);
+  // Active constraints with the engine's OWN reason and cap sentence, so the
+  // card explains a cap in the same words the plan page does rather than a
+  // second description that can drift from it.
+  const tissueRead = loadTissueConstraintsTagged(today);
+  const tissueActive = tissueRead.constraints.map((c) => ({
+    site: c.site,
+    why: tissueReason(c),
+    caps: tissueCapSummary(c),
+  }));
+  const tissueUnmapped = tissueRead.unmapped;
   const todaysPain = painEntries.filter((e) => e.date === today);
   let easeSuggestion: EaseSuggestionView | null = null;
   if (painAlerts.length > 0 && stored) {
@@ -372,6 +385,7 @@ export default async function TodayPage() {
       )}
       <div className="mt-8">
         <PainQuickEntry todays={todaysPain} />
+        <TissueDeclare active={tissueActive} unmapped={tissueUnmapped} />
       </div>
     </div>
   );

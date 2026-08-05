@@ -1,4 +1,5 @@
 import { readAthleteContextTagged, readAthleteContext } from "./athlete-context";
+import { activeDeclarations, readDeclarations, toConstraint } from "./tissue-declarations";
 import { readPainLog } from "./strength-io";
 import { surfaceAlerts } from "./pain-rules";
 import type { PainRegion } from "./strength-protocols";
@@ -82,34 +83,74 @@ export function declaredConstraint(inj: { area?: string; symptoms?: string; stat
  */
 export interface TissueConstraintsRead {
   constraints: TissueConstraint[];
-  /** "unreadable" ⇒ the safety file exists but cannot be parsed — callers on
+  /** "unreadable" ⇒ a safety file exists but cannot be parsed — callers on
    *  the automatic path must refuse to reflow rather than proceed with the
    *  athlete's declared caps silently dropped. */
   status: "ok" | "absent" | "unreadable";
   message?: string;
+  /**
+   * Legacy free-text injuries that named no running-load tissue, so produced
+   * no constraint.
+   *
+   * E9 made a file that cannot PARSE refuse the reflow. An injury whose text
+   * the keywords do not recognise is the other half of the same hole: valid
+   * JSON, a real declaration by the athlete, and no cap — reported by nobody.
+   * It does not refuse (that would strand anyone whose file has an entry we
+   * cannot map), but it is never silent again: the UI shows it and asks for a
+   * structured declaration instead.
+   */
+  unmapped: string[];
 }
 
 /** The safety-aware loader: absent is a real "no injuries on file"; an
  *  unreadable file is a failure the caller must handle, never an empty list. */
 export function loadTissueConstraintsTagged(today: string): TissueConstraintsRead {
+  // The structured store is the durable source and is checked FIRST: a corrupt
+  // one must refuse before anything else is read, for the same reason a
+  // corrupt athlete-context does.
+  const declared = readDeclarations();
+  if (declared.status === "unreadable") {
+    return { constraints: [], status: "unreadable", message: `tissue-declarations.json: ${declared.message}`, unmapped: [] };
+  }
   const read = readAthleteContextTagged();
   if (read.status === "unreadable") {
-    return { constraints: [], status: "unreadable", message: read.message };
+    return { constraints: [], status: "unreadable", message: read.message, unmapped: [] };
   }
-  return { constraints: loadTissueConstraints(today), status: read.status };
+  return {
+    constraints: loadTissueConstraints(today),
+    status: declared.status === "ok" ? "ok" : read.status,
+    unmapped: unmappedInjuries(),
+  };
+}
+
+/** Free-text injuries on file that map to no running-load tissue. */
+export function unmappedInjuries(): string[] {
+  const ctx = readAthleteContext();
+  return (ctx?.injuries ?? [])
+    .filter((inj) => declaredConstraint(inj) === null)
+    .map((inj) => [inj.area, inj.symptoms].filter(Boolean).join(" — ") || "an unnamed entry");
 }
 
 export function loadTissueConstraints(today: string): TissueConstraint[] {
   const ctx = readAthleteContext();
   const bySite = new Map<TissueSite, TissueConstraint>();
 
-  // 1 — hand-declared injuries (the durable source).
+  // 1 — legacy hand-edited injuries, kept so an existing athlete-context keeps
+  // working. Anything it cannot map is reported through unmappedInjuries()
+  // rather than dropped.
   for (const inj of ctx?.injuries ?? []) {
     const c = declaredConstraint(inj);
     if (c) bySite.set(c.site, c);
   }
 
-  // 2 — live pain alerts escalate/introduce a constraint for the region.
+  // 2 — STRUCTURED declarations, the durable source. Typed at the boundary, so
+  // there is nothing to infer and nothing to misread; they override a legacy
+  // guess for the same site because the athlete chose these values explicitly.
+  for (const d of activeDeclarations(readDeclarations().declarations, today)) {
+    bySite.set(d.site, toConstraint(d));
+  }
+
+  // 3 — live pain alerts escalate/introduce a constraint for the region.
   for (const alert of surfaceAlerts(readPainLog(), today)) {
     const site = REGION_SITE[alert.region];
     if (!site) continue;

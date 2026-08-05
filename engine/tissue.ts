@@ -110,6 +110,23 @@ export function declareTissue(
   return { site, status, provocation, caps: deriveTissueCaps(status, provocation), why };
 }
 
+/**
+ * What a constraint actually caps, in the athlete's units.
+ *
+ * Split out of tissueReason so a declaration UI can show the caps BESIDE the
+ * athlete's own words rather than instead of them: tissueReason returns the
+ * note when there is one, which is right for the plan page and would leave a
+ * declaration form unable to say what it was about to do.
+ */
+export function tissueCapSummary(c: TissueConstraint): string {
+  const bits: string[] = [];
+  if (c.caps.longRunKm != null) bits.push(`long run held ≤ ${c.caps.longRunKm} km`);
+  if (c.caps.weeklyKm != null) bits.push(`weekly volume ≤ ${c.caps.weeklyKm} km`);
+  if (c.caps.maxSessionIntensity != null) bits.push(`intensity capped at ${c.caps.maxSessionIntensity}`);
+  if (c.caps.rampCeiling != null) bits.push(`ramp held to +${Math.round((c.caps.rampCeiling - 1) * 100)}%/wk`);
+  return bits.length ? bits.join(", ") : "load eased";
+}
+
 /** Human "why" for a constraint — shown in the UI beside the cap it explains. */
 export function tissueReason(c: TissueConstraint): string {
   if (c.why) return c.why;
@@ -119,13 +136,7 @@ export function tissueReason(c: TissueConstraint): string {
       : c.provocation === "speed" ? "fast running"
         : c.provocation === "impact" ? "repeated impact"
           : "high running volume";
-  const bits: string[] = [];
-  if (c.caps.longRunKm != null) bits.push(`long run held ≤ ${c.caps.longRunKm} km`);
-  if (c.caps.weeklyKm != null) bits.push(`weekly volume ≤ ${c.caps.weeklyKm} km`);
-  if (c.caps.maxSessionIntensity != null) bits.push(`intensity capped at ${c.caps.maxSessionIntensity}`);
-  if (c.caps.rampCeiling != null) bits.push(`ramp held to +${Math.round((c.caps.rampCeiling - 1) * 100)}%/wk`);
-  const capText = bits.length ? bits.join(", ") : "load eased";
-  return `${cap(site)} ${c.status} aggravated by ${prov}: ${capText}.`;
+  return `${cap(site)} ${c.status} aggravated by ${prov}: ${tissueCapSummary(c)}.`;
 }
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 

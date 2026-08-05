@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { SERIES } from "./charts";
 import type { PlannedSessionOut } from "../../../engine/plan.ts";
+import type { TissueSite } from "../../../engine/tissue.ts";
 import {
+  TISSUE_PROVOCATION_LABEL,
+  TISSUE_PROVOCATIONS,
+  TISSUE_SITE_LABEL,
+  TISSUE_SITES,
+  TISSUE_STATUS_LABEL,
+  TISSUE_STATUSES,
+} from "@/lib/tissue-parse";
+import {
+  declareTissueAction,
   easeQualitySessionAction,
   logPainAction,
+  resolveTissueAction,
   logStrengthSetsAction,
   toggleSessionAction,
   toggleStrengthDoneAction,
@@ -519,6 +530,106 @@ export function PainQuickEntry({ todays }: { todays: PainEntry[] }) {
       <p className="px-4 pb-3 label-mono text-bone-faint">
         0 = nothing, 10 = worst imaginable. Three hard days in a row, pain at rest, or a rising week
         raises a flag above — nothing here changes your plan by itself.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Declare a tissue constraint, and see exactly what it caps.
+ *
+ * This is the replacement for hand-editing athlete-context.json. Every field
+ * is a closed set the engine defines, so there is no free text to misread —
+ * the previous path inferred site, status and provocation from prose, and
+ * wording the keywords missed produced valid JSON, no cap, and no complaint.
+ *
+ * The caps are rendered from the engine's own tissueReason(), beside the
+ * declaration that produces them: an athlete agreeing to a cap should be able
+ * to read what it will do to their training before it does it.
+ */
+export function TissueDeclare({
+  active,
+  unmapped,
+}: {
+  active: Array<{ site: TissueSite; why: string; caps: string }>;
+  unmapped: string[];
+}) {
+  return (
+    <div className="border border-hairline">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-hairline">
+        <span className="label-mono text-bone-faint">Injury constraints</span>
+        <span className="label-mono text-bone-faint">health data · stays on this machine</span>
+      </div>
+
+      {active.length > 0 && (
+        <div className="border-b border-hairline">
+          {active.map((a) => (
+            <div key={a.site} className="px-4 py-3 flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="label-mono">{TISSUE_SITE_LABEL[a.site]}</div>
+                <p className="label-mono text-bone-faint mt-1">{a.why}</p>
+                <p className="label-mono text-bone-faint mt-1">Caps: {a.caps}</p>
+              </div>
+              <form action={resolveTissueAction}>
+                <input type="hidden" name="site" value={a.site} />
+                <button className="label-mono border border-hairline px-3 py-2 hover:border-bone transition-colors duration-150">
+                  Resolved
+                </button>
+              </form>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {unmapped.length > 0 && (
+        <div className="px-4 py-3 border-b border-hairline">
+          <p className="label-mono text-bone-faint">
+            {unmapped.length} injury {unmapped.length === 1 ? "entry" : "entries"} in athlete-context.json
+            {" "}{unmapped.length === 1 ? "names" : "name"} no running-load tissue, so {unmapped.length === 1 ? "it caps" : "they cap"} nothing:
+          </p>
+          {unmapped.map((u) => (
+            <p key={u} className="label-mono text-bone-faint mt-1">· {u}</p>
+          ))}
+          <p className="label-mono text-bone-faint mt-1">Declare it below and the plan will hold the cap.</p>
+        </div>
+      )}
+
+      <form action={declareTissueAction} className="px-4 py-4 flex flex-wrap items-end gap-4">
+        <div>
+          <label htmlFor="t-site" className="label-mono text-bone-faint block mb-2">Where</label>
+          <select id="t-site" name="site" className={painField} defaultValue={TISSUE_SITES[1]}>
+            {TISSUE_SITES.map((x) => (
+              <option key={x} value={x}>{TISSUE_SITE_LABEL[x]}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="t-status" className="label-mono text-bone-faint block mb-2">How bad</label>
+          <select id="t-status" name="status" className={painField} defaultValue="niggle">
+            {TISSUE_STATUSES.map((x) => (
+              <option key={x} value={x}>{TISSUE_STATUS_LABEL[x]}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="t-prov" className="label-mono text-bone-faint block mb-2">What sets it off</label>
+          <select id="t-prov" name="provocation" className={painField} defaultValue="volume">
+            {TISSUE_PROVOCATIONS.map((x) => (
+              <option key={x} value={x}>{TISSUE_PROVOCATION_LABEL[x]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="grow min-w-[12rem]">
+          <label htmlFor="t-note" className="label-mono text-bone-faint block mb-2">In your words · optional</label>
+          <input id="t-note" name="note" maxLength={200} className={painField + " w-full"} />
+        </div>
+        <button className="label-mono border border-hairline px-4 py-2.5 hover:border-bone transition-colors duration-150">
+          Declare
+        </button>
+      </form>
+      <p className="px-4 pb-3 label-mono text-bone-faint">
+        What you pick decides which cap binds — volume caps weekly and long-run km, speed caps
+        intensity, impact and rotation cap the long run. An acute flare also holds the weekly ramp.
       </p>
     </div>
   );

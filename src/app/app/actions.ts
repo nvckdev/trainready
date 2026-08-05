@@ -28,6 +28,8 @@ import {
 } from "@/lib/strength-protocols";
 import { deloadSets } from "@/lib/strength-schedule";
 import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
+import { appendDeclaration, resolveDeclaration } from "@/lib/tissue-declarations";
+import { parseTissueProvocation, parseTissueSite, parseTissueStatus } from "@/lib/tissue-parse";
 import { loadTissueConstraintsTagged } from "@/lib/tissue-constraints";
 import { easedVersion } from "@/lib/week-insights";
 
@@ -268,6 +270,44 @@ export async function logPainAction(formData: FormData): Promise<void> {
     score0to10: score,
     context: parsePainContext(formData.get("context")),
   });
+  revalidatePath("/app", "layout");
+}
+
+/**
+ * Declare a tissue constraint as STRUCTURED data.
+ *
+ * This is what replaces hand-editing athlete-context.json. Every field is a
+ * closed set the engine already defines, validated here and again at the read
+ * boundary, so a declaration cannot express a site or status generatePlan has
+ * never heard of — and cannot half-succeed the way free text could, where
+ * unrecognised wording produced valid JSON, no constraint, and no complaint.
+ * Untrusted input: an unknown value is a no-op, and the date is always the
+ * athlete-local today rather than anything the form supplies.
+ */
+export async function declareTissueAction(formData: FormData): Promise<void> {
+  const site = parseTissueSite(formData.get("site"));
+  const status = parseTissueStatus(formData.get("status"));
+  const provocation = parseTissueProvocation(formData.get("provocation"));
+  if (!site || !status || !provocation) return;
+  const note = String(formData.get("note") || "").trim().slice(0, 200);
+  appendDeclaration({
+    site,
+    status,
+    provocation,
+    declaredOn: localToday(),
+    resolvedOn: null,
+    ...(note ? { note } : {}),
+  });
+  revalidatePath("/app", "layout");
+}
+
+/** Mark a site healed. Append-only: the entry stays on the record with a
+ *  resolution date, because "when did this start and when did it settle" is
+ *  the question worth being able to answer next season. */
+export async function resolveTissueAction(formData: FormData): Promise<void> {
+  const site = parseTissueSite(formData.get("site"));
+  if (!site) return;
+  resolveDeclaration(site, localToday());
   revalidatePath("/app", "layout");
 }
 

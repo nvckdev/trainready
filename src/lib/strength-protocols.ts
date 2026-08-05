@@ -78,13 +78,18 @@ export interface ProgressionState {
 export const PAIN_REGIONS = INJURY_AREAS;
 export type PainRegion = InjuryArea;
 
-export const PAIN_CONTEXTS = ["at-rest", "during-session", "after-session", "morning"] as const;
+// "specific-movement" is separate from during/after a session on purpose: pain
+// that only appears on one movement localises a tissue in a way session-timing
+// does not, and it is what an athlete reaches for when nothing in a run hurts
+// but a particular load does.
+export const PAIN_CONTEXTS = ["at-rest", "during-session", "after-session", "specific-movement", "morning"] as const;
 export type PainContext = (typeof PAIN_CONTEXTS)[number];
 
 export const PAIN_CONTEXT_LABEL: Record<PainContext, string> = {
   "at-rest": "At rest",
   "during-session": "During session",
   "after-session": "After session",
+  "specific-movement": "A specific movement",
   morning: "Morning",
 };
 
