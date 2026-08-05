@@ -146,7 +146,13 @@ export function evidenceComplete(opts: {
   const settled = iso(at(opts.weekStart) + (7 + EVIDENCE_SETTLE_DAYS) * DAY);
   if (opts.today < settled) return false;
   if (opts.hasRemoteSource) {
-    if (!opts.lastSyncAt || opts.lastSyncAt.slice(0, 10) < end) return false;
+    // STRICTLY after the end date, not >=: lastSyncAt is a UTC instant while
+    // the week end is an athlete-local date. A Sunday-9pm New York sync is
+    // Monday UTC — `>= end` would count a PRE-close sync as post-close and
+    // grant completeness to evidence that cannot contain the Sunday run.
+    // Requiring the NEXT UTC date is conservative by at most one day, and the
+    // settle rule already holds verdicts to Wednesday.
+    if (!opts.lastSyncAt || opts.lastSyncAt.slice(0, 10) <= end) return false;
   }
   return true;
 }

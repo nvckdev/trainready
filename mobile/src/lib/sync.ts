@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { mergeSyncEvidence, sinceForSync, syncAll, type Connector, type SyncEvidence, type SyncSourceStatus } from "@engine/connector.ts";
 import { healthKitConnector } from "./healthkit";
+import { getPlan } from "./store";
 
 /**
  * On-device activity sync — the phone's mirror of the dashboard's sync-io.
@@ -63,9 +64,14 @@ export async function runSync(planStart?: string): Promise<MobileSyncStore> {
   const since = sinceForSync(planStart, todayIso);
   const connectors = mobileConnectors();
   const summary = await syncAll(connectors, since);
-  const pruneBefore = planStart
-    ? new Date(Date.parse(planStart + "T12:00:00Z") - 30 * 86400000).toISOString().slice(0, 10)
-    : since;
+  // Prune ONLY when the plan horizon is known. The review caught Settings'
+  // SYNC NOW calling runSync() bare: pruneBefore fell back to the 120-day
+  // window and re-erased exactly the early-plan evidence E10 promised to
+  // keep. Unknown horizon ⇒ keep everything.
+  const effectivePlanStart = planStart ?? getPlan()?.plan.weeks[0]?.weekStart;
+  const pruneBefore = effectivePlanStart
+    ? new Date(Date.parse(effectivePlanStart + "T12:00:00Z") - 30 * 86400000).toISOString().slice(0, 10)
+    : undefined;
   const next = mergeSyncEvidence(prev, summary, connectors, todayIso, pruneBefore);
   snapshot = next;
   try {

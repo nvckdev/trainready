@@ -157,8 +157,13 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
     evidenceComplete({ ...base, today: "2026-07-15" }));
   check("RC10e", "with a remote source, settle alone is not enough — a post-close sync is required",
     !evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-12T21:00:00Z" }));
-  check("RC10f", "…and a sync AFTER the week closed completes it",
-    evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-13T07:00:00Z" }));
+  check("RC10f", "…and a sync clearly after the close (next UTC day) completes it",
+    evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-14T07:00:00Z" }));
+  // The tz trap: a Sunday-evening New York sync is Monday UTC. Its UTC date
+  // EQUALS the week-end date but the sync ran before the week closed — it
+  // must NOT count as the post-close sync.
+  check("RC10h", "a sync whose UTC date equals the week end is still pre-close (tz-conservative)",
+    !evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-13T01:00:00Z" }));
   check("RC10g", "a failing remote source does not block forever — attempts stamp lastSyncAt",
     evidenceComplete({ weekStart: ws, today: "2026-07-15", hasRemoteSource: true, lastSyncAt: "2026-07-15T07:00:00Z" }));
 }

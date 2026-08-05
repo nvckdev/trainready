@@ -184,6 +184,10 @@ export function getAthlete(): StoredAthlete | null | undefined {
   return athleteSlot.get();
 }
 
+export function getPlan(): StoredPlan | null | undefined {
+  return planSlot.get();
+}
+
 /**
  * Toggle a session's done mark by (date, title) — the dashboard's keying.
  * Synchronous against the in-memory snapshot (persistence trails behind), so

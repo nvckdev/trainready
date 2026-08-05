@@ -37,8 +37,18 @@ const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
  * Imported activities (with real coverage windows) are what make a zero
  * authoritative on the phone.
  */
-const deviceLocalDate = (isoInstant: string): string => {
+/** ISO instant → the athlete's calendar day: their paired tz when known
+ *  (same clock as localToday/M3 — otherwise "today" and activity bucketing
+ *  split inside one device), else the device clock. */
+const athleteLocalDate = (tz?: string) => (isoInstant: string): string => {
   const d = new Date(isoInstant);
+  if (tz) {
+    try {
+      return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(d);
+    } catch {
+      /* unknown tz — device clock below */
+    }
+  }
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
@@ -47,12 +57,13 @@ export function executedByWeek(
   plan: Plan,
   imported: ImportedActivity[] = [],
   coverage: Coverage[] = [],
-  ctx: { runThresholdMps?: number; lthrBpm?: number } = {}
+  ctx: { runThresholdMps?: number; lthrBpm?: number } = {},
+  tz?: string
 ): Map<string, number> {
   const weekStarts = plan.weeks.map((w) => w.weekStart);
-  // Plan dates are device-local calendar days — bucket imports on the same
-  // clock so a Sunday-evening run stays in its ledger week (E7).
-  const out = rollupByWeek(weekStarts, imported, coverage, ctx, undefined, deviceLocalDate);
+  // Bucket imports on the athlete's clock — the same one localToday and the
+  // plan dates use (E7 + M3, unified after review).
+  const out = rollupByWeek(weekStarts, imported, coverage, ctx, undefined, athleteLocalDate(tz));
   for (const w of plan.weeks) {
     if (out.has(w.weekStart)) continue;
     const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
@@ -83,11 +94,15 @@ export function executedDailyPmc(
   // nothing, and the reflow cut the plan from a fiction (Mobile-1).
   imported: ImportedActivity[] = [],
   ctx: { runThresholdMps?: number; lthrBpm?: number } = {},
-  /** Date the seed's CTL/ATL were measured. Replay starts the day AFTER it:
-   *  days at or before the anchor are already inside the seed, and replaying
-   *  them again after a re-pair double-counts that training (M5). Absent ⇒
-   *  replay from the plan start, exactly as before. */
-  anchor?: string
+  /** Date the seed's CTL/ATL were measured. Replay starts the day AFTER it
+   *  WHETHER the anchor precedes the plan or falls inside it: days at or
+   *  before the anchor are inside the seed (replaying them double-counts a
+   *  re-pair), and days between an early anchor and the plan start are the
+   *  zero-load-plus-imports decay the seed needs (the review caught the
+   *  first cut clamping to planStart and replaying raw pairing-day fitness —
+   *  the "ahead of the curve" fiction). Absent ⇒ replay from plan start. */
+  anchor?: string,
+  tz?: string
 ): DailyPmcPoint[] {
   const doneByDate = new Map<string, number>();
   for (const w of plan.weeks) {
@@ -98,10 +113,10 @@ export function executedDailyPmc(
   }
   // Plan dates are device-local calendar days; bucket imports the same way so
   // an evening run lands on the day the athlete lived it.
-  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, deviceLocalDate);
+  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, athleteLocalDate(tz));
   const planStart = plan.weeks[0]?.weekStart;
   if (!planStart) return [];
-  const start = anchor && at(anchor) + DAY > at(planStart) ? iso(at(anchor) + DAY) : planStart;
+  const start = anchor ? iso(at(anchor) + DAY) : planStart;
   if (at(start) > at(through)) return [];
   let ctl = seedCtl;
   let atl = seedAtl;
@@ -128,6 +143,48 @@ function carryStatusForward(prev: Plan, next: Plan): void {
       if (m) s.status = m;
     }
   }
+}
+
+
+/**
+ * The athlete's CURRENT fitness from everything this device knows: the seed,
+ * decayed and re-fed day by day with done-marks (from the stored plan, when
+ * one exists) and imported activities — the same merged evidence the weekly
+ * reconcile uses. Built for new-plan generation: the review caught goal.tsx
+ * seeding from pure zero-load decay, which turned eight weeks of tapped
+ * training into a near-beginner CTL and declared in-reach goals unreachable
+ * — the mirror image of the Mobile-1 fiction.
+ */
+export function evidenceSeedState(
+  athlete: StoredAthlete,
+  stored: StoredPlan | null,
+  through: string,
+  imported: ImportedActivity[] = []
+): AthleteState {
+  if (!athlete.anchor) return athlete.seed;
+  const zones = zonesFor(athlete);
+  const ctx = {
+    runThresholdMps: thresholdMpsFromZones(zones),
+    lthrBpm: athlete.thresholds.lthrBpm,
+  };
+  const doneByDate = new Map<string, number>();
+  if (stored) {
+    for (const w of stored.plan.weeks) {
+      for (const sess of w.sessions) {
+        if (sess.status !== "done") continue;
+        doneByDate.set(sess.date, (doneByDate.get(sess.date) ?? 0) + sess.tss);
+      }
+    }
+  }
+  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, athleteLocalDate(athlete.tz));
+  let ctl = athlete.seed.ctl;
+  let atl = athlete.seed.atl;
+  for (let t = at(athlete.anchor) + DAY; t <= at(through); t += DAY) {
+    const tss = tssByDate.get(iso(t)) ?? 0;
+    ctl = ctl + (tss - ctl) / 42;
+    atl = atl + (tss - atl) / 7;
+  }
+  return { ...athlete.seed, ctl, atl, tsb: ctl - atl };
 }
 
 export interface MobileReconcileResult {
@@ -157,7 +214,7 @@ export async function reconcileIfDue(
     runThresholdMps: thresholdMpsFromZones(zones),
     lthrBpm: athlete.thresholds.lthrBpm,
   };
-  const executed = executedByWeek(stored.plan, stream, sync.coverage, ctx);
+  const executed = executedByWeek(stored.plan, stream, sync.coverage, ctx, athlete.tz);
   const decision = reconcileGate({
     weeks: stored.plan.weeks,
     raceDate: stored.request.raceDate,
@@ -183,7 +240,7 @@ export async function reconcileIfDue(
   });
   if (!decision.due) return { changed: false, reason: decision.reason, note: null };
 
-  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx, athlete.anchor);
+  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx, athlete.anchor, athlete.tz);
   const actualState: AthleteState = seedStateAt(athlete.seed, series, decision.asOf);
   const request: PlanRequest = reflowSafeRequest(
     { ...stored.request, priorWeights: athlete.priorWeights },

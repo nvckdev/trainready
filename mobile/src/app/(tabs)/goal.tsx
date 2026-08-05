@@ -13,12 +13,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
-import { seedStateAt } from "@engine/seed.ts";
 import { generatePlan, type PlanRequest, type RaceType } from "@engine/plan.ts";
 import { DateSheet, fmtLong } from "@/components/calendar";
 import { Body, Button, Display, Label, RecDot, TaperMark, useReduceMotion } from "@/components/ui";
 import { C, FONT, type } from "@/lib/theme";
-import { localToday, setPlan, useAthlete, useToday, zonesFor } from "@/lib/store";
+import { localToday, setPlan, useAthlete, useToday, zonesFor, usePlan } from "@/lib/store";
 import { tapLight, tapSuccess } from "@/lib/haptics";
 import { syncReminders } from "@/lib/notifications";
 import { seedDemoAthlete } from "@/lib/demo";
@@ -192,6 +191,8 @@ export default function GoalScreen() {
   const dateInvalid = wk === null || raceDate < addDays(today, 21);
   const dateError = wk === null ? "Race date must be YYYY-MM-DD." : dateInvalid ? "Pick a race at least 3 weeks out. A taper needs runway." : null;
 
+  const storedPlan = usePlan();
+
   const generate = () => {
     if (busy.current || dateInvalid || !athlete) return;
     busy.current = true;
@@ -203,7 +204,7 @@ export default function GoalScreen() {
     // this was caught) would never run the engine at all.
     setGenerating({ sessions: 0, weeks: Math.max(wk ?? 0, 1) });
     {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           const request: PlanRequest = {
             raceName: raceName.trim() || "A race",
@@ -220,16 +221,24 @@ export default function GoalScreen() {
           };
           // The real engine, on this device — same code, same rails, same
           // honesty as the dashboard.
-          // A seed paired weeks ago is stale fitness — roll it zero-load from
-          // its anchor to today before building (M5). Without an anchor the
-          // seed is used as-is (pre-anchor pairing codes).
-          const seed = athlete.anchor
-            ? seedStateAt(
-                athlete.seed,
-                [{ date: athlete.anchor, ctl: athlete.seed.ctl, atl: athlete.seed.atl }],
-                today
-              )
-            : athlete.seed;
+          // A seed paired weeks ago is stale — but "stale" cuts both ways:
+          // zero-load decay alone turns eight weeks of TAPPED training into a
+          // near-beginner CTL (the review's counter-fiction to Mobile-1). The
+          // seed rolls forward on everything this device knows: done-marks
+          // from any existing plan plus the imported activity stream. No
+          // anchor (pre-anchor pairing codes) ⇒ raw seed, unchanged.
+          const [{ evidenceSeedState }, syncMod] = await Promise.all([
+            import("@/lib/reconcile"),
+            import("@/lib/sync"),
+          ]);
+          const { dedupeActivities } = await import("@engine/activity.ts");
+          const syncStore = await syncMod.readSync();
+          const seed = evidenceSeedState(
+            athlete,
+            storedPlan ?? null,
+            today,
+            dedupeActivities(syncStore.activities)
+          );
           const plan = generatePlan(request, seed, [], zonesFor(athlete));
           void setPlan({ request, plan });
           void syncReminders({ request, plan });

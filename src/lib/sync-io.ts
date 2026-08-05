@@ -78,9 +78,11 @@ export async function runSync(): Promise<SyncStore> {
   // or corroborate evidence but never erase it, coverage only grows, and a
   // failed source keeps everything it ever contributed. Retention prunes
   // only what precedes the plan by more than a month.
+  // No plan ⇒ no prune: erasing to the default window is the E10 bug in
+  // miniature. Retention only applies against a KNOWN horizon.
   const pruneBefore = planStart
     ? new Date(Date.parse(planStart + "T12:00:00Z") - 30 * 86400000).toISOString().slice(0, 10)
-    : since;
+    : undefined;
   const store = mergeSyncEvidence(prev, summary, connectors, todayIso, pruneBefore);
   writeSyncStore(store);
   return store;
