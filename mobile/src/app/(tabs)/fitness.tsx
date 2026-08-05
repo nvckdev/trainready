@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Animated, Easing, Platform, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
@@ -69,7 +69,7 @@ export default function FitnessScreen() {
   const today = useToday();
   const { width } = useWindowDimensions();
   const reduce = useReduceMotion();
-  const dash = useRef(new Animated.Value(0)).current;
+  const [dash] = useState(() => new Animated.Value(0));
 
   const weeks = stored?.plan.weeks ?? [];
   let curIdx = currentWeekIndex(weeks, today);

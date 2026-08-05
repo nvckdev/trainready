@@ -81,7 +81,10 @@ function GeneratingScreen({ sessionCount, weekCount }: { sessionCount: number; w
   // render pass AND the dependency.
   const [animated, setAnimated] = useState(0);
   const counter = reduce ? sessionCount : animated;
-  const bars = [useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current];
+  // Allocated once, not three per render — this screen re-renders every 40 ms
+  // while the counter animates, so the old form churned ~105 Animated.Values
+  // per plan generation.
+  const [bars] = useState(() => [new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]);
   const { width } = useWindowDimensions();
 
   useEffect(() => {

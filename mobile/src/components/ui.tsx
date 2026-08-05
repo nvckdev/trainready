@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -59,7 +59,11 @@ export function useReduceMotion(): boolean {
 /** The rec-dot: a signal dot whose pulse is opacity only, no bloom. */
 export function RecDot({ size = 7 }: { size?: number }) {
   const reduce = useReduceMotion();
-  const opacity = useRef(new Animated.Value(1)).current;
+  // Lazy init: useState's initializer runs once, so the Animated.Value is
+  // allocated once. `useRef(new Animated.Value(1))` evaluated its argument on
+  // EVERY render and threw the result away — wasteful in a looping animation,
+  // and a ref read during render besides.
+  const [opacity] = useState(() => new Animated.Value(1));
   useEffect(() => {
     if (reduce) return;
     const loop = Animated.loop(
