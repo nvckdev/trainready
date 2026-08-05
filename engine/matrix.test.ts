@@ -50,10 +50,6 @@ const caught: string[] = [];
  * ledger cannot rot in either direction.
  */
 const KNOWN_DEFECTS: Record<string, string> = {
-  "z1-floor-breach":
-    "duration-floored micro-weeks escape the intensity shaping: CTL-20 athletes (every pace) " +
-    "get base/build weeks at 83.3–84.6% Z1 vs the 0.85 floor — the shaping loop's four " +
-    "documented break-outs, exactly where the audit predicted. Bound: z1 ≥ 0.83.",
   "long-frac-breach":
     "the goal-driven long-run progression (week-1 ~13 km opening, +2 km steps) silently " +
     "overrides the 35% fraction rail on low-CTL athletes — worst 39.1% at CTL 20-45, every " +
@@ -229,13 +225,16 @@ function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZon
     const d = weekDistribution(w.sessions);
     if (d.totalSec <= 0) continue;
     const t = targetDistribution(w.phase).z1;
-    const msg = `z1 ${w.weekStart} ${(d.z1Pct * 100).toFixed(1)}%`;
-    if (Math.abs(d.z1Pct - t) > 0.031 || d.z1Pct < 0.85 - 1e-9) {
-      if (d.z1Pct >= 0.83 && d.z1Pct < t) {
-        recordKnown("z1-floor-breach", msg);
-        knownViolations.push(msg);
-      } else violations.push(msg);
-    }
+    const msg = `z1 ${w.weekStart} ${(d.z1Pct * 100).toFixed(1)}% action=${w.z1FloorAction ?? "none"}`;
+    // The contract after the floor fix: within the ±3% band, OR at/above the
+    // floor with the over-band demotion SURFACED (the rail outranks the
+    // band on duration-floored micro-weeks), OR explicitly surfaced as
+    // unreachable. A silent breach in either direction fails.
+    const withinBand = Math.abs(d.z1Pct - t) <= 0.031;
+    const demotedOk = d.z1Pct >= 0.85 - 1e-9 && w.z1FloorAction === "demoted-quality";
+    const surfacedUnreachable = d.z1Pct < 0.85 - 1e-9 && w.z1FloorAction === "unreachable";
+    if (!(withinBand || demotedOk || surfacedUnreachable)) violations.push(msg);
+    if (withinBand && d.z1Pct < 0.85 - 1e-9) violations.push(msg + " (band met but floor broken)");
   }
 
   // Long-run fraction (refinement 5, fraction.test tolerance) at the

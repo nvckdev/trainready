@@ -21,7 +21,7 @@ import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint
 import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
 import { crossKindFor } from "./crosstrain.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
-import { sessionZoneSeconds, targetDistribution, weekDistribution } from "./intensity.ts";
+import { sessionZoneSeconds, targetDistribution, weekDistribution, z1FloorFor } from "./intensity.ts";
 import type { AthleteState, Block, Phase, WorkoutStructure, Zone } from "./types.ts";
 import { thresholdMpsFromZones, type PaceRange, type Zones } from "./zones.ts";
 
@@ -131,6 +131,16 @@ export interface PlanWeek {
   weekStart: string;
   phase: Phase;
   targetTss: number;
+  /**
+   * How the Z1 floor (refinement 1) was held on this week, when the normal
+   * TSS transfer could not do it. "demoted-quality": a quality session was
+   * rebuilt as easy at the same TSS — less intensity, more easy volume, the
+   * week conserved. "unreachable": even with every demotable session easy the
+   * floor cannot be met within this week's structure — surfaced explicitly
+   * rather than breached silently. Absent on every week the transfer alone
+   * handled (byte-identical to the pre-fix plan).
+   */
+  z1FloorAction?: "demoted-quality" | "unreachable";
   /** projected fitness at week's end. runCtl/runTsb are present ONLY when cross-
    *  training made running-specific load diverge from total (feature 5). */
   projected: { ctl: number; atl: number; tsb: number; runCtl?: number; runTsb?: number };
@@ -935,6 +945,7 @@ export function generatePlan(
     const site = req.tissueConstraints?.[0]?.site.replace("-", " ") ?? "the tissue";
 
     const sessionKinds: Kind[] = [];
+    let weekZ1FloorAction: PlanWeek["z1FloorAction"];
     const sessions: PlannedSessionOut[] = placed.map((slot) => {
       const substituted = crossDays.has(slot.weekdayIdx);
       // Kept run days shrink to the km cap; substituted days carry their load plus
@@ -992,7 +1003,31 @@ export function generatePlan(
     // and the PMC simulation, so both see the shaped week.
     if (isRunRace && (p.phase === "base" || p.phase === "build")) {
       const z1Target = targetDistribution(p.phase).z1;
-      for (let round = 0; round < 4; round++) {
+      const z1Floor = z1FloorFor(p.phase);
+      // The floor's last resort when the TSS transfer cannot act (donor pinned
+      // at the duration floor, no donor/recipient pair, no representable
+      // progress): rebuild the hardest session as easy AT THE SAME TSS — less
+      // intensity, more easy volume, the week conserved. The rail outranks
+      // the ±2% construction band; a demoted micro-week may sit above the
+      // band, and says so via z1FloorAction. Returns false when nothing is
+      // demotable (the week is then surfaced as unreachable).
+      const demoteForFloor = (qi: number, easyKind: Kind): boolean => {
+        if (qi < 0) return false;
+        const q = sessions[qi];
+        const t = TEMPLATES[easyKind];
+        const rate = t.intensity * t.intensity * 100;
+        const durationHr = Math.min(1.6, Math.max(0.4, q.tss / rate));
+        const m = mins(durationHr);
+        const built = t.build(zones, m);
+        q.durationHr = Math.round(durationHr * 100) / 100;
+        q.title = t.title(m);
+        q.structure = built.text;
+        q.workout = { blocks: built.blocks };
+        sessionKinds[qi] = easyKind;
+        weekZ1FloorAction = "demoted-quality";
+        return true;
+      };
+      for (let round = 0; round < 5; round++) {
         const d = weekDistribution(sessions);
         if (d.totalSec <= 0 || Math.abs(d.z1Pct - z1Target) <= 0.02) break;
         let qi = -1;
@@ -1014,7 +1049,12 @@ export function generatePlan(
             ei = i;
           }
         }
-        if (qi < 0 || ei < 0 || qi === ei) break;
+        const underFloor = d.z1Pct < z1Floor - 1e-9;
+        if (qi < 0 || ei < 0 || qi === ei) {
+          if (underFloor && demoteForFloor(qi, ei >= 0 ? sessionKinds[ei] : "run-easy")) continue;
+          if (underFloor && qi < 0) weekZ1FloorAction = "unreachable";
+          break;
+        }
         const q = sessions[qi];
         const e = sessions[ei];
         const qKind = sessionKinds[qi];
@@ -1032,21 +1072,30 @@ export function generatePlan(
         let qTssNew = q.tss * scale;
         let eTssNew = e.tss + (q.tss - qTssNew);
         if (qTssNew < q.tss) {
-          if (q.durationHr <= 0.4 + 1e-6) break; // donor pinned at floor
+          if (q.durationHr <= 0.4 + 1e-6) {
+            // Donor pinned at the duration floor — the break-out the matrix
+            // caught breaching the 0.85 floor on CTL-20 weeks. Demote instead
+            // of pretending, but only when the FLOOR (not the band) demands.
+            if (d.z1Pct < z1Floor - 1e-9 && demoteForFloor(qi, sessionKinds[ei])) continue;
+            break;
+          }
           const eCap = rateOf(eKind) * 1.6;
           if (eTssNew > eCap) {
             eTssNew = eCap;
             qTssNew = q.tss - (eTssNew - e.tss);
           }
         } else {
-          if (e.durationHr <= 0.4 + 1e-6) break; // donor pinned at floor
+          if (e.durationHr <= 0.4 + 1e-6) break; // easy pinned; over-band is not a rail breach
           const qCap = rateOf(qKind) * 1.6;
           const eFloor = rateOf(eKind) * 0.4;
           if (qTssNew > qCap) qTssNew = qCap;
           if (e.tss + (q.tss - qTssNew) < eFloor) qTssNew = q.tss - (eFloor - e.tss);
           eTssNew = e.tss + (q.tss - qTssNew);
         }
-        if (Math.round(qTssNew) === q.tss) break; // no representable progress
+        if (Math.round(qTssNew) === q.tss) {
+          if (d.z1Pct < z1Floor - 1e-9 && demoteForFloor(qi, sessionKinds[ei])) continue;
+          break; // no representable progress and the floor holds
+        }
         const rebuildInto = (s: PlannedSessionOut, kind: Kind, tss: number) => {
           const t = TEMPLATES[kind];
           const durationHr = Math.min(1.6, Math.max(0.4, tss / rateOf(kind)));
@@ -1164,6 +1213,7 @@ export function generatePlan(
     const emitted = sessions.filter((s) => s.date >= startDateStr);
 
     weeks.push({
+      ...(weekZ1FloorAction ? { z1FloorAction: weekZ1FloorAction } : {}),
       weekStart: iso(wStart),
       phase: p.phase,
       targetTss: Math.round(emitted.reduce((s, x) => s + x.tss, 0)),
