@@ -1,3 +1,17 @@
+## Branches
+
+`main` is canonical. It carries the dashboard, `engine/`, `pipeline/`, and the Expo app in `mobile/`.
+
+Audits, reviews, and bug hunts must run against `main` or a branch that descends from it — a checkout behind `main` returns confident, well-argued, wrong findings rather than failing. Verify first:
+
+```bash
+git merge-base --is-ancestor main HEAD && echo current || echo STALE
+```
+
+Before any commit touching `engine/`, `pipeline/`, or `src/app/app`, run `bash scripts/verify.sh`. The backtest pins (`maeConsistent` 89.4 / `corr` 0.79 / `dir` 75) must not move; if a change should move them, stop and get sign-off rather than re-pinning. See `AGENTS.md` and `docs/algorithm.md`.
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
