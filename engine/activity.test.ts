@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import {
+  activityTss,
+  dailyExecutedTss,
   dedupeActivities,
   mergeCandidates,
   sameActivity,
@@ -173,6 +175,74 @@ const act = (o: Partial<ImportedActivity> & { source: ImportedActivity["source"]
   const shuffled = [...stream].reverse();
   check("A8e", "dedup is order-independent", dedupeActivities(shuffled).length === out.length,
     `${dedupeActivities(shuffled).length} vs ${out.length}`);
+}
+
+// ——— A9. dailyExecutedTss: imports reach the fitness derivation ————————————
+// The failure this kills: a HealthKit athlete who trains six weeks and never
+// taps MARK DONE had their CTL decayed to ~37% of truth, and the reflow cut
+// the plan ~60% while blaming "your current fitness".
+{
+  const done = new Map([
+    ["2026-07-20", 70], // tapped
+    ["2026-07-22", 55], // tapped
+  ]);
+  const imports: ImportedActivity[] = [
+    // The imported twin of the tapped Jul 20 session — must NOT double-count.
+    act({ source: "strava", startTime: "2026-07-20T11:00:00.000Z", tss: 78 }),
+    // An import-only day the athlete never tapped — must count.
+    act({ source: "strava", startTime: "2026-07-21T11:00:00.000Z", tss: 90 }),
+  ];
+  const map = dailyExecutedTss(done, imports);
+  check("A9a", "a day with both tap and import takes the MAX, never the sum",
+    map.get("2026-07-20") === 78, String(map.get("2026-07-20")));
+  check("A9b", "an import-only day counts in full", map.get("2026-07-21") === 90);
+  check("A9c", "a tap-only day keeps its prescribed credit", map.get("2026-07-22") === 55);
+  check("A9d", "a day with neither is absent, not zero", !map.has("2026-07-23"));
+
+  // Neutrality: with no imports the map is byte-identical to the done-marks.
+  const bare = dailyExecutedTss(done, []);
+  check("A9e", "no imports ⇒ byte-identical to the done-mark map",
+    JSON.stringify([...bare.entries()].sort()) === JSON.stringify([...done.entries()].sort()));
+
+  // End-to-end CTL preservation — the 60%-cut kill test. Six weeks of daily
+  // 60-TSS imported training, zero taps: run the τ=42/7 recursion over the
+  // merged map and over the done-only map, compare.
+  const importsOnly: ImportedActivity[] = [];
+  for (let d = 0; d < 42; d++) {
+    const day = new Date(Date.parse("2026-06-01T11:00:00Z") + d * 86400000).toISOString();
+    importsOnly.push(act({ source: "strava", startTime: day, tss: 60 }));
+  }
+  const merged = dailyExecutedTss(new Map(), importsOnly);
+  const roll = (m: Map<string, number>) => {
+    let ctl = 40;
+    let atl = 40;
+    for (let d = 0; d < 42; d++) {
+      const day = new Date(Date.parse("2026-06-01T11:00:00Z") + d * 86400000).toISOString().slice(0, 10);
+      const tss = m.get(day) ?? 0;
+      ctl = ctl + (tss - ctl) / 42;
+      atl = atl + (tss - atl) / 7;
+    }
+    return ctl;
+  };
+  const withImports = roll(merged);
+  const withoutImports = roll(new Map());
+  check("A9f", "an import-only athlete keeps their fitness (CTL ~52, not decayed to ~15)",
+    withImports > 50 && withoutImports < 20, `${withImports.toFixed(1)} vs ${withoutImports.toFixed(1)}`);
+
+  // Estimation path: an import with tss null prices through activityTss ctx.
+  const est = dailyExecutedTss(new Map(), [act({ source: "strava", startTime: "2026-07-21T10:00:00.000Z", tss: null, distanceM: 12000, durationS: 3600, movingTimeS: 3600 })], { runThresholdMps: 4.0 });
+  check("A9g", "a null-tss import is priced by the athlete-aware estimator",
+    (est.get("2026-07-21") ?? 0) > 60, String(est.get("2026-07-21")));
+
+  // Injectable local-date bucketing (E7 groundwork): an evening-NY run lands
+  // on its NY date when the caller supplies the converter.
+  const nyDate = (iso: string) => {
+    const d = new Date(Date.parse(iso) - 4 * 3600000); // EDT approximation for the test
+    return d.toISOString().slice(0, 10);
+  };
+  const evening = dailyExecutedTss(new Map(), [act({ source: "strava", startTime: "2026-07-21T00:30:00.000Z", tss: 50 })], {}, nyDate);
+  check("A9h", "the caller's local-date converter buckets an evening run on its local day",
+    evening.has("2026-07-20") && !evening.has("2026-07-21"));
 }
 
 for (const p of passes) console.log("  " + p);

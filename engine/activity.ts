@@ -296,3 +296,42 @@ export function executedByWeek(
   }
   return out;
 }
+
+/**
+ * Merged daily executed TSS: done-marks + imported activities, per calendar
+ * day — the evidence map a daily PMC derivation should consume.
+ *
+ * The failure this exists to prevent: the phone's fitness state was derived
+ * from done-marks alone even after imports landed, so a HealthKit athlete who
+ * trained six weeks without tapping had their CTL decayed to ~37% of truth
+ * and their plan cut ~60% by the very reflow their imports triggered. The
+ * gate and the fitness derivation must see the SAME evidence.
+ *
+ * Per-day rule: MAX(done-marked prescribed TSS, imported measured/estimated
+ * TSS), never the sum — a tapped session and its imported twin are the same
+ * workout. Max slightly undercounts the rare day with one tapped and one
+ * separate import-only session; undercounting one unusual day costs a
+ * fraction of a CTL point, double-counting every normal day would corrupt
+ * the whole series.
+ *
+ * `localDate` converts an ISO instant to the athlete's calendar day. The
+ * default (UTC slice) preserves existing behavior; callers with a timezone
+ * pass their own so evening runs land on the right day.
+ */
+export function dailyExecutedTss(
+  doneByDate: Map<string, number>,
+  activities: ImportedActivity[],
+  ctx: TssContext = {},
+  localDate: (isoInstant: string) => string = (iso) => iso.slice(0, 10)
+): Map<string, number> {
+  const out = new Map(doneByDate);
+  const importedByDate = new Map<string, number>();
+  for (const a of activities) {
+    const day = localDate(a.startTime);
+    importedByDate.set(day, (importedByDate.get(day) ?? 0) + activityTss(a, ctx).tss);
+  }
+  for (const [day, tss] of importedByDate) {
+    out.set(day, Math.max(out.get(day) ?? 0, tss));
+  }
+  return out;
+}

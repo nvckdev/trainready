@@ -2,7 +2,7 @@ import type { Plan, PlanRequest } from "@engine/plan.ts";
 import type { AthleteState } from "@engine/types.ts";
 import { recomputeRemaining, type WeekActual } from "@engine/replan.ts";
 import { reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
-import { executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
+import { dailyExecutedTss, dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
 import { thresholdMpsFromZones } from "@engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "@engine/seed.ts";
 import { localToday, setPlan, zonesFor, type StoredAthlete, type StoredPlan } from "./store";
@@ -10,16 +10,16 @@ import { readSync } from "./sync";
 
 /**
  * On-device weekly reconcile. Same gate and same engine as the dashboard; the
- * difference is the EXECUTION SIGNAL. The phone has no activity import and no
- * daily PMC series — the only truth it holds is which sessions the athlete
- * marked done. So executed load is the sum of done-marked sessions, and
- * current fitness is derived by running the plan's own dates through the PMC
- * recursion with actual (done) load instead of prescribed load.
+ * difference is the EVIDENCE SOURCES. The phone holds two: which sessions the
+ * athlete marked done, and whatever the sync store imported (HealthKit when a
+ * build carries it). Both the gate's executed signal AND the fitness state
+ * that seeds a reflow are derived from the SAME merged evidence — the gate
+ * firing on imported load while fitness decayed from untapped sessions was
+ * exactly the split that cut a compliant athlete's plan ~60% (Mobile-1).
  *
- * That is honest but weaker than the dashboard's logged-activity signal: an
- * athlete who trains and never taps MARK DONE looks like an athlete who did
- * nothing. The gate's tolerance band absorbs small gaps; a genuinely empty
- * week reflows, which is the correct response to "no evidence of training".
+ * Done-marks remain positive-only: they can raise a week but never authorize
+ * a zero. A genuinely empty covered week reflows, which is the correct
+ * response to real evidence of no training.
  */
 
 const DAY = 86400000;
@@ -53,7 +53,8 @@ export function executedByWeek(
 }
 
 /**
- * Daily PMC series from DONE sessions between two dates.
+ * Daily PMC series from the merged evidence (done marks + imports) between
+ * two dates.
  *
  * This is the τ=42/7 recursion (rule 6 — never tuned, deliberately written out
  * rather than abstracted, exactly as in plan.ts / derive.ts / seed.ts /
@@ -62,14 +63,32 @@ export function executedByWeek(
  * the result through the tested seedStateAt keeps the merge + provenance
  * behavior identical to the dashboard's path.
  */
-export function executedDailyPmc(plan: Plan, seedCtl: number, seedAtl: number, through: string): DailyPmcPoint[] {
-  const tssByDate = new Map<string, number>();
+export function executedDailyPmc(
+  plan: Plan,
+  seedCtl: number,
+  seedAtl: number,
+  through: string,
+  // Imported activities merged per-day (max, never sum — a tapped session and
+  // its imported twin are the same workout). Without this the gate saw real
+  // imported load while the fitness state decayed as if the athlete did
+  // nothing, and the reflow cut the plan from a fiction (Mobile-1).
+  imported: ImportedActivity[] = [],
+  ctx: { runThresholdMps?: number; lthrBpm?: number } = {}
+): DailyPmcPoint[] {
+  const doneByDate = new Map<string, number>();
   for (const w of plan.weeks) {
     for (const s of w.sessions) {
       if (s.status !== "done") continue;
-      tssByDate.set(s.date, (tssByDate.get(s.date) ?? 0) + s.tss);
+      doneByDate.set(s.date, (doneByDate.get(s.date) ?? 0) + s.tss);
     }
   }
+  // Plan dates are device-local calendar days; bucket imports the same way so
+  // an evening run lands on the day the athlete lived it.
+  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, (isoInstant) => {
+    const d = new Date(isoInstant);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  });
   const start = plan.weeks[0]?.weekStart;
   if (!start || at(start) > at(through)) return [];
   let ctl = seedCtl;
@@ -140,10 +159,12 @@ export async function reconcileIfDue(
   // executedByWeek. With no importer connected this is empty, which leaves
   // every week exactly as it was.
   const sync = await readSync();
-  const executed = executedByWeek(stored.plan, sync.activities, sync.coverage, {
+  const stream = dedupeActivities(sync.activities);
+  const ctx = {
     runThresholdMps: thresholdMpsFromZones(zones),
     lthrBpm: athlete.thresholds.lthrBpm,
-  });
+  };
+  const executed = executedByWeek(stored.plan, stream, sync.coverage, ctx);
   const decision = reconcileGate({
     weeks: stored.plan.weeks,
     raceDate: stored.request.raceDate,
@@ -153,7 +174,7 @@ export async function reconcileIfDue(
   });
   if (!decision.due) return { changed: false, reason: decision.reason, note: null };
 
-  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf);
+  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx);
   const actualState: AthleteState = seedStateAt(athlete.seed, series, decision.asOf);
   const request: PlanRequest = reflowSafeRequest(
     { ...stored.request, priorWeights: athlete.priorWeights },
