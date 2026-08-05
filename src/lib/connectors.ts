@@ -12,6 +12,7 @@ import {
   type RateState,
 } from "../../engine/connector.ts";
 import { getStravaTokens, getWeekly, readImports, stravaConfigured } from "@/lib/athlete-data";
+import type { ImportedActivity as FileImportRow } from "@/lib/imports-io";
 
 /**
  * Concrete connectors for the dashboard (rule 12: all I/O lives in src/lib).
@@ -168,6 +169,39 @@ export const stravaConnector: Connector = {
   },
 };
 
+/**
+ * One imported file row → the canonical activity model. Exported for its
+ * tests — this mapping has lied twice and must stay pinned:
+ *
+ *  - startTime comes from the REAL instant embedded in the import id
+ *    (`${startISO}|${sport}`, imports-io.ts), not a fabricated noon. The
+ *    fabricated noon put the same run outside the ±90 s dedup window of its
+ *    Strava twin, and the week double-counted.
+ *  - tss is ALWAYS null. The store's tssEst is a flat per-sport estimate for
+ *    the import page's "est"-labeled display; forwarding it here
+ *    short-circuited activityTss and priced a threshold hour at ~56 TSS in
+ *    the ledger. Null routes the file through the same athlete-aware
+ *    IF²·100 path as every other source.
+ */
+export function importToActivity(a: FileImportRow): ImportedActivity {
+  const idInstant = a.id.split("|")[0];
+  const startTime = Number.isFinite(Date.parse(idInstant))
+    ? new Date(idInstant).toISOString()
+    : new Date(`${a.date}T12:00:00Z`).toISOString();
+  return {
+    source: (a.source === "intervals.icu" ? "intervals.icu" : "file") as ImportedActivity["source"],
+    startTime,
+    sport: (a.sport === "walk" ? "other" : a.sport) as ActivitySport,
+    distanceM: a.distanceKm != null ? a.distanceKm * 1000 : null,
+    durationS: Math.round(a.durationHr * 3600),
+    movingTimeS: null,
+    avgHr: a.avgHr,
+    elevationM: null,
+    externalId: a.id,
+    tss: null,
+  };
+}
+
 /** Uploaded FIT/TCX/GPX. Positive evidence only — never any coverage. */
 export const fileConnector: Connector = {
   source: "file",
@@ -177,18 +211,7 @@ export const fileConnector: Connector = {
     const store = readImports();
     const activities: ImportedActivity[] = store.activities
       .filter((a) => a.date >= dateOnly(since))
-      .map((a) => ({
-        source: (a.source === "intervals.icu" ? "intervals.icu" : "file") as ImportedActivity["source"],
-        startTime: new Date(`${a.date}T12:00:00Z`).toISOString(),
-        sport: (a.sport === "walk" ? "other" : a.sport) as ActivitySport,
-        distanceM: a.distanceKm != null ? a.distanceKm * 1000 : null,
-        durationS: Math.round(a.durationHr * 3600),
-        movingTimeS: null,
-        avgHr: a.avgHr,
-        elevationM: null,
-        externalId: a.id,
-        tss: a.tssEst > 0 ? a.tssEst : null,
-      }));
+      .map(importToActivity);
     // No coverage, deliberately: a dropped file says nothing about the days
     // it does not contain.
     return { source: "file", status: "ok", activities, coverage: [], attemptedAt: iso(new Date()) };
