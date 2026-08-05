@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
 import {
   applyReadinessSwap,
+  describeSwap,
+  EASY_HARD_FRACTION,
+  hardFraction,
   planReadinessSwap,
   qualityAdjacencyCost,
   type ReadinessLevel,
 } from "./readiness.ts";
 import type { PlannedSessionOut, PlanWeek } from "./plan.ts";
+import { sessionZoneSeconds } from "./intensity.ts";
 
 /**
  * Morning readiness check-in — placement only.
@@ -240,6 +244,65 @@ const RACE = "2026-06-14"; // far outside the taper lock
   }
   check("R8", "every (level × weekday) either swaps cleanly or does nothing — never throws, never changes load",
     threw === 0, `${threw} bad cells`);
+}
+
+// ——— R9. discipline is not assumed ————————————————————————————————————————
+// Two bugs of the same shape: the readiness layer assumed every session was a
+// timed run. hardFraction measured a CSS threshold swim as 0.000 hard, because
+// its blocks carry metres and no pace so nothing was measurable in seconds —
+// leaving a threshold session classified as an easy day and eligible to
+// RECEIVE a quality session swapped onto it. And swapNote said "easy run"
+// whatever it had moved: at run-5k with 7 days/week the generator puts a
+// bike-z2 on Monday, so the athlete was told to run a session that is a ride.
+{
+  const swim = (title: string, blocks: PlannedSessionOut["workout"]): PlannedSessionOut =>
+    ({ date: "2026-01-06", weekday: "Tue", discipline: "swim", title, durationHr: 0.4, tss: 24,
+       structure: "", why: "", workout: blocks }) as PlannedSessionOut;
+  const css = swim("CSS swim set", { blocks: [
+    { kind: "warmup", zone: "easy", distanceM: 400 },
+    { kind: "main", zone: "cv", reps: 10, distanceM: 100, recoverySec: 20 },
+    { kind: "main", zone: "vo2", reps: 4, distanceM: 50, recoverySec: 30 },
+    { kind: "cooldown", zone: "recovery", distanceM: 200 },
+  ] });
+  const endurance = swim("Endurance swim 24", { blocks: [
+    { kind: "warmup", zone: "easy", distanceM: 400 },
+    { kind: "main", zone: "easy", reps: 5, distanceM: 300, recoverySec: 30 },
+    { kind: "cooldown", zone: "recovery", distanceM: 200 },
+  ] });
+  check("R9a", "a distance-defined threshold swim is hard work, not a 0.000 easy day",
+    hardFraction(css) > EASY_HARD_FRACTION, hardFraction(css).toFixed(3));
+  check("R9b", "…while a distance-defined ENDURANCE swim is still easy — zone decides, not the unit",
+    hardFraction(endurance) === 0, hardFraction(endurance).toFixed(3));
+
+  // NEUTRALITY (§12): asserted against the formula this REPLACED, not against
+  // a number written down by hand — the point is that anything already
+  // measurable in seconds gets exactly the answer it got before.
+  const previously = (x: PlannedSessionOut): number => {
+    const z = sessionZoneSeconds(x.workout!);
+    const t = z.z1 + z.z2 + z.z3;
+    return t > 0 ? (z.z2 + z.z3) / t : 0;
+  };
+  const timedFixtures = [
+    sess("2026-01-06", 1, "quality", 60),
+    sess("2026-01-07", 2, "easy", 40),
+    sess("2026-01-08", 3, "long", 90),
+    { ...sess("2026-01-09", 4, "quality", 55), discipline: "bike" } as PlannedSessionOut,
+  ];
+  const drifted = timedFixtures.filter((x) => hardFraction(x) !== previously(x));
+  check("R9c", `timed sessions classify exactly as before — the fix reaches only what was unmeasurable (${timedFixtures.length} fixtures)`,
+    drifted.length === 0, drifted.map((x) => `${x.title} ${hardFraction(x)} vs ${previously(x)}`).join("; "));
+
+  // Wording follows the session that actually moves.
+  const wk = { weekStart: "2026-01-05", sessions: [] } as unknown as PlanWeek;
+  const ride = { ...sess("2026-01-07", 2, "easy", 40), discipline: "bike", title: "Zone 2 ride 40" } as PlannedSessionOut;
+  const note = describeSwap(wk.weekStart, "2026-01-06", "2026-01-07", "rough", ride);
+  check("R9d", "a bike day is described as a ride, never as a run",
+    /easy ride/.test(note) && !/run/.test(note), note);
+  const swimNote = describeSwap(wk.weekStart, "2026-01-06", "2026-01-07", "good", endurance);
+  check("R9e", "…and a swim as a swim", /easy swim/.test(swimNote) && !/run/.test(swimNote), swimNote);
+  const runNote = describeSwap(wk.weekStart, "2026-01-06", "2026-01-07", "rough", sess("2026-01-07", 2, "easy", 40));
+  check("R9f", "a run is still called a run (the wording only follows the discipline)",
+    /easy run/.test(runNote), runNote);
 }
 
 for (const p of passes) console.log("  " + p);

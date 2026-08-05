@@ -1,5 +1,5 @@
 import type { PlannedSessionOut, PlanWeek } from "./plan.ts";
-import { sessionZoneSeconds } from "./intensity.ts";
+import { blockWorkSec, ZONE3 } from "./intensity.ts";
 import { TAPER_LOCK_DAYS } from "./reconcile.ts";
 import { weekIndexContaining } from "./plan-ops.ts";
 
@@ -66,12 +66,43 @@ const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const dayIndex = (weekStart: string, date: string) => Math.round((at(date) - at(weekStart)) / DAY);
 
-/** Hard share of a session's work. 0 for anything without a structure. */
-function hardFraction(s: PlannedSessionOut): number {
-  if (!s.workout) return 0;
-  const z = sessionZoneSeconds(s.workout);
-  const total = z.z1 + z.z2 + z.z3;
-  return total > 0 ? (z.z2 + z.z3) / total : 0;
+/**
+ * Hard share of a session's work. 0 for anything without a structure.
+ *
+ * Measured in whatever unit the session is actually WRITTEN in. Runs and rides
+ * state seconds; the swim templates state metres and carry no pace on their
+ * blocks, so nothing in a CSS threshold set is measurable in time and the only
+ * seconds present are its rest periods — all easy. That reported hardFraction
+ * 0.000 for a threshold swim, which classified it as an easy day and made it
+ * eligible to RECEIVE a quality session swapped onto it: two hard sessions
+ * stacked on one day, by a feature whose entire promise is not doing that.
+ *
+ * Zone is intensity. It does not depend on which unit a block happens to use,
+ * so neither does this.
+ *
+ * Falling back only when NOTHING is measurable in seconds keeps the timed path
+ * byte-identical (R9c): a session that could already be measured gets exactly
+ * the answer it got before.
+ */
+export function hardFraction(s: PlannedSessionOut): number {
+  const blocks = s.workout?.blocks ?? [];
+  if (!blocks.length) return 0;
+  const workSec = blocks.map(blockWorkSec);
+  const timed = workSec.some((x) => x > 0);
+  let hard = 0;
+  let total = 0;
+  blocks.forEach((b, i) => {
+    const amount = timed ? workSec[i] : (b.distanceM ?? 0) * (b.reps ?? 1);
+    if (amount > 0) {
+      total += amount;
+      if (ZONE3[b.zone] !== "z1") hard += amount;
+    }
+    // Rest between reps is easy time — countable only while the session is
+    // being measured in time. Metres of swimming and seconds of rest do not
+    // add up, and pretending they do is how this went wrong the first time.
+    if (timed) total += (b.recoverySec ?? 0) * Math.max(0, (b.reps ?? 1) - 1);
+  });
+  return total > 0 ? hard / total : 0;
 }
 
 const isLongRun = (s: PlannedSessionOut) => /long/i.test(s.title);
@@ -155,7 +186,7 @@ export function planReadinessSwap(input: ReadinessInput): ReadinessSwap | null {
       .sort((a, b) => (a.date < b.date ? -1 : 1))
       .find((s) => legal(q.date, s.date));
     if (!target) return null;
-    return { qualityFrom: q.date, qualityTo: target.date, note: swapNote(week.weekStart, q.date, target.date, "rough") };
+    return { qualityFrom: q.date, qualityTo: target.date, note: describeSwap(week.weekStart, q.date, target.date, "rough", target) };
   }
 
   // "good": take the quality while it is there, pulling a later hard day
@@ -167,14 +198,28 @@ export function planReadinessSwap(input: ReadinessInput): ReadinessSwap | null {
     .sort((a, b) => (a.date < b.date ? -1 : 1))
     .find((s) => legal(s.date, e.date));
   if (!source) return null;
-  return { qualityFrom: source.date, qualityTo: e.date, note: swapNote(week.weekStart, source.date, e.date, "good") };
+  return { qualityFrom: source.date, qualityTo: e.date, note: describeSwap(week.weekStart, source.date, e.date, "good", e) };
 }
 
-function swapNote(weekStart: string, from: string, to: string, level: "rough" | "good"): string {
+/** "easy run" / "easy ride" / "easy swim" — what the athlete is actually being
+ *  asked to do. Hardcoding "run" told anyone whose Monday is a bike-z2 (which
+ *  is what run-5k at 7 days/week places there) to go running. */
+function easyLabel(s: PlannedSessionOut): string {
+  return s.discipline === "bike" ? "easy ride" : s.discipline === "swim" ? "easy swim" : s.discipline === "run" ? "easy run" : "easy session";
+}
+
+export function describeSwap(
+  weekStart: string,
+  from: string,
+  to: string,
+  level: "rough" | "good",
+  easy: PlannedSessionOut
+): string {
   const name = (dt: string) => WEEKDAY_NAMES[dayIndex(weekStart, dt)] ?? dt;
+  const what = easyLabel(easy);
   return level === "rough"
-    ? `Rough morning — the hard session moves from ${name(from)} to ${name(to)}, and ${name(to)}'s easy run comes back to ${name(from)}. The week's load is unchanged.`
-    : `Feeling good — ${name(from)}'s hard session comes forward to ${name(to)}, and the easy run takes ${name(from)}. The week's load is unchanged.`;
+    ? `Rough morning — the hard session moves from ${name(from)} to ${name(to)}, and ${name(to)}'s ${what} comes back to ${name(from)}. The week's load is unchanged.`
+    : `Feeling good — ${name(from)}'s hard session comes forward to ${name(to)}, and the ${what} takes ${name(from)}. The week's load is unchanged.`;
 }
 
 /**

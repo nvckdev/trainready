@@ -63,7 +63,10 @@ export interface Distribution {
 
 /** Work seconds a block contributes (reps × per-rep size). Runs carry
  *  durationSec; a distance-defined block derives time from its pace window. */
-function blockWorkSec(b: Block): number {
+/** Working seconds in a block. A distance block converts through its own pace
+ *  window when it carries one; the swim templates do not, which is why
+ *  readiness.ts must fall back to metres rather than read the 0 as "easy". */
+export function blockWorkSec(b: Block): number {
   let per = b.durationSec ?? 0;
   if (per === 0 && b.distanceM != null) {
     const pace = b.paceMinSecPerKm != null && b.paceMaxSecPerKm != null
