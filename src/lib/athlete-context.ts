@@ -21,17 +21,16 @@ export type StrengthAccess = (typeof STRENGTH_ACCESS)[number];
 export const EXPERIENCE_LEVELS = ["beginner", "intermediate", "advanced"] as const;
 export type ExperienceLevel = (typeof EXPERIENCE_LEVELS)[number];
 
-export const INJURY_AREAS = ["calf-achilles", "knee", "hip", "itb", "shoulder", "back"] as const;
-export type InjuryArea = (typeof INJURY_AREAS)[number];
-
-export const INJURY_LABEL: Record<InjuryArea, string> = {
-  "calf-achilles": "Calf / achilles",
-  knee: "Knee",
-  hip: "Hip",
-  itb: "ITB",
-  shoulder: "Shoulder",
-  back: "Back",
-};
+// The intake's injury areas and the pain log's regions are the same
+// vocabulary and always were (PAIN_REGIONS = INJURY_AREAS). It now has one
+// definition, in engine/pain.ts, so both surfaces' pickers and both surfaces'
+// rules cannot drift apart. These aliases keep the intake's own naming.
+export {
+  PAIN_REGIONS as INJURY_AREAS,
+  PAIN_REGION_LABEL as INJURY_LABEL,
+  type PainRegion as InjuryArea,
+} from "../../engine/pain.ts";
+import { PAIN_REGIONS as INJURY_AREAS, type PainRegion as InjuryArea } from "../../engine/pain.ts";
 
 export interface IntakeData {
   disciplineMode: DisciplineMode;

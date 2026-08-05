@@ -3,7 +3,7 @@ import {
   parseDeclarations,
   toConstraint,
   type TissueDeclaration,
-} from "./tissue-declarations";
+} from "../../engine/tissue-declare.ts";
 
 /**
  * Structured tissue declarations — the durable source that replaces

@@ -1,5 +1,5 @@
 import type { InjuryArea, StrengthAccess, AthleteContext } from "./athlete-context";
-import { AREA_PRIORITY, INJURY_AREAS, INJURY_LABEL, activeInjuryAreas } from "./athlete-context";
+import { AREA_PRIORITY, INJURY_LABEL, activeInjuryAreas } from "./athlete-context";
 
 /**
  * Supplemental strength & injury-prevention protocols. These are templated
@@ -71,51 +71,24 @@ export interface ProgressionState {
 
 /* ——— Pain log (docs/strength-module.md §1, §4) ——————————————————
  * Pain logs are HEALTH DATA: they live only under data/ (gitignored) and
- * are read/written exclusively through the strength-io.ts gateway. Types
- * and untrusted-input parsers live here; surface rules in pain-rules.ts. */
-
-/** Pain regions reuse the athlete-context injury vocabulary. */
-export const PAIN_REGIONS = INJURY_AREAS;
-export type PainRegion = InjuryArea;
-
-// "specific-movement" is separate from during/after a session on purpose: pain
-// that only appears on one movement localises a tissue in a way session-timing
-// does not, and it is what an athlete reaches for when nothing in a run hurts
-// but a particular load does.
-export const PAIN_CONTEXTS = ["at-rest", "during-session", "after-session", "specific-movement", "morning"] as const;
-export type PainContext = (typeof PAIN_CONTEXTS)[number];
-
-export const PAIN_CONTEXT_LABEL: Record<PainContext, string> = {
-  "at-rest": "At rest",
-  "during-session": "During session",
-  "after-session": "After session",
-  "specific-movement": "A specific movement",
-  morning: "Morning",
-};
-
-export interface PainEntry {
-  /** YYYY-MM-DD, athlete-local (localToday — never a UTC "today"). */
-  date: string;
-  region: PainRegion;
-  /** Integer 0–10, NRS scale. */
-  score0to10: number;
-  context: PainContext;
-}
-
-// Server action input is untrusted — same pattern as athlete-context.ts.
-export function parsePainRegion(v: unknown): PainRegion | null {
-  return PAIN_REGIONS.includes(v as PainRegion) ? (v as PainRegion) : null;
-}
-
-export function parsePainScore(v: unknown): number | null {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Math.min(10, Math.max(0, Math.round(n)));
-}
-
-export function parsePainContext(v: unknown): PainContext {
-  return PAIN_CONTEXTS.includes(v as PainContext) ? (v as PainContext) : "after-session";
-}
+ * are read/written exclusively through the strength-io.ts gateway.
+ *
+ * The MODEL and the rules moved to engine/pain.ts when mobile gained pain
+ * entry — one vocabulary and one rule set, so a region cannot exist in one
+ * surface's picker and be unrecognised by the other's rules. Re-exported here
+ * (including the INJURY_* aliases) so the dashboard's import sites are
+ * unchanged. */
+export {
+  PAIN_CONTEXT_LABEL,
+  PAIN_CONTEXTS,
+  PAIN_REGIONS,
+  parsePainContext,
+  parsePainRegion,
+  parsePainScore,
+  type PainContext,
+  type PainEntry,
+  type PainRegion,
+} from "../../engine/pain.ts";
 
 /** A strength completion is keyed (date, protocolId) — protocol ids are
  *  unique, so the pair is unambiguous (same spirit as the plan's

@@ -1,4 +1,5 @@
 import type { Plan, PlanRequest } from "@engine/plan.ts";
+import { readTissue } from "./tissue-store";
 import type { AthleteState } from "@engine/types.ts";
 import { buildLedger, knownTrailingTss, recomputeRemaining } from "@engine/replan.ts";
 import {
@@ -231,8 +232,25 @@ export async function reconcileIfDue(
 
   const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx, athlete.anchor, athlete.tz);
   const actualState: AthleteState = seedStateAt(athlete.seed, series, decision.asOf);
+  // Tissue constraints are refreshed per reflow, like the dashboard's:
+  // injuries heal and new ones get declared, and a request carrying last
+  // season's caps is as wrong as one carrying none. Mobile threaded NOTHING
+  // here before it could declare — a constraint declared on the phone would
+  // have been inert.
+  const tissue = await readTissue(decision.asOf);
+  if (tissue.status === "unreadable") {
+    // The E9 discipline, on the phone: caps that cannot be READ are not caps
+    // that are absent. Re-planning an injured athlete without their declared
+    // limits is the one degradation with injury stakes rather than accuracy
+    // stakes, so this refuses instead of proceeding uncapped.
+    return {
+      changed: false,
+      reason: `tissue-declarations unreadable (${tissue.message ?? "parse error"}) — refusing to re-plan without your declared injury limits`,
+      note: null,
+    };
+  }
   const request: PlanRequest = reflowSafeRequest(
-    { ...stored.request, priorWeights: athlete.priorWeights },
+    { ...stored.request, priorWeights: athlete.priorWeights, tissueConstraints: tissue.constraints },
     decision.asOf
   );
 

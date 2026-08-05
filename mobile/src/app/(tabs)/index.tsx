@@ -10,6 +10,31 @@ import { tapLight, tapSuccess } from "@/lib/haptics";
 import { seedDemoAthlete } from "@/lib/demo";
 import { readinessFor, recordReadiness } from "@/lib/readiness-store";
 import type { ReadinessEntry, ReadinessLevel } from "@engine/readiness.ts";
+import { painAlerts, painFor, recordPain } from "@/lib/pain-store";
+import { declare as declareTissue, readTissue, resolve as resolveTissue, type TissueRead } from "@/lib/tissue-store";
+import {
+  PAIN_CONTEXT_LABEL,
+  PAIN_CONTEXTS,
+  PAIN_REGION_LABEL,
+  PAIN_REGIONS,
+  type PainAlert,
+  type PainContext,
+  type PainEntry,
+  type PainRegion,
+} from "@engine/pain.ts";
+import {
+  TISSUE_PROVOCATION_LABEL,
+  TISSUE_PROVOCATIONS,
+  TISSUE_SITE_LABEL,
+  TISSUE_SITES,
+  TISSUE_STATUS_LABEL,
+  TISSUE_STATUSES,
+} from "@engine/tissue-declare.ts";
+import { deriveTissueCaps, tissueCapSummary, tissueReason, type TissueProvocation, type TissueSite, type TissueStatus } from "@engine/tissue.ts";
+
+/** 0–10 as tappable chips rather than a slider or keypad: this is filled in
+ *  outdoors, one-handed, often in the cold. */
+const SCORES = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"] as const;
 
 const READINESS: Array<{ level: ReadinessLevel; label: string }> = [
   { level: "rough", label: "ROUGH" },
@@ -82,6 +107,232 @@ function ReadinessCheckIn({ today }: { today: string }) {
         <Body style={{ fontSize: 12.5, lineHeight: 18, marginTop: 8 }}>
           Logged. Today&apos;s session stands as planned.
         </Body>
+      )}
+    </View>
+  );
+}
+
+/** A row of choices that reads as one control. Used for every pain and
+ *  declaration field so the whole surface is thumb-sized and needs no
+ *  keyboard — this gets used standing outside after a run. */
+function Choice<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  labelFor,
+}: {
+  label: string;
+  options: readonly T[];
+  value: T;
+  onChange: (v: T) => void;
+  labelFor: (v: T) => string;
+}) {
+  return (
+    <View style={{ marginTop: 12 }}>
+      <Label style={{ color: C.boneFaint, fontSize: 10 }}>{label}</Label>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+        {options.map((o) => {
+          const on = o === value;
+          return (
+            <Pressable
+              key={o}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={labelFor(o)}
+              onPress={() => {
+                tapLight();
+                onChange(o);
+              }}
+              style={{
+                paddingVertical: 8,
+                paddingHorizontal: 10,
+                borderWidth: 1,
+                borderColor: on ? C.signalText : C.hairline,
+                backgroundColor: on ? C.fieldRaised : "transparent",
+              }}
+            >
+              <Label style={{ fontSize: 10, color: on ? C.signalText : C.boneMuted }}>{labelFor(o)}</Label>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Pain check-in and injury declarations — the phone's daily health input,
+ * sitting with the readiness tap as one surface.
+ *
+ * Offline by construction: everything here writes to on-device storage, which
+ * is the only way a daily input survives the moment it is actually used —
+ * standing outside after a run, often with no signal.
+ *
+ * The model, the three alert rules and the declaration validation are all
+ * engine/ modules shared with the dashboard. Nothing about "is this athlete
+ * injured" is decided here; this screen only collects and renders it.
+ */
+function HealthCheckIn({ today }: { today: string }) {
+  const [open, setOpen] = useState(false);
+  const [todays, setTodays] = useState<PainEntry[]>([]);
+  const [alerts, setAlerts] = useState<PainAlert[]>([]);
+  const [tissue, setTissue] = useState<TissueRead | null>(null);
+
+  const [region, setRegion] = useState<PainRegion>(PAIN_REGIONS[0]);
+  const [score, setScore] = useState(0);
+  const [context, setContext] = useState<PainContext>("after-session");
+
+  const [declaring, setDeclaring] = useState(false);
+  const [site, setSite] = useState<TissueSite>("calf");
+  const [status, setStatus] = useState<TissueStatus>("niggle");
+  const [provocation, setProvocation] = useState<TissueProvocation>("volume");
+
+  useEffect(() => {
+    let live = true;
+    void Promise.all([painFor(today), readTissue(today), painAlerts(today)]).then(([p, t, a]) => {
+      if (!live) return;
+      setTodays(p);
+      setTissue(t);
+      setAlerts(a);
+    });
+    return () => {
+      live = false;
+    };
+  }, [today]);
+
+  const log = async () => {
+    tapSuccess();
+    const r = await recordPain(region, score, context, today);
+    setTodays(r.entries);
+    setAlerts(r.alerts);
+  };
+
+  // The caps an athlete is about to agree to, shown BEFORE the button that
+  // applies them — the same promise the dashboard card makes.
+  const preview = tissueCapSummary({ site, status, provocation, caps: deriveTissueCaps(status, provocation) });
+
+  return (
+    <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={open ? "Hide pain check-in" : "Open pain check-in"}
+        onPress={() => {
+          tapLight();
+          setOpen((v) => !v);
+        }}
+        style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+      >
+        <Label style={{ color: C.boneFaint }}>ANYTHING HURT?</Label>
+        <Label style={{ color: C.boneMuted, fontSize: 10 }}>{open ? "CLOSE" : todays.length > 0 ? "LOGGED" : "LOG"}</Label>
+      </Pressable>
+
+      {alerts.length > 0 && (
+        <View style={{ marginTop: 8, borderLeftWidth: 2, borderLeftColor: C.signalText, paddingLeft: 10 }}>
+          {alerts.map((a) => (
+            <Body key={a.region + a.rule} style={{ fontSize: 12.5, lineHeight: 18, color: C.signalText }}>
+              {a.detail}
+            </Body>
+          ))}
+          <Body style={{ fontSize: 12, lineHeight: 17, color: C.boneMuted, marginTop: 4 }}>
+            Consider easing the next quality session. Nothing here changes your plan by itself.
+          </Body>
+        </View>
+      )}
+
+      {tissue?.status === "unreadable" && (
+        <Body style={{ fontSize: 12.5, lineHeight: 18, color: C.signalText, marginTop: 8 }}>
+          Your injury limits could not be read, so the plan will not re-plan without them. Re-declare below.
+        </Body>
+      )}
+
+      {tissue && tissue.active.length > 0 && (
+        <View style={{ marginTop: 10 }}>
+          {tissue.constraints.map((c) => (
+            <View key={c.site} style={{ marginTop: 6 }}>
+              <Label style={{ fontSize: 10 }}>{TISSUE_SITE_LABEL[c.site]}</Label>
+              <Body style={{ fontSize: 12, lineHeight: 17, color: C.boneMuted }}>{tissueReason(c)}</Body>
+              <Body style={{ fontSize: 12, lineHeight: 17, color: C.boneMuted }}>Caps: {tissueCapSummary(c)}</Body>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Mark ${TISSUE_SITE_LABEL[c.site]} resolved`}
+                onPress={() => {
+                  tapSuccess();
+                  void resolveTissue(c.site, today).then(setTissue);
+                }}
+                style={{ marginTop: 6, alignSelf: "flex-start", borderWidth: 1, borderColor: C.hairline, paddingVertical: 7, paddingHorizontal: 12 }}
+              >
+                <Label style={{ fontSize: 10, color: C.boneMuted }}>RESOLVED</Label>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {open && (
+        <View style={{ marginTop: 4 }}>
+          <Choice label="WHERE" options={PAIN_REGIONS} value={region} onChange={setRegion} labelFor={(r) => PAIN_REGION_LABEL[r]} />
+          <Choice
+            label="HOW MUCH · 0–10"
+            options={SCORES}
+            value={String(score) as (typeof SCORES)[number]}
+            onChange={(v) => setScore(Number(v))}
+            labelFor={(v) => v}
+          />
+          <Choice label="WHEN" options={PAIN_CONTEXTS} value={context} onChange={setContext} labelFor={(c) => PAIN_CONTEXT_LABEL[c]} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Log pain reading"
+            onPress={() => void log()}
+            style={{ marginTop: 12, borderWidth: 1, borderColor: C.signalText, paddingVertical: 11, alignItems: "center" }}
+          >
+            <Label style={{ fontSize: 10, color: C.signalText }}>LOG</Label>
+          </Pressable>
+          {todays.length > 0 && (
+            <Body style={{ fontSize: 12, lineHeight: 17, color: C.boneMuted, marginTop: 8 }}>
+              {todays.map((e) => `${PAIN_REGION_LABEL[e.region]} ${e.score0to10}/10 · ${PAIN_CONTEXT_LABEL[e.context].toLowerCase()}`).join("  ·  ")}
+            </Body>
+          )}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={declaring ? "Hide injury declaration" : "Declare an injury"}
+            onPress={() => {
+              tapLight();
+              setDeclaring((v) => !v);
+            }}
+            style={{ marginTop: 16 }}
+          >
+            <Label style={{ color: C.boneFaint, fontSize: 10 }}>
+              {declaring ? "CLOSE DECLARATION" : "DECLARE AN INJURY \u2192"}
+            </Label>
+          </Pressable>
+
+          {declaring && (
+            <View>
+              <Choice label="WHERE" options={TISSUE_SITES} value={site} onChange={setSite} labelFor={(x) => TISSUE_SITE_LABEL[x]} />
+              <Choice label="HOW BAD" options={TISSUE_STATUSES} value={status} onChange={setStatus} labelFor={(x) => TISSUE_STATUS_LABEL[x].split(" \u2014 ")[0]} />
+              <Choice label="WHAT SETS IT OFF" options={TISSUE_PROVOCATIONS} value={provocation} onChange={setProvocation} labelFor={(x) => TISSUE_PROVOCATION_LABEL[x].split(" \u2014 ")[0]} />
+              <Body style={{ fontSize: 12, lineHeight: 17, color: C.boneMuted, marginTop: 10 }}>
+                This will cap your training: {preview}.
+              </Body>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Declare this injury"
+                onPress={() => {
+                  tapSuccess();
+                  void declareTissue(site, status, provocation, undefined, today).then((t) => {
+                    setTissue(t);
+                    setDeclaring(false);
+                  });
+                }}
+                style={{ marginTop: 10, borderWidth: 1, borderColor: C.signalText, paddingVertical: 11, alignItems: "center" }}
+              >
+                <Label style={{ fontSize: 10, color: C.signalText }}>DECLARE</Label>
+              </Pressable>
+            </View>
+          )}
+        </View>
       )}
     </View>
   );
@@ -317,6 +568,11 @@ export default function TodayScreen() {
               </>
             )}
           </View>
+          {/* A rest day is exactly when something hurts enough to be resting,
+              so the health check-in belongs here too — a daily input that
+              disappears on rest days is not a daily input. Readiness stays on
+              session days only: it reorders sessions, and there are none. */}
+          {found && <HealthCheckIn today={today} />}
           {footer}
         </View>
       </SafeAreaView>
@@ -377,6 +633,7 @@ export default function TodayScreen() {
         )}
 
         <ReadinessCheckIn today={today} />
+        <HealthCheckIn today={today} />
 
         {hero && (
           <View style={{ marginHorizontal: 20, marginTop: 16, backgroundColor: C.fieldRaised, borderRadius: 22, padding: 20 }}>
