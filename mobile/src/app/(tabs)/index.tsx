@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -8,6 +8,84 @@ import { C, type } from "@/lib/theme";
 import { currentWeekIndex, toggleSessionDone, useAthlete, usePlan, useToday, useWeeklyReconcile } from "@/lib/store";
 import { tapLight, tapSuccess } from "@/lib/haptics";
 import { seedDemoAthlete } from "@/lib/demo";
+import { readinessFor, recordReadiness } from "@/lib/readiness-store";
+import type { ReadinessEntry, ReadinessLevel } from "@engine/readiness.ts";
+
+const READINESS: Array<{ level: ReadinessLevel; label: string }> = [
+  { level: "rough", label: "ROUGH" },
+  { level: "ok", label: "OK" },
+  { level: "good", label: "GOOD" },
+];
+
+/**
+ * Morning check-in. One tap, placement only: the engine may move today's hard
+ * session later (rough) or pull a later one forward (good), and may change
+ * nothing else — the week's load is identical either way, which is what the
+ * copy promises and what engine/readiness.ts guarantees.
+ */
+function ReadinessCheckIn({ today }: { today: string }) {
+  const [entry, setEntry] = useState<ReadinessEntry | null | undefined>(undefined);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void readinessFor(today).then((e) => {
+      if (live) setEntry(e);
+    });
+    return () => {
+      live = false;
+    };
+  }, [today]);
+
+  const answer = async (level: ReadinessLevel) => {
+    tapLight();
+    const r = await recordReadiness(level, today);
+    setEntry(r.entry);
+    setNote(r.note);
+  };
+
+  // Undefined while the log loads: render nothing rather than flash an
+  // unanswered state at someone who already answered.
+  if (entry === undefined) return null;
+
+  return (
+    <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
+      <Label style={{ color: C.boneFaint }}>HOW DID YOU WAKE UP?</Label>
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        {READINESS.map((r) => {
+          const on = entry?.level === r.level;
+          return (
+            <Pressable
+              key={r.level}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={`Readiness ${r.label.toLowerCase()}`}
+              onPress={() => void answer(r.level)}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                alignItems: "center",
+                borderWidth: 1,
+                borderColor: on ? C.signalText : C.hairline,
+                backgroundColor: on ? C.fieldRaised : "transparent",
+              }}
+            >
+              <Label style={{ fontSize: 10, color: on ? C.signalText : C.boneMuted }}>{r.label}</Label>
+            </Pressable>
+          );
+        })}
+      </View>
+      {(note ?? entry?.swap?.note) && (
+        <Body style={{ fontSize: 12.5, lineHeight: 18, marginTop: 8 }}>{note ?? entry?.swap?.note}</Body>
+      )}
+      {entry && !entry.swap && (
+        <Body style={{ fontSize: 12.5, lineHeight: 18, marginTop: 8 }}>
+          Logged. Today&apos;s session stands as planned.
+        </Body>
+      )}
+    </View>
+  );
+}
 
 function openSession(s: PlannedSessionOut): void {
   router.push({ pathname: "/session", params: { date: s.date, title: s.title } });
@@ -297,6 +375,8 @@ export default function TodayScreen() {
             </View>
           </>
         )}
+
+        <ReadinessCheckIn today={today} />
 
         {hero && (
           <View style={{ marginHorizontal: 20, marginTop: 16, backgroundColor: C.fieldRaised, borderRadius: 22, padding: 20 }}>

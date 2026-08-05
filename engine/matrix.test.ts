@@ -10,6 +10,7 @@ import { thresholdMpsFromZones } from "./zones.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { fitPriorFromExamples } from "./learned.ts";
 import { declareTissue } from "./tissue.ts";
+import { applyReadinessSwap, planReadinessSwap, qualityAdjacencyCost } from "./readiness.ts";
 
 /**
  * The synthetic-athlete matrix (audit Part 2's recommended harness).
@@ -281,16 +282,19 @@ function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZon
 const t0 = Date.now();
 const digests: Record<string, string> = {};
 const results = new Map<string, CellResult>();
+/** Generated plans, retained so later sweeps (readiness) can re-derive from
+ *  the same grid rather than regenerating it. */
+const plans = new Map<string, Plan>();
+
+/** The zones a grid cell's athlete has — one definition, used by generation
+ *  and by every sweep that follows. */
+const zonesFor = (c: Case) =>
+  deriveZones({ ftpWatts: 250, lthrBpm: 170, runThresholdSpeedMps: 1000 / c.paceSec, swimCssMps: 1.1 });
 let generated = 0;
 let thrown = 0;
 
 for (const c of CASES) {
-  const zones = deriveZones({
-    ftpWatts: 250,
-    lthrBpm: 170,
-    runThresholdSpeedMps: 1000 / c.paceSec,
-    swimCssMps: 1.1,
-  });
+  const zones = zonesFor(c);
   const req: PlanRequest = {
     raceName: "Matrix race",
     raceDate: c.race.date,
@@ -304,6 +308,7 @@ for (const c of CASES) {
     const plan = generatePlan(req, athleteState(c.ctl), makeHistory(c.history, c.ctl), zones);
     generated++;
     results.set(c.id, assertStructure(c, plan, zones));
+    plans.set(c.id, plan);
     digests[c.id] = digest(plan);
   } catch (e) {
     thrown++;
@@ -468,6 +473,74 @@ check("G0", `all ${CASES.length} grid cells generate`, thrown === 0, `${thrown} 
   check("PAR", "identical inputs through the two surfaces' call idioms ⇒ byte-identical plans",
     strip(mobile) === strip(dashboard),
     strip(mobile) === strip(dashboard) ? "" : `mobile ${digest(mobile)} vs dashboard ${digest(dashboard)}`);
+}
+
+
+// ——— R. readiness swaps hold every rail, on every athlete in the grid ————————
+// Placement-only is a claim about EVERY plan, not the fixtures: sweep a
+// readiness tap across each grid cell's weeks and levels and assert it can
+// never change weekly load, never breach a rail, and never fire inside the
+// taper lock.
+{
+  const bad: string[] = [];
+  let swapsFound = 0;
+  let tapsTried = 0;
+  for (const c of CASES) {
+    const plan = plans.get(c.id);
+    if (!plan) continue;
+    const zones = zonesFor(c);
+    for (const w of plan.weeks) {
+      // One tap per session-day in the week, at every level.
+      for (const level of ["rough", "ok", "good"] as const) {
+        for (const s of w.sessions) {
+          tapsTried++;
+          // planReadinessSwap is pure, so it can be asked about the real plan;
+          // only a swap that actually exists is worth cloning for.
+          const swap = planReadinessSwap({
+            weeks: plan.weeks,
+            today: s.date,
+            raceDate: c.race.date,
+            level,
+          });
+          if (!swap) continue;
+          swapsFound++;
+          const weeksCopy: Plan["weeks"] = JSON.parse(JSON.stringify(plan.weeks));
+          const tssBefore = plan.weeks.map((x) => x.sessions.reduce((a, y) => a + y.tss, 0));
+          // Taper lock — the hardest exclusion.
+          const daysOut = Math.round((Date.parse(c.race.date + "T12:00:00Z") - Date.parse(s.date + "T12:00:00Z")) / 86400000);
+          if (daysOut <= 21) bad.push(`${c.id}: fired ${daysOut}d out`);
+          applyReadinessSwap(weeksCopy, swap);
+          // Weekly TSS, every week, unchanged.
+          const tssAfter = weeksCopy.map((x) => x.sessions.reduce((a, y) => a + y.tss, 0));
+          if (JSON.stringify(tssAfter) !== JSON.stringify(tssBefore)) {
+            bad.push(`${c.id}: weekly TSS moved on ${s.date}`);
+          }
+          // Session content is untouched — only dates may differ.
+          const bag = (ws: Plan["weeks"]) =>
+            JSON.stringify(ws.flatMap((x) => x.sessions.map((y) => `${y.title}|${y.tss}|${y.durationHr}`)).sort());
+          if (bag(weeksCopy) !== bag(plan.weeks)) bad.push(`${c.id}: session content changed on ${s.date}`);
+          // The long run never moved.
+          const longs = (ws: Plan["weeks"]) =>
+            JSON.stringify(ws.flatMap((x) => x.sessions.filter((y) => /long/i.test(y.title)).map((y) => y.date)));
+          if (longs(weeksCopy) !== longs(plan.weeks)) bad.push(`${c.id}: long run moved on ${s.date}`);
+          // Structural crowding never worsened, per week.
+          for (let i = 0; i < weeksCopy.length; i++) {
+            if (qualityAdjacencyCost(weeksCopy[i].sessions) > qualityAdjacencyCost(plan.weeks[i].sessions)) {
+              bad.push(`${c.id}: adjacency worsened wk${i}`);
+            }
+          }
+          // And the plan still satisfies every structural invariant.
+          const before = failures.length;
+          assertStructure(c, { ...plan, weeks: weeksCopy }, zones, ":readiness");
+          if (failures.length > before) bad.push(`${c.id}: rail broken on ${s.date}`);
+        }
+      }
+    }
+  }
+  check("R1", `readiness swaps never change load, content, the long run or a rail (${swapsFound} swaps across ${tapsTried} taps)`,
+    bad.length === 0, bad.slice(0, 3).join("; "));
+  check("R2", "the sweep actually exercised the mechanism (not vacuously green)",
+    swapsFound > 200, `${swapsFound} swaps`);
 }
 
 // ——— golden digests ———————————————————————————————————————————————————————
