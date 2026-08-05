@@ -11,7 +11,7 @@ import {
   type FetchResult,
   type RateState,
 } from "../../engine/connector.ts";
-import { getPmc, getStravaTokens, getWeekly, readImports, stravaConfigured } from "@/lib/athlete-data";
+import { getPmc, getStravaTokens, getWeekly, intervalsConfigured, readImports, stravaConfigured } from "@/lib/athlete-data";
 import type { ImportedActivity as FileImportRow } from "@/lib/imports-io";
 
 /**
@@ -246,6 +246,85 @@ export function corpusWeeklyMeasured(): { measured: Map<string, number>; coverag
   };
 }
 
+
+interface IntervalsActivityRaw {
+  start_date?: string;
+  start_date_local?: string;
+  type?: string;
+  moving_time?: number;
+  elapsed_time?: number;
+  distance?: number;
+  average_heartrate?: number;
+  icu_training_load?: number;
+}
+
+/**
+ * One intervals.icu record → the canonical model. Exported for its tests.
+ *
+ * startTime prefers the UTC instant (start_date) so the ±90 s dedup window
+ * can match the same run's Strava/file twin; a record carrying only the
+ * local wall clock is still mapped rather than dropped. icu_training_load is
+ * a real measured load and rides as tss; anything else goes null and is
+ * priced by the athlete-aware estimator downstream — never the flat table.
+ */
+export function mapIntervalsActivity(a: IntervalsActivityRaw): ImportedActivity | null {
+  const startRaw = a.start_date ?? a.start_date_local;
+  if (!startRaw) return null;
+  const start = new Date(startRaw);
+  if (!Number.isFinite(start.getTime())) return null;
+  const durationS = a.elapsed_time ?? a.moving_time ?? 0;
+  if (durationS <= 60) return null;
+  return {
+    source: "intervals.icu",
+    startTime: start.toISOString(),
+    sport: mapStravaSport(a.type ?? ""),
+    distanceM: a.distance && a.distance > 0 ? a.distance : null,
+    durationS,
+    movingTimeS: a.moving_time ?? null,
+    avgHr: a.average_heartrate ? Math.round(a.average_heartrate) : null,
+    elevationM: null,
+    externalId: null,
+    tss: a.icu_training_load && a.icu_training_load > 0 ? Math.round(a.icu_training_load) : null,
+  };
+}
+
+/**
+ * intervals.icu as a first-class evidence source. Until now its data was
+ * display-only on the Import page — never persisted, never in the executed
+ * map — so an intervals-only athlete saw "Active - N activities" while the
+ * reconcile gate reported no-execution-data forever (audit A3). A range
+ * query is genuine coverage; failures follow the standard taxonomy and
+ * contribute none.
+ */
+export const intervalsConnector: Connector = {
+  source: "intervals.icu",
+  label: "intervals.icu",
+  isConfigured: () => intervalsConfigured(),
+  async fetchActivities(since: string): Promise<FetchResult> {
+    const key = process.env.INTERVALS_ICU_API_KEY;
+    const athleteId = process.env.INTERVALS_ICU_ATHLETE_ID;
+    if (!key || !athleteId) return emptyResult("intervals.icu", "not-configured", "intervals.icu is not connected.");
+    const auth = Buffer.from(`API_KEY:${key}`).toString("base64");
+    const res = await fetch(
+      `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${dateOnly(since)}`,
+      { headers: { Authorization: `Basic ${auth}` }, cache: "no-store" }
+    );
+    if (res.status === 401 || res.status === 403) {
+      return emptyResult("intervals.icu", "unauthorized", "intervals.icu needs reconnecting — its API key was rejected.");
+    }
+    if (res.status === 429) {
+      return emptyResult("intervals.icu", "rate-limited", "intervals.icu rate limit reached; the next sync will retry.");
+    }
+    if (!res.ok) {
+      return emptyResult("intervals.icu", "unavailable", `intervals.icu returned ${res.status}.`);
+    }
+    const raw = (await res.json()) as IntervalsActivityRaw[];
+    const activities = raw.map(mapIntervalsActivity).filter((x): x is ImportedActivity => x !== null);
+    const coverage: Coverage[] = [{ source: "intervals.icu", from: dateOnly(since), to: dateOnly(iso(new Date())) }];
+    return { source: "intervals.icu", status: "ok", activities, coverage, attemptedAt: iso(new Date()) };
+  },
+};
+
 export function dashboardConnectors(): Connector[] {
-  return [stravaConnector, fileConnector];
+  return [intervalsConnector, stravaConnector, fileConnector];
 }

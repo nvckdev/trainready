@@ -2,7 +2,7 @@ import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts"
 import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
 import { evidenceComplete, reconcileGate, reflowSafeRequest, type ReconcileDecision, type WeekEvidence } from "../../engine/reconcile.ts";
 import { loadPopulationPrior } from "../../engine/learned.ts";
-import { getAthlete, getHistory, getStateAt, getWeekly, localToday, stravaConfigured } from "@/lib/athlete-data";
+import { getAthlete, getHistory, getStateAt, getWeekly, intervalsConfigured, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readPlan, writePlan } from "@/lib/plan-io";
 import { loadTissueConstraints } from "@/lib/tissue-constraints";
 import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "../../engine/activity.ts";
@@ -54,7 +54,7 @@ export function closedWeekEvidence(
     complete: evidenceComplete({
       weekStart,
       today,
-      hasRemoteSource: stravaConfigured(),
+      hasRemoteSource: stravaConfigured() || intervalsConfigured(),
       lastSyncAt: readSyncStore().lastSyncAt,
       measured: corpusWeeklyMeasured().measured.has(weekStart),
     }),

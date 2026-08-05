@@ -1,5 +1,6 @@
 import { activityTss, dedupeActivities, type ImportedActivity } from "../../engine/activity.ts";
-import { importToActivity } from "./connectors";
+import { intervalsConnector, importToActivity, mapIntervalsActivity } from "./connectors";
+import { runConnector } from "../../engine/connector.ts";
 import type { ImportedActivity as FileActivity } from "./imports-io";
 
 /**
@@ -96,7 +97,55 @@ const fileAct = (o: Partial<FileActivity>): FileActivity => ({
   check("F4c", "walk normalizes to other", walk.sport === "other");
 }
 
-for (const p of passes) console.log("  " + p);
-for (const f of failures) console.error("  " + f);
-console.log(`\nconnectors: ${passes.length} passed, ${failures.length} failed`);
-process.exit(failures.length);
+// ——— F5. intervals.icu is a real connector, not a display-only orphan ——————
+// The audit's A3: intervals data was never persisted and never reached the
+// executed map — the import page said "Active" while the reconcile gate
+// reported no-execution-data forever.
+{
+  const raw = {
+    start_date: "2026-07-21T11:03:27Z",
+    start_date_local: "2026-07-21T07:03:27",
+    type: "Run",
+    moving_time: 3600,
+    elapsed_time: 3650,
+    distance: 12000,
+    average_heartrate: 151,
+    icu_training_load: 88,
+  };
+  const a = mapIntervalsActivity(raw)!;
+  check("F5a", "the REAL UTC instant is the startTime (dedup can match its Strava twin)",
+    a.startTime === "2026-07-21T11:03:27.000Z", a.startTime);
+  check("F5b", "icu_training_load is real measured load — kept as tss",
+    a.tss === 88, String(a.tss));
+  check("F5c", "sport maps through the shared table", a.sport === "run");
+  check("F5d", "moving time and elapsed time both survive",
+    a.durationS === 3650 && a.movingTimeS === 3600);
+
+  const noLoad = mapIntervalsActivity({ ...raw, icu_training_load: undefined })!;
+  check("F5e", "without measured load, tss is null — priced by the athlete-aware path, never the flat table",
+    noLoad.tss === null);
+
+  const short = mapIntervalsActivity({ ...raw, moving_time: 45, elapsed_time: 50 });
+  check("F5f", "sub-minute records are dropped", short === null);
+
+  const localOnly = mapIntervalsActivity({ ...raw, start_date: undefined });
+  check("F5g", "a record with only a local wall-clock start is still mapped, not dropped",
+    localOnly !== null && localOnly!.startTime.length === 24);
+
+}
+
+// CJS module — the one async assertion runs behind a promise, and the summary
+// (below) is deferred until it lands.
+delete process.env.INTERVALS_ICU_API_KEY;
+delete process.env.INTERVALS_ICU_ATHLETE_ID;
+const asyncChecks = runConnector(intervalsConnector, "2026-07-01").then((unconfigured) => {
+  check("F5h", "without env config the connector is not-configured — inert, never a failure",
+    unconfigured.status === "not-configured" && unconfigured.coverage.length === 0, unconfigured.status);
+});
+
+void asyncChecks.then(() => {
+  for (const p of passes) console.log("  " + p);
+  for (const f of failures) console.error("  " + f);
+  console.log(`\nconnectors: ${passes.length} passed, ${failures.length} failed`);
+  process.exit(failures.length);
+});
