@@ -1,4 +1,6 @@
 import { getPmc, getAthleteLocation, getStateAt } from "./athlete-data";
+import { gapEvidence } from "./fitness-evidence";
+import { readPlan } from "./plan-io";
 import { loadRaceAnchors, raceDistanceKm } from "../../engine/goal.ts";
 import {
   capabilityProfile,
@@ -20,7 +22,8 @@ import type { Plan } from "../../engine/plan.ts";
  *  same state every header shows) — never the frozen last-logged row, which
  *  overstates capability across any unlogged tail. */
 export function getCapability(asOf: string): CapabilityProfile | null {
-  const rolled = getStateAt(asOf);
+  // Same gap evidence as the plan and the reflow (E8).
+  const rolled = getStateAt(asOf, gapEvidence(readPlan()?.plan ?? null));
   const pmc = getPmc();
   const currentCtl = rolled?.ctl ?? (pmc.length ? pmc[pmc.length - 1].ctl : null);
   if (currentCtl == null) return null;

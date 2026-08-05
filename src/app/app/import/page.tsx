@@ -1,3 +1,5 @@
+import { gapEvidence } from "@/lib/fitness-evidence";
+import { readPlan } from "@/lib/plan-io";
 import {
   getAthlete,
   getIntervalsActivities,
@@ -15,7 +17,9 @@ import { loadPopulationPrior } from "../../../../engine/learned.ts";
 /** `TAPER1.` + base64url(JSON) — decoded by the mobile app's Settings screen. */
 function pairCode(): string | null {
   const athlete = getAthlete();
-  const seed = getStateAt(localToday());
+  // The phone inherits this seed — it must be the same truest state the
+  // dashboard itself plans from (E8), not a zero-rolled stale corpus tail.
+  const seed = getStateAt(localToday(), gapEvidence(readPlan()?.plan ?? null));
   if (!athlete || !seed) return null;
   const payload = {
     v: 1,

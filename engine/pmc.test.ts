@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { TaperV1 } from "./learned.ts";
 import { generatePlan, type Plan, type PlanRequest, type PlanWeek } from "./plan.ts";
-import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
+import { seedStateAt, type DailyPmcPoint, tooSpeculativeToPrescribe } from "./seed.ts";
 import { deriveZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
 import { briefForWeek, loadCopyBranch } from "../src/lib/week-insights.ts";
@@ -717,6 +717,99 @@ function headerStateAt(series: DailyPmcPoint[], date: string): { ctl: number; at
   check("T13e", "startDate before any row → null anchor, 0 zero-load days, base unchanged",
     before.anchorDate === null && before.zeroLoadDays === 0 && before.ctl === base.ctl,
     `${before.anchorDate}/${before.zeroLoadDays}`);
+}
+
+
+// ——— T14: E8 — the gap rolls on EVIDENCE, not assumed zeros ———
+// getStateAt seeds every reflow, and it rolled the unextracted tail at zero
+// load. With a 3-week-stale corpus that decays CTL ~40% while the athlete is
+// training normally — and the reconcile gate, judging real Strava evidence,
+// fires anyway and prescribes the whole remaining season from the fiction.
+// The recursion is unchanged (rule 6, still the one loop in this function);
+// what changes is that it can be TOLD what happened on a gap day instead of
+// assuming nothing did. Absent that signal it is byte-identical (T14a).
+{
+  const base: AthleteState = {
+    ctl: 0, atl: 0, tsb: 0,
+    last4WeeksTss: [0, 0, 0, 0],
+    last4Shares: { swim: 0, bike: 0, run: 1 },
+    daysToNextRace: null, weeksSinceStart: 0, breakRatio: 1, daysSinceLastSession: 1,
+  };
+  const series: DailyPmcPoint[] = [{ date: "2026-07-04", ctl: 50.0, atl: 48.0 }];
+  const day = (n: number) =>
+    new Date(Date.parse("2026-07-04T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+
+  // NEUTRALITY — the §12 gate. No evidence argument ⇒ identical object.
+  const bare = seedStateAt(base, series, "2026-07-26");
+  const emptyEvidence = seedStateAt(base, series, "2026-07-26", { load: new Map() });
+  check("T14a", "no gap evidence ⇒ byte-identical to the zero-load roll-forward",
+    JSON.stringify({ ...bare, evidencedDays: 0 }) === JSON.stringify(emptyEvidence),
+    `${bare.ctl.toFixed(3)} vs ${emptyEvidence.ctl.toFixed(3)}`);
+  check("T14b", "…and every gap day is reported as an ASSUMED zero",
+    bare.zeroLoadDays === 21 && bare.evidencedDays === 0, `${bare.zeroLoadDays}/${bare.evidencedDays}`);
+
+  // THE KILL TEST (Mobile-1 idiom): 3-week-stale extraction, real evidence in
+  // the gap. The athlete trained ~350 TSS/wk throughout and must hold near
+  // their true CTL, not decay toward the corpus tail.
+  const load = new Map<string, number>();
+  for (let i = 1; i <= 21; i++) if (i % 7 !== 0) load.set(day(i), 58); // 6 days/wk
+  const covered = (d: string) => d >= day(1) && d <= day(21);
+  const evidenced = seedStateAt(base, series, "2026-07-26", { load, covered });
+  check("T14c", "a stale corpus + real evidence HOLDS fitness (no silent decay)",
+    evidenced.ctl > 47 && evidenced.ctl < 53, `ctl ${evidenced.ctl.toFixed(1)} vs bare ${bare.ctl.toFixed(1)}`);
+  check("T14d", "…and the bare roll would have understated it by ~40%",
+    bare.ctl < evidenced.ctl * 0.65, `${bare.ctl.toFixed(1)} vs ${evidenced.ctl.toFixed(1)}`);
+  check("T14e", "…with nothing left assumed: every gap day carried evidence",
+    evidenced.zeroLoadDays === 0 && evidenced.evidencedDays === 21,
+    `${evidenced.zeroLoadDays}/${evidenced.evidencedDays}`);
+
+  // A COVERED day with no load is a real rest day — authoritative zero, not
+  // an assumption. An UNCOVERED day is unknown: still rolled at zero (the
+  // recursion needs a number) but counted, so the caller can refuse.
+  const restCovered = seedStateAt(base, series, day(4), {
+    load: new Map([[day(1), 60], [day(2), 60]]),
+    covered: (d) => d <= day(3),
+  });
+  check("T14f", "a covered day with no activity is an authoritative rest day, not an assumption",
+    restCovered.zeroLoadDays === 0 && restCovered.evidencedDays === 3,
+    `${restCovered.zeroLoadDays}/${restCovered.evidencedDays}`);
+
+  const partly = seedStateAt(base, series, day(6), {
+    load: new Map([[day(1), 60]]),
+    covered: (d) => d <= day(2),
+  });
+  check("T14g", "days past the coverage window stay UNKNOWN and are counted for the caller",
+    partly.zeroLoadDays === 3 && partly.evidencedDays === 2,
+    `${partly.zeroLoadDays}/${partly.evidencedDays}`);
+
+  // Load without coverage is still positive evidence (a dropped FIT vouches
+  // for itself), exactly as executedByWeek treats it.
+  const fileOnly = seedStateAt(base, series, day(3), { load: new Map([[day(1), 90]]) });
+  check("T14h", "positive load counts as evidence even with no coverage window",
+    fileOnly.evidencedDays === 1 && fileOnly.zeroLoadDays === 1,
+    `${fileOnly.evidencedDays}/${fileOnly.zeroLoadDays}`);
+
+  // The refusal rail the reflow consults: assumption, not measurement.
+  const threeAssumed = seedStateAt(base, series, day(4), { load: new Map() });
+  check("T14j", "3 assumed days is inside the rail (≲7% CTL understatement)",
+    threeAssumed.zeroLoadDays === 3 && !tooSpeculativeToPrescribe(threeAssumed),
+    `${threeAssumed.zeroLoadDays}`);
+  const fourAssumed = seedStateAt(base, series, day(5), { load: new Map() });
+  check("T14k", "4 assumed days is too speculative to prescribe from",
+    fourAssumed.zeroLoadDays === 4 && tooSpeculativeToPrescribe(fourAssumed),
+    `${fourAssumed.zeroLoadDays}`);
+  // Evidence does not count against the rail: a fully-evidenced long gap is
+  // measurement, not assumption.
+  const longEvidenced = seedStateAt(base, series, day(30), { load: new Map(), covered: () => true });
+  check("T14l", "a long but fully-covered gap is never too speculative",
+    longEvidenced.zeroLoadDays === 0 && !tooSpeculativeToPrescribe(longEvidenced));
+
+  // The recursion itself is untouched: one evidenced day must equal the hand
+  // recursion, same tau, same order.
+  const one = seedStateAt(base, series, day(2), { load: new Map([[day(1), 100]]), covered: () => true });
+  check("T14i", "the PMC recursion is unchanged — one evidenced day matches by hand",
+    near(one.ctl, 50 + (100 - 50) / 42, 1e-9) && near(one.atl, 48 + (100 - 48) / 7, 1e-9),
+    `ctl ${one.ctl.toFixed(4)}`);
 }
 
 console.log(`\nPMC + projection tests (${existsSync("data") ? "real corpus" : "synthetic"})\n`);

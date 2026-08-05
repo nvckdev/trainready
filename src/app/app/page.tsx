@@ -1,3 +1,4 @@
+import { gapEvidence } from "@/lib/fitness-evidence";
 import { getPmc, getSeedProvenance, getStateAt, getStravaSnapshot, getStravaTokens, hasCorpus, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readAthleteContext } from "@/lib/athlete-context";
 import { strengthTssPerSession, supplementalForContext } from "@/lib/strength-protocols";
@@ -129,18 +130,22 @@ export default async function TodayPage() {
   }
   const stored = reconciled.stored ?? readPlan();
   const today = localToday();
+  // What the athlete actually did since the corpus was last extracted (E8) —
+  // the same merged evidence the reconcile gate and the reflow use, so the
+  // header can never show one fitness while the plan is built from another.
+  const evidence = gapEvidence(stored?.plan ?? null);
   // Header fitness must reflect TODAY — the state rolled forward across any
   // unlogged tail (matching the provenance caption below and the Plan page's
   // "CTL now"), not the frozen last-logged day. Falls back to the last row.
-  const rolled = getStateAt(today);
+  const rolled = getStateAt(today, evidence);
   const lastRow = pmc[pmc.length - 1];
   const latest = rolled
     ? { ctl: rolled.ctl, atl: rolled.atl, tsb: rolled.tsb }
     : lastRow;
-  // Where the fitness numbers are anchored: the last logged day, plus any
-  // zero-load days rolled forward across a scheduling gap (engine/seed.ts,
-  // via the src/lib gateway). Null-safe — absent with no corpus/state.
-  const provenance = getSeedProvenance(today);
+  // Where the fitness numbers are anchored: the last logged day, plus how the
+  // gap since then was filled — evidenced days vs days nobody could speak for
+  // (engine/seed.ts via the src/lib gateway). Null-safe.
+  const provenance = getSeedProvenance(today, evidence);
   const digest = weeklyDigest(pmc, getWeekly(), stored?.plan ?? null, today, rolled ?? undefined);
 
   const upcoming = stored
@@ -258,8 +263,10 @@ export default async function TodayPage() {
       </div>
       {provenance && (
         <p className="label-mono text-bone-faint mt-2">
-          {provenance.zeroLoadDays > 0 && provenance.anchorDate
-            ? `Fitness anchored to ${fmtAnchorDate(provenance.anchorDate)} · ${provenance.zeroLoadDays} zero-load days rolled forward`
+          {provenance.anchorDate && (provenance.zeroLoadDays > 0 || provenance.evidencedDays > 0)
+            ? `Fitness anchored to ${fmtAnchorDate(provenance.anchorDate)}` +
+              (provenance.evidencedDays > 0 ? ` · ${provenance.evidencedDays} days from your synced activity` : "") +
+              (provenance.zeroLoadDays > 0 ? ` · ${provenance.zeroLoadDays} days with no data, assumed rest` : "")
             : "Fitness logged through today"}
         </p>
       )}

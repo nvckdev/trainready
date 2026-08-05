@@ -6,6 +6,7 @@ import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../
 import { loadEras, loadPopulationPrior } from "../../../engine/learned.ts";
 import { loadRaceAnchors } from "../../../engine/goal.ts";
 import { getAthlete, getHistory, getStateAt, localToday } from "@/lib/athlete-data";
+import { gapEvidence } from "@/lib/fitness-evidence";
 import { reconcileNow, regenerateFromToday } from "@/lib/replan-auto";
 import { runSync } from "@/lib/sync-io";
 import { readPlan, retitleSession, setSessionStatus, writePlan } from "@/lib/plan-io";
@@ -36,7 +37,9 @@ function buildAndSave(request: PlanRequest): void {
   // Seed CTL/ATL/TSB from the daily PMC series rolled forward to startDate —
   // the same state the Today header shows — never from the last weekly
   // example alone, whose PMC numbers freeze at that week's Monday.
-  const state = getStateAt(startDate);
+  // E8: generation reads the same gap evidence the reflow does, so a fresh
+  // plan and a reconcile can never be built from different fitness.
+  const state = getStateAt(startDate, gapEvidence(readPlan()?.plan ?? null));
   if (!athlete || !state) throw new Error("no corpus: import training history first");
   const history = getHistory().map((h) => ({
     state: h.state,

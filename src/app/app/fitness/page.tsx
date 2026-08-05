@@ -1,3 +1,5 @@
+import { gapEvidence } from "@/lib/fitness-evidence";
+import { readPlan } from "@/lib/plan-io";
 import { getAthlete, getPmc, getStateAt, getWeekly, hasCorpus, localToday } from "@/lib/athlete-data";
 import { readAthleteContext } from "@/lib/athlete-context";
 import { readPainLog, readProtocolsState } from "@/lib/strength-io";
@@ -28,7 +30,8 @@ export default function FitnessPage() {
   const athlete = getAthlete();
   // Header reflects TODAY (rolled forward across any unlogged tail), matching
   // the Today page and the plan seed — not the frozen last-logged day.
-  const rolled = getStateAt(today);
+  // Same gap evidence as Today and the reflow — one ruler (E8).
+  const rolled = getStateAt(today, gapEvidence(readPlan()?.plan ?? null));
   const latest = rolled ?? pmc[pmc.length - 1];
   const last4 = weekly.slice(-4);
   const avgHours = last4.reduce((s, w) => s + w.hours, 0) / Math.max(1, last4.length);

@@ -10,6 +10,8 @@ import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type I
 import { thresholdMpsFromZones } from "../../engine/zones.ts";
 import { corpusWeeklyMeasured } from "@/lib/connectors";
 import { readSyncStore } from "@/lib/sync-io";
+import { gapEvidence } from "@/lib/fitness-evidence";
+import { tooSpeculativeToPrescribe } from "../../engine/seed.ts";
 import { nyDate } from "@/lib/imports-io";
 
 /**
@@ -188,8 +190,31 @@ function runReconcile(
   if (!decision.due) return { decision, stored, commit: null, note: null, error: null };
 
   const athlete = getAthlete();
-  const actualState = getStateAt(decision.asOf);
+  // E8: the state that seeds this reflow must see the evidence the gate just
+  // judged on. The corpus trails reality by however long it has been since
+  // the last extraction; rolling that tail at zero load understated fitness
+  // by ~40% over three stale weeks and prescribed the whole remaining season
+  // from it. Same merged daily stream, same recursion — see fitness-evidence.
+  const actualState = getStateAt(decision.asOf, gapEvidence(stored.plan));
   if (!athlete || !actualState) return { decision, stored, commit: null, note: null, error: null };
+
+  // An assumed-zero day is not a measurement. A handful is tolerable — the
+  // error is bounded and, because unknown days can only ever have ADDED
+  // load, the resulting CTL is a LOWER bound, so the risk is one-directional:
+  // prescribing too little. Past a few days that understatement is large
+  // enough to damp a season, so the reflow declines rather than acting on a
+  // state it mostly assumed. Refusing is the same answer the gate gives when
+  // it cannot see a week (no-execution-data) — applied to fitness.
+  if (tooSpeculativeToPrescribe(actualState)) {
+    const since = actualState.anchorDate ?? "the last extraction";
+    return {
+      decision,
+      stored,
+      commit: null,
+      note: null,
+      error: `${actualState.zeroLoadDays} days since ${since} have no training data from any source — refusing to re-plan from a fitness estimate that assumes you did nothing. Connect a source or refresh the extraction, and the plan will adapt.`,
+    };
+  }
 
   // The safety file gets the connector layer's absent-vs-unreadable
   // distinction (E9). ABSENT is a real state — no injuries on file, reflow
@@ -312,7 +337,9 @@ export function reconcileNow(today = localToday()): ReconcileOutcome {
 export function regenerateFromToday(request: PlanRequest): void {
   const athlete = getAthlete();
   const today = localToday();
-  const state = getStateAt(today);
+  // Same evidence as the reflow: generation and reconcile must never disagree
+  // about who the athlete is (the mobile M5 lesson, applied on the dashboard).
+  const state = getStateAt(today, gapEvidence(readPlan()?.plan ?? null));
   if (!athlete || !state) throw new Error("no corpus: import training history first");
   const req: PlanRequest = reflowSafeRequest(
     { ...request, startDate: today, eras: loadEras() ?? undefined, raceAnchors: loadRaceAnchors() },

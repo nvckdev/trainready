@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { seedStateAt } from "../../engine/seed.ts";
+import { seedStateAt, type GapEvidence, type SeededState } from "../../engine/seed.ts";
 import type { AthleteState } from "../../engine/types.ts";
 import { deriveZones, type Thresholds, type Zones } from "../../engine/zones.ts";
 
@@ -114,17 +114,23 @@ export function getPmc(): PmcRow[] {
  * so a plan started two weeks later inherited a TSB the athlete no longer
  * had (seed −10.4 vs header +2.5, verified 2026-07-13).
  */
-export function getStateAt(startDate: string): AthleteState | null {
+export function getStateAt(startDate: string, gap?: GapEvidence): SeededState | null {
   const base = getLatestState();
   if (!base) return null;
-  return seedStateAt(base, getPmc(), startDate);
+  // `gap` is the explicit E8 signal: what the athlete actually did between the
+  // last extracted corpus day and startDate (src/lib/fitness-evidence.ts).
+  // Absent ⇒ the historical zero-load roll-forward, byte-identical.
+  return seedStateAt(base, getPmc(), startDate, gap);
 }
 
 export interface SeedProvenance {
   /** Last day backed by real logged activity the seed is anchored on. */
   anchorDate: string | null;
-  /** Zero-load days rolled forward across the unlogged tail to startDate. */
+  /** Gap days rolled at an ASSUMED zero — no source spoke for them. */
   zeroLoadDays: number;
+  /** Gap days carried by real evidence (imports, done-marks, or a source
+   *  that covered the day and found a genuine rest day). */
+  evidencedDays: number;
 }
 
 /**
@@ -134,11 +140,15 @@ export interface SeedProvenance {
  * zeroLoadDays how many unlogged days decayed forward to reach startDate.
  * null with no corpus/state — the Today page renders the line only when set.
  */
-export function getSeedProvenance(startDate: string): SeedProvenance | null {
+export function getSeedProvenance(startDate: string, gap?: GapEvidence): SeedProvenance | null {
   const base = getLatestState();
   if (!base) return null;
-  const seeded = seedStateAt(base, getPmc(), startDate);
-  return { anchorDate: seeded.anchorDate, zeroLoadDays: seeded.zeroLoadDays };
+  const seeded = seedStateAt(base, getPmc(), startDate, gap);
+  return {
+    anchorDate: seeded.anchorDate,
+    zeroLoadDays: seeded.zeroLoadDays,
+    evidencedDays: seeded.evidencedDays,
+  };
 }
 
 export interface WeeklyRow {

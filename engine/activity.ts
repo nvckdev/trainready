@@ -182,12 +182,18 @@ const dayMs = 86400000;
 const dateOf = (iso: string) => iso.slice(0, 10);
 const addDays = (d: string, n: number) => new Date(Date.parse(d + "T12:00:00Z") + n * dayMs).toISOString().slice(0, 10);
 
+/** Did some source actually look at this day? The single coverage predicate —
+ *  isWeekCovered and the reflow's gap roll-forward both ask through it, so
+ *  "covered" can never come to mean two things. */
+export function isDayCovered(coverage: Coverage[], day: string): boolean {
+  return coverage.some((c) => c.from <= day && day <= c.to);
+}
+
 /** Is every day of the 7-day week starting `weekStart` inside some window? */
 export function isWeekCovered(coverage: Coverage[], weekStart: string): boolean {
   if (!coverage.length) return false;
   for (let i = 0; i < 7; i++) {
-    const day = addDays(weekStart, i);
-    if (!coverage.some((c) => c.from <= day && day <= c.to)) return false;
+    if (!isDayCovered(coverage, addDays(weekStart, i))) return false;
   }
   return true;
 }
