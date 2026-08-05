@@ -9,6 +9,7 @@ import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type I
 import { thresholdMpsFromZones } from "../../engine/zones.ts";
 import { corpusWeeklyMeasured } from "@/lib/connectors";
 import { readSyncStore } from "@/lib/sync-io";
+import { nyDate } from "@/lib/imports-io";
 
 /**
  * The reconcile runner (rule 12 gateway): all corpus I/O for the adaptive
@@ -75,7 +76,10 @@ export function executedTssByWeek(plan: Plan): Map<string, number> {
   const corpus = corpusWeeklyMeasured();
   const stream: ImportedActivity[] = dedupeActivities(sync.activities);
   const coverage: Coverage[] = [...corpus.coverage, ...sync.coverage];
-  const fromImports = rollupByWeek(weekStarts, stream, coverage, ctx, corpus.measured);
+  // Bucket by the athlete's calendar (America/New_York — the same clock the
+  // plan's dates live in), not UTC: an 8:30 pm Sunday run is Monday UTC and
+  // would migrate into the next ledger week (E7).
+  const fromImports = rollupByWeek(weekStarts, stream, coverage, ctx, corpus.measured, (iso) => nyDate(new Date(iso)));
 
   // Done-marks remain a LAST-RESORT positive signal: they can raise a week the
   // importers never saw, but they can never authorize a zero — an athlete who

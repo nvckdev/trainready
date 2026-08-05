@@ -269,7 +269,15 @@ export function executedByWeek(
    * stream and must never be summed with one: doing so double-counts every
    * week that both cover. When a week appears here it wins outright.
    */
-  weeklyMeasured?: Map<string, number>
+  weeklyMeasured?: Map<string, number>,
+  /**
+   * ISO instant → the ATHLETE's calendar day. Plan weeks are athlete-local
+   * dates; bucketing by the UTC slice (the default, kept for byte-identical
+   * neutrality) migrates an evening run into the next day — and on Sundays
+   * into the next ledger week, under-counting one week and over-counting the
+   * next. Callers with a timezone pass their own converter.
+   */
+  localDate: (isoInstant: string) => string = dateOf
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const ws of weekStarts) {
@@ -280,7 +288,7 @@ export function executedByWeek(
     }
     const end = addDays(ws, 6);
     const inWeek = activities.filter((a) => {
-      const d = dateOf(a.startTime);
+      const d = localDate(a.startTime);
       return d >= ws && d <= end;
     });
     const load = inWeek.reduce((sum, a) => sum + activityTss(a, ctx).tss, 0);

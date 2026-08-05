@@ -3,6 +3,7 @@ import {
   activityTss,
   dailyExecutedTss,
   dedupeActivities,
+  executedByWeek,
   mergeCandidates,
   sameActivity,
   DEDUP_WINDOW_S,
@@ -175,6 +176,27 @@ const act = (o: Partial<ImportedActivity> & { source: ImportedActivity["source"]
   const shuffled = [...stream].reverse();
   check("A8e", "dedup is order-independent", dedupeActivities(shuffled).length === out.length,
     `${dedupeActivities(shuffled).length} vs ${out.length}`);
+}
+
+// ——— A10. week bucketing follows the athlete's calendar, not UTC ——————————
+// An 8:30 pm Sunday run in New York is 00:30 Monday UTC. Bucketed by UTC it
+// migrates into the NEXT ledger week: the closed week under-counts, the new
+// week over-counts, and the reconcile reads a false divergence twice.
+{
+  const nyish = (iso: string) => new Date(Date.parse(iso) - 4 * 3600000).toISOString().slice(0, 10);
+  const sundayEvening = act({ source: "strava", startTime: "2026-07-13T00:30:00.000Z", tss: 90 });
+  const weekStarts = ["2026-07-06", "2026-07-13"];
+  const cov = [{ source: "strava" as const, from: "2026-07-06", to: "2026-07-19" }];
+
+  const local = executedByWeek(weekStarts, [sundayEvening], cov, {}, undefined, nyish);
+  check("A10a", "with the athlete's converter, the Sunday-evening run stays in its week",
+    local.get("2026-07-06") === 90 && local.get("2026-07-13") === 0,
+    `${local.get("2026-07-06")}/${local.get("2026-07-13")}`);
+
+  const utc = executedByWeek(weekStarts, [sundayEvening], cov, {});
+  check("A10b", "neutrality: without a converter the old UTC bucketing is byte-identical",
+    utc.get("2026-07-13") === 90 && utc.get("2026-07-06") === 0,
+    `${utc.get("2026-07-06")}/${utc.get("2026-07-13")}`);
 }
 
 // ——— A9. dailyExecutedTss: imports reach the fitness derivation ————————————

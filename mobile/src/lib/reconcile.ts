@@ -37,6 +37,12 @@ const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
  * Imported activities (with real coverage windows) are what make a zero
  * authoritative on the phone.
  */
+const deviceLocalDate = (isoInstant: string): string => {
+  const d = new Date(isoInstant);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 export function executedByWeek(
   plan: Plan,
   imported: ImportedActivity[] = [],
@@ -44,7 +50,9 @@ export function executedByWeek(
   ctx: { runThresholdMps?: number; lthrBpm?: number } = {}
 ): Map<string, number> {
   const weekStarts = plan.weeks.map((w) => w.weekStart);
-  const out = rollupByWeek(weekStarts, imported, coverage, ctx);
+  // Plan dates are device-local calendar days — bucket imports on the same
+  // clock so a Sunday-evening run stays in its ledger week (E7).
+  const out = rollupByWeek(weekStarts, imported, coverage, ctx, undefined, deviceLocalDate);
   for (const w of plan.weeks) {
     if (out.has(w.weekStart)) continue;
     const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
@@ -85,11 +93,7 @@ export function executedDailyPmc(
   }
   // Plan dates are device-local calendar days; bucket imports the same way so
   // an evening run lands on the day the athlete lived it.
-  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, (isoInstant) => {
-    const d = new Date(isoInstant);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  });
+  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, deviceLocalDate);
   const start = plan.weeks[0]?.weekStart;
   if (!start || at(start) > at(through)) return [];
   let ctl = seedCtl;
