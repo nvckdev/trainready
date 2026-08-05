@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TaperV1 } from "./learned.ts";
+import { loadEras, TaperV1 } from "./learned.ts";
 import type { AthleteState } from "./types.ts";
 
 /** Prints taper-v1's prescription for the coming week: the model is warmed
@@ -19,7 +19,7 @@ const examples = readFileSync(join(ROOT, "data/datasets/weekly-examples.jsonl"),
       }
   );
 
-const engine = new TaperV1();
+const engine = new TaperV1({ eras: loadEras() });
 const latest = examples[examples.length - 1];
 for (const ex of examples.slice(0, -1)) engine.observe(ex.features, ex.targets.weekTss, ex.weekStart);
 

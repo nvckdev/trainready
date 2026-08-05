@@ -1,7 +1,8 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
 import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
 import { evidenceComplete, reconcileGate, reflowSafeRequest, type ReconcileDecision, type WeekEvidence } from "../../engine/reconcile.ts";
-import { loadPopulationPrior } from "../../engine/learned.ts";
+import { loadEras, loadPopulationPrior } from "../../engine/learned.ts";
+import { loadRaceAnchors } from "../../engine/goal.ts";
 import { getAthlete, getHistory, getStateAt, getWeekly, intervalsConfigured, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readPlan, writePlan } from "@/lib/plan-io";
 import { loadTissueConstraintsTagged } from "@/lib/tissue-constraints";
@@ -218,6 +219,9 @@ function runReconcile(
       ...stored.request,
       tissueConstraints: tissue.constraints,
       priorWeights: loadPopulationPrior() ?? undefined,
+      // E6: refreshed per reflow like tissue — never read inside the engine.
+      eras: loadEras() ?? undefined,
+      raceAnchors: loadRaceAnchors(),
     },
     decision.asOf
   );
@@ -310,7 +314,10 @@ export function regenerateFromToday(request: PlanRequest): void {
   const today = localToday();
   const state = getStateAt(today);
   if (!athlete || !state) throw new Error("no corpus: import training history first");
-  const req: PlanRequest = reflowSafeRequest({ ...request, startDate: today }, today);
+  const req: PlanRequest = reflowSafeRequest(
+    { ...request, startDate: today, eras: loadEras() ?? undefined, raceAnchors: loadRaceAnchors() },
+    today
+  );
   const plan = generatePlan(req, state, [], athlete.zones);
   writePlan({ request: req, plan });
 }

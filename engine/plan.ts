@@ -1,3 +1,4 @@
+import type { RaceAnchor } from "./goal.ts";
 import {
   CVOL,
   cvolFor,
@@ -5,7 +6,6 @@ import {
   EVIDENCE_FLOOR,
   finishEstimate,
   goalCtlTarget,
-  loadRaceAnchors,
   longRunKm,
   LONG_FRACTION_MAX,
   qualityKmhFor,
@@ -16,7 +16,7 @@ import {
   weeklyKmToTss,
   type GoalCtl,
 } from "./goal.ts";
-import { TaperV1 } from "./learned.ts";
+import { TaperV1, type Era } from "./learned.ts";
 import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
 import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
 import { crossKindFor } from "./crosstrain.ts";
@@ -47,6 +47,13 @@ export type RaceType =
 export interface PlanRequest {
   raceName: string;
   raceDate: string; // YYYY-MM-DD
+  /** Era definitions for capability anchoring (E6) — thread loadEras() from a
+   *  node-side caller; absent ⇒ no era weighting (mobile's effective state,
+   *  since it has no context file). */
+  eras?: Era[] | null;
+  /** The athlete's demonstrated races (E6) — thread loadRaceAnchors() from a
+   *  node-side caller; absent ⇒ the generic anchorless paths. */
+  raceAnchors?: RaceAnchor[];
   raceType: RaceType;
   daysPerWeek: number; // 4–7
   longDay: "saturday" | "sunday";
@@ -593,6 +600,7 @@ export function generatePlan(
     anchorLegacy: req.anchorLegacy,
     anchorV2: req.anchorV2,
     priorWeights: req.priorWeights,
+    eras: req.eras,
   });
   for (const h of history) engine.observe(h.state, h.actualTss, h.weekStart);
 
@@ -650,7 +658,8 @@ export function generatePlan(
   // that predates the weekly window — how the calibration athlete's 2023 base is
   // seen). Empty history ⇒ undefined ⇒ the default +20% rail stands (synthetic
   // seeds & the backtest). Never above an active tissue rampCeiling.
-  const richnessAnchors = loadRaceAnchors();
+  // E6: anchors arrive on the request — generatePlan does no file I/O itself.
+  const richnessAnchors = req.raceAnchors ?? [];
   const peakHistHint = richnessAnchors.length ? Math.max(0, ...richnessAnchors.map((a) => a.ctlAtRace)) : 0;
   const richness = deriveBaseRichness(history, initialState.ctl, peakHistHint);
   const planRampCap = richness
@@ -1244,7 +1253,7 @@ export function generatePlan(
   })();
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
-      ? buildGoalGap(req.goalTime, goal, projectedRaceRunCtl ?? projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich, cvol)
+      ? buildGoalGap(req.goalTime, goal, projectedRaceRunCtl ?? projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich, cvol, req.raceAnchors ?? [])
       : undefined;
 
   return {
@@ -1290,7 +1299,9 @@ function buildGoalGap(
   rampPct = 20,
   baseRich = false,
   /** Athlete km↔TSS bridge for the anchorless finish curve (E4). */
-  cvol: number = CVOL
+  cvol: number = CVOL,
+  /** Demonstrated races for the personal finish curve (E6) — explicit. */
+  raceAnchors: RaceAnchor[] = []
 ): NonNullable<Plan["meta"]["goalGap"]> {
   const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
   const reachablePeakCtl = r1(reachableRaceDayCtl);
@@ -1299,7 +1310,7 @@ function buildGoalGap(
   // (personal ceiling-saturating curve + hard invariant clamp, engine/goal.ts)
   // and clamped no faster than the goal. Anchors come from the gitignored
   // corpus; absent ⇒ generic fallback.
-  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, loadRaceAnchors(), Date.now(), cvol));
+  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, raceAnchors, Date.now(), cvol));
   const realisticFinish = fmtClock(finishSec);
   // The tissue long-run limit is named ONLY when a constraint is active — a
   // healthy runner's rails are just the ramp + form floor (feature 4). The ramp

@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { generatePlan, type Plan, type PlanRequest, type RaceType } from "../../../engine/plan.ts";
-import { loadPopulationPrior } from "../../../engine/learned.ts";
+import { loadEras, loadPopulationPrior } from "../../../engine/learned.ts";
+import { loadRaceAnchors } from "../../../engine/goal.ts";
 import { getAthlete, getHistory, getStateAt, localToday } from "@/lib/athlete-data";
 import { reconcileNow, regenerateFromToday } from "@/lib/replan-auto";
 import { runSync } from "@/lib/sync-io";
@@ -61,6 +62,9 @@ function buildAndSave(request: PlanRequest): void {
     // 24 observed weeks. Explicitly threaded — absent artifact ⇒ undefined ⇒
     // byte-identical plans (and the founder corpus is past the gate anyway).
     priorWeights: loadPopulationPrior() ?? undefined,
+    // E6: the files the engine used to read implicitly, threaded explicitly.
+    eras: loadEras() ?? undefined,
+    raceAnchors: loadRaceAnchors(),
   };
   const plan = generatePlan(req, state, history, athlete.zones);
   carryStatusForward(plan);

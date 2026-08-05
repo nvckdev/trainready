@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { referenceEngine } from "./reference.ts";
-import { TaperV1 } from "./learned.ts";
+import { loadEras, TaperV1 } from "./learned.ts";
 import type { AthleteState, Engine } from "./types.ts";
 
 /**
@@ -23,7 +23,11 @@ const examples: Example[] = readFileSync(join(ROOT, "data/datasets/weekly-exampl
   .filter(Boolean)
   .map((l) => JSON.parse(l));
 
-const v1 = new TaperV1();
+// E6: the eras the constructor used to load implicitly are now passed
+// explicitly FROM THE SAME FILE — the pins' dependence on
+// data/app/athlete-context.json is unchanged in value but now visible at the
+// construction site instead of hidden inside the class.
+const v1 = new TaperV1({ eras: loadEras() });
 const engines: Engine[] = [referenceEngine, v1];
 
 interface Cell {

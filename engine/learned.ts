@@ -32,7 +32,7 @@ const MIN_TRAIN = 24; // weeks of history before the learned layer activates
 const PEAK_ERA_WEIGHT = 2; // primary-era weeks count double for capability
 const RECENCY_HALF_LIFE_WEEKS = 156; // gentle decay; eras carry the signal
 
-interface Era {
+export interface Era {
   span: string; // as written in athlete-context.json, for rationale text
   startMonth: string; // "YYYY-MM"
   endMonth: string | null; // null = present
@@ -45,7 +45,7 @@ interface Era {
  * the file is absent, unreadable, or any span fails to parse. Never throws:
  * the corpus-less CI path must stay deterministic.
  */
-function loadEras(): Era[] | null {
+export function loadEras(): Era[] | null {
   try {
     const path = join(process.cwd(), "data", "app", "athlete-context.json");
     if (!existsSync(path)) return null;
@@ -291,6 +291,8 @@ export interface TaperV1Options {
    *  byte-identical to the single-athlete engine (MIN_TRAIN=24 gate and all);
    *  the backtest never passes it. */
   priorWeights?: number[];
+  /** Era definitions (loadEras()) — explicit, never ambient (E6). */
+  eras?: Era[] | null;
 }
 
 /** Phase-dependent bounds (fractions of trailing-month mean) the learned
@@ -314,7 +316,13 @@ export class TaperV1 implements Engine {
   name = "taper-v1";
   private history: Example[] = [];
   private weights: number[] | null = null;
-  private eras: Era[] | null = loadEras();
+  // Explicitly threaded (E6): era definitions no longer load implicitly in
+  // the constructor. The implicit load made engine behavior — and the pinned
+  // backtest baselines — depend on an untracked gitignored file that the
+  // construction site never mentioned. Callers that want eras pass them
+  // (backtest.ts and the dashboard thread loadEras(); mobile has no file and
+  // passes nothing, exactly its previous effective state).
+  private eras: Era[] | null = null;
   private anchorV2: boolean;
   private prior: number[] | null;
 
@@ -334,6 +342,8 @@ export class TaperV1 implements Engine {
         ? [...opts.priorWeights]
         : null;
     if (this.prior) this.weights = [...this.prior];
+    // E6: eras arrive explicitly or not at all — never from ambient file I/O.
+    this.eras = opts.eras ?? null;
   }
 
   /** Walk-forward learning: record what actually happened, refit. With a

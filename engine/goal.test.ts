@@ -14,7 +14,7 @@ import {
   raceDistanceKm,
   vdot,
 } from "./goal.ts";
-import { TaperV1 } from "./learned.ts";
+import { loadEras, TaperV1 } from "./learned.ts";
 import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
 import { declareTissue } from "./tissue.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
@@ -182,7 +182,11 @@ const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
   } else {
     const rows = readFileSync(dataset, "utf8").split("\n").filter(Boolean)
       .map((l) => JSON.parse(l) as { weekStart: string; features: AthleteState; targets: { weekTss: number } });
-    const v1 = new TaperV1();
+    // E6: construct exactly as engine/backtest.ts does — eras threaded
+    // explicitly from the same file the constructor used to load implicitly.
+    // A bare TaperV1() no longer carries eras, which is the POINT of E6; this
+    // harness mirrors the backtest so the byte-hash keeps pinning the replay.
+    const v1 = new TaperV1({ eras: loadEras() });
     const seq: number[] = [];
     let leak = false;
     for (const r of rows) {
