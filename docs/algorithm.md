@@ -332,7 +332,16 @@ A weaker model working on this codebase should treat these as hard
 constraints. Violating any of them is a rejected change, full stop.
 
 1. **The PMC recursion** (τ=42/7, TSB convention) — never tuned, never
-   abstracted. All three copies must stay literally identical.
+   abstracted. It is written out in **six** places, and all six must stay
+   literally identical: `engine/plan.ts` (the plan's week simulation),
+   `engine/seed.ts` (roll-forward to the seed date), `engine/replan.ts`
+   (`resimulateProjected`), `pipeline/lib/derive.ts` (the corpus daily
+   series), `src/lib/strava-data.ts` (the no-corpus Strava estimate) and
+   `mobile/src/lib/reconcile.ts` (`executedDailyPmc`). This doc claimed
+   "three" until 2026-08-05, which was the count when the rule was written
+   and would have let a reader "fix" the other three without realising they
+   were load-bearing. Adding a seventh is a rejected change: thread one of
+   the existing functions instead.
 2. **The backtest path must not see plan-only signals.**
    `engine/backtest.ts` replays corpus rows through `prescribeWeek` directly.
    Any new behavior gated on a field that backtest rows don't carry is safe;

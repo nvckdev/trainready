@@ -13,7 +13,6 @@ import {
   peakLongKm,
   peakWeeklyKm,
   raceDistanceKm,
-  weeklyKmToTss,
   type GoalCtl,
 } from "./goal.ts";
 import { TaperV1, type Era } from "./learned.ts";

@@ -6,7 +6,7 @@ import { deriveZones } from "../../engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "../../engine/seed.ts";
 import type { AthleteState } from "../../engine/types.ts";
 import { carryStatusForward, preserveCompletedWeeks, weekIndexContaining } from "../../engine/plan-ops.ts";
-import { buildLedger, type WeekActual } from "../../engine/replan.ts";
+import { buildLedger } from "../../engine/replan.ts";
 
 /**
  * End-to-end reconcile-runner tests (app layer — runs under app:tests, not

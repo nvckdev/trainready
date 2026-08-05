@@ -50,11 +50,6 @@ export async function readSync(): Promise<MobileSyncStore> {
   }
 }
 
-/** Synchronous view for render paths; undefined until the first read. */
-export function peekSync(): MobileSyncStore | null {
-  return snapshot;
-}
-
 export async function runSync(planStart?: string): Promise<MobileSyncStore> {
   const prev = await readSync();
   const todayIso = new Date().toISOString();

@@ -1,4 +1,4 @@
-import type { Block, Plan, PlannedSessionOut, PlanWeek, WorkoutStructure } from "../../engine/plan.ts";
+import type { Plan, PlannedSessionOut, PlanWeek, WorkoutStructure } from "../../engine/plan.ts";
 import { weekDistribution, targetDistribution, Z1_FLOOR } from "../../engine/intensity.ts";
 import { sessionRunKm } from "../../engine/volume.ts";
 
@@ -175,44 +175,9 @@ export interface EasedSession {
 /* ---------------- Structured (block-level) adjustments -------------------
  * These mutate a WorkoutStructure directly — never the human-readable string —
  * so applying one flows straight into the visual renderer (a rep group visibly
- * gains/loses a rep, a converted session collapses to one easy block). Pure and
- * immutable: each returns a new structure, the input is untouched. Presentation
- * layer only; the engine's own composition (engine/plan.ts) is never altered. */
-
-/** Index of the MAIN interval rep group — the working block the feeling-based
- *  tweaks target. Prefers a `main`-kind block that actually repeats (reps > 1);
- *  falls back to the first `main` block, else null (nothing to adjust). */
-export function mainRepGroupIndex(w: WorkoutStructure): number | null {
-  const blocks = w.blocks ?? [];
-  const repGroup = blocks.findIndex((b) => b.kind === "main" && (b.reps ?? 1) > 1);
-  if (repGroup >= 0) return repGroup;
-  const firstMain = blocks.findIndex((b) => b.kind === "main");
-  return firstMain >= 0 ? firstMain : null;
-}
-
-function mapBlockAt(w: WorkoutStructure, i: number, fn: (b: Block) => Block): WorkoutStructure {
-  return { blocks: w.blocks.map((b, j) => (j === i ? fn(b) : b)) };
-}
-
-/** "Feeling strong" → add one rep to the main set. No-op when there is no
- *  rep group to grow. */
-export function addRepToMain(w: WorkoutStructure): WorkoutStructure {
-  const i = mainRepGroupIndex(w);
-  if (i === null) return w;
-  return mapBlockAt(w, i, (b) => ({ ...b, reps: (b.reps ?? 1) + 1 }));
-}
-
-/** "A bit flat" → trim the MAIN set by a third, floored at one rep. A 3-rep
- *  group drops to 2, a 6-rep to 4. The warmup, cooldown, and strides are
- *  untouched — only the main working set shrinks. */
-export function trimMainByThird(w: WorkoutStructure): WorkoutStructure {
-  const i = mainRepGroupIndex(w);
-  if (i === null) return w;
-  return mapBlockAt(w, i, (b) => {
-    const reps = b.reps ?? 1;
-    return { ...b, reps: Math.max(1, Math.round(reps * (2 / 3))) };
-  });
-}
+ * A converted session collapses to one easy block. Pure and immutable: the
+ * input is untouched. Presentation layer only; the engine's own composition
+ * (engine/plan.ts) is never altered. */
 
 /** "Rough day" / pain guard → collapse the whole session to a single easy
  *  continuous block of `minutes`. Distance-less by design (a converted run/bike

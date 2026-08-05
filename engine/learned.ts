@@ -202,7 +202,6 @@ const ANCHOR_V2_BASE_FLOOR_RUNWAY_DAYS = 98; // 14 weeks
 // recovery week before load ever gets dangerous. The floor is itself
 // min()-capped by the SAME rails as the base floor (trailing-month mean and
 // the smoothed ramp-cap reference), so it can never breach them.
-const ANCHOR_V2_GOAL_RAMP = ANCHOR_V2_RAMP_CAP; // +20% ramp ceiling (the rail)
 
 /** Newest non-zero executed/prescribed week — the classic ramp base. */
 function prevNonZeroWeek(state: AthleteState): number | undefined {
@@ -297,18 +296,25 @@ export interface TaperV1Options {
 
 /** Phase-dependent bounds (fractions of trailing-month mean) the learned
  *  output may not leave. The scaffold, not the pilot. */
-function bounds(state: AthleteState, phase: WeekPrescription["phase"]): [number, number] {
+/**
+ * Multiplier band around the reference prescription, by phase.
+ *
+ * Only three phases can reach here. `prescribeWeek` returns the reference
+ * untouched for taper and race (the protocol lock, above), so those arms
+ * existed but could never execute; and the default arm's old
+ * `state.tsb < -25` branch was equally unreachable, because phaseFor sends
+ * anything below the −25 floor to `recovery` before base/build are ever
+ * considered. Both were removed in the 2026-08-05 dead-code pass — behaviour
+ * is byte-identical, the backtest pins confirm it.
+ */
+function bounds(phase: WeekPrescription["phase"]): [number, number] {
   switch (phase) {
-    case "race":
-      return [0.25, 0.6];
-    case "taper":
-      return [0.5, 0.95];
     case "offseason":
       return [0.3, 1.2];
     case "recovery":
       return [0.5, 0.95];
-    default:
-      return state.tsb < -25 ? [0.5, 0.9] : [0.55, 1.2];
+    default: // base | build — taper/race never reach this function
+      return [0.55, 1.2];
   }
 }
 
@@ -330,7 +336,7 @@ export class TaperV1 implements Engine {
     // Anchor-v2 + smoothing is the standard path (default flipped 2026-07-13,
     // human sign-off). The ONLY way back to the legacy trailing-mean ceiling
     // is the explicit escape hatch: opts.anchorLegacy or env ANCHOR_LEGACY=1.
-    // opts.anchorV2 / env TAPER_ANCHOR_V2 are still accepted but are now no-ops
+    // opts.anchorV2 is still accepted but is now a no-op
     // (anchor-v2 is already on) — kept so existing callers don't break.
     const legacy = opts.anchorLegacy ?? process.env.ANCHOR_LEGACY === "1";
     this.anchorV2 = !legacy;
@@ -401,7 +407,7 @@ export class TaperV1 implements Engine {
     const trailingMean =
       state.last4WeeksTss.reduce((s, v) => s + v, 0) /
       Math.max(1, state.last4WeeksTss.length);
-    const [lo, hi] = bounds(state, ref.phase);
+    const [lo, hi] = bounds(ref.phase);
     // Flag OFF (default): the legacy trailing-mean ceiling, byte-identical.
     // Flag ON, base/build/offseason only: the anchor-v2 ceiling replaces
     // trailingMean × hi (the +20% ramp cap is baked into the anchor itself,

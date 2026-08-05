@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import type { ActivitySport, Coverage, ImportedActivity } from "@engine/activity.ts";
-import { dormantConnector, emptyResult, type Connector, type FetchResult } from "@engine/connector.ts";
+import { emptyResult, type Connector, type FetchResult } from "@engine/connector.ts";
 
 /**
  * Apple Health — wired, dormant.
@@ -150,6 +150,3 @@ export const healthKitConnector: Connector = {
     }
   },
 };
-
-/** The dormant twin, for surfaces that want to show the row without probing. */
-export const healthKitDormant: Connector = dormantConnector("healthkit", "Apple Health", healthKitDormantReason());

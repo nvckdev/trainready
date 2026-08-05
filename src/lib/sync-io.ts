@@ -1,7 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Coverage, ImportedActivity } from "../../engine/activity.ts";
-import { dedupeActivities } from "../../engine/activity.ts";
 import { mergeSyncEvidence, sinceForSync, syncAll, type SyncEvidence, type SyncSourceStatus } from "../../engine/connector.ts";
 import { dashboardConnectors } from "@/lib/connectors";
 import { readPlan } from "@/lib/plan-io";
@@ -17,8 +15,6 @@ import { localToday } from "@/lib/athlete-data";
  */
 
 const PATH = join(process.cwd(), "data", "app", "sync.json");
-/** How far back a sync reaches. Comfortably wider than any plan's ledger. */
-const LOOKBACK_DAYS = 120;
 /** On-app-open syncs are debounced to this; the manual button ignores it. */
 export const SYNC_DEBOUNCE_MS = 30 * 60 * 1000;
 

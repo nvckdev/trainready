@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import {
-  activityTss,
   dailyExecutedTss,
   dedupeActivities,
   executedByWeek,

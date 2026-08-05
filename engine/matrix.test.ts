@@ -55,11 +55,7 @@ const KNOWN_DEFECTS: Record<string, string> = {
 /** Occurrence tally per known class — a class that never fires means the
  *  defect was fixed and its ledger entry must go. */
 const knownHits: Record<string, { cells: number; worst: string }> = {};
-function recordKnown(cls: string, worst: string) {
-  const h = (knownHits[cls] ??= { cells: 0, worst: "" });
-  h.cells++;
-  h.worst = worst;
-}
+
 
 function check(id: string, desc: string, ok: boolean, detail = "") {
   const known = Object.keys(KNOWN_DEFECTS).find((k) => id.startsWith(k));

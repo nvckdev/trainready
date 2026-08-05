@@ -18,7 +18,7 @@
     "verify": "bash scripts/verify.sh",
     "train:prior": "tsx scripts/train-population-prior.ts",
     "mobile:tests": "tsx mobile/src/lib/pair.test.ts",
-    "lint:ci": "eslint --max-warnings 21"
+    "lint:ci": "eslint --max-warnings 11"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

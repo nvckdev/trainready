@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { generatePlan, type Plan, type PlanRequest } from "./plan.ts";
+import { generatePlan, type PlanRequest } from "./plan.ts";
 import { buildLedger, knownTrailingTss, recomputeRemaining, type WeekActual } from "./replan.ts";
 import { evidenceComplete } from "./reconcile.ts";
 import { deriveZones } from "./zones.ts";
