@@ -1,6 +1,13 @@
 import type { Plan, PlanRequest } from "@engine/plan.ts";
 import type { AthleteState } from "@engine/types.ts";
 import { buildLedger, knownTrailingTss, recomputeRemaining } from "@engine/replan.ts";
+import {
+  carryStatusForward,
+  describeChange,
+  planShape,
+  preserveCompletedWeeks,
+  withDoneMarkFallback,
+} from "@engine/plan-ops.ts";
 import { evidenceComplete, reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
 import { dailyExecutedTss, dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
 import { thresholdMpsFromZones } from "@engine/zones.ts";
@@ -64,12 +71,9 @@ export function executedByWeek(
   // Bucket imports on the athlete's clock — the same one localToday and the
   // plan dates use (E7 + M3, unified after review).
   const out = rollupByWeek(weekStarts, imported, coverage, ctx, undefined, athleteLocalDate(tz));
-  for (const w of plan.weeks) {
-    if (out.has(w.weekStart)) continue;
-    const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
-    if (done > 0) out.set(w.weekStart, done);
-  }
-  return out;
+  // Done-marks fill only what the importers never saw, positive-only — the
+  // shared engine precedence, so it cannot drift from the dashboard's.
+  return withDoneMarkFallback(plan.weeks, out);
 }
 
 /**
@@ -130,21 +134,6 @@ export function executedDailyPmc(
   }
   return series;
 }
-
-/** Copy done/skipped marks onto the reflowed plan, keyed (date, discipline). */
-function carryStatusForward(prev: Plan, next: Plan): void {
-  const marks = new Map<string, "done" | "skipped">();
-  for (const w of prev.weeks) {
-    for (const s of w.sessions) if (s.status) marks.set(`${s.date}|${s.discipline}`, s.status);
-  }
-  for (const w of next.weeks) {
-    for (const s of w.sessions) {
-      const m = marks.get(`${s.date}|${s.discipline}`);
-      if (m) s.status = m;
-    }
-  }
-}
-
 
 /**
  * The athlete's CURRENT fitness from everything this device knows: the seed,
@@ -267,29 +256,20 @@ export async function reconcileIfDue(
   }
 
   const plan = result.plan;
-  // Re-attach the completed weeks. On mobile this is not a nicety: the plan is
-  // the ONLY training log the phone has, and executedDailyPmc anchors its
-  // recursion on plan.weeks[0] — truncating would both destroy the athlete's
-  // history and re-seed fitness from the pairing-era state every single week.
-  const firstNew = plan.weeks[0]?.weekStart;
-  if (firstNew) {
-    const past = stored.plan.weeks.filter((w) => w.weekStart < firstNew);
-    if (past.length) plan.weeks = [...past, ...plan.weeks];
-  }
+  // Re-attach the completed weeks (shared engine op). On mobile this is not a
+  // nicety: the plan is the ONLY training log the phone has, and
+  // executedDailyPmc anchors its recursion on plan.weeks[0].
+  preserveCompletedWeeks(stored.plan, plan);
   plan.meta.lastRecomputed = result.lastRecomputed;
   // Never rewrite the plan silently: if no engine rule fired, say what was
   // observed and what it caused.
   if (result.note) plan.meta.replanNote = result.note;
-  else {
-    const pct = Math.round(Math.abs(decision.deltaPct) * 100);
-    plan.meta.replanNote = `last week came in ${pct}% ${decision.deltaPct < 0 ? "under" : "over"} plan (${decision.executedTss} vs ${decision.plannedTss} TSS) → the remaining weeks were recalculated from your current fitness`;
-  }
+  else plan.meta.replanNote = describeChange(decision);
   if (result.recalibration) plan.meta.recalibration = result.recalibration;
   else delete plan.meta.recalibration;
   carryStatusForward(stored.plan, plan);
 
-  const shape = (p: Plan) => JSON.stringify({ weeks: p.weeks, note: p.meta.replanNote ?? null });
-  if (shape(plan) === shape(stored.plan)) return { changed: false, reason: "no-change", note: null };
+  if (planShape(plan) === planShape(stored.plan)) return { changed: false, reason: "no-change", note: null };
 
   await setPlan({ request, plan });
   return { changed: true, reason: "reconciled", note: result.note };

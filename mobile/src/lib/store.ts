@@ -280,22 +280,10 @@ export function useToday(): string {
   return today;
 }
 
-/** ISO date + n days, DST-safe via noon-UTC anchoring. */
-export function addDaysIso(date: string, days: number): string {
-  const d = new Date(date + "T12:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * The week of `weeks` containing `today`, bounded by the next week's start —
- * and, for the last week, by its own end. A finished plan has no current
- * week; it does not pin to the race week forever.
- */
-export function currentWeekIndex(weeks: Array<{ weekStart: string }>, today: string): number {
-  for (let i = 0; i < weeks.length; i++) {
-    const end = weeks[i + 1]?.weekStart ?? addDaysIso(weeks[i].weekStart, 7);
-    if (today >= weeks[i].weekStart && today < end) return i;
-  }
-  return -1;
-}
+// Date + week-index helpers are the ENGINE's (plan-ops), re-exported so the
+// screens' imports stay unchanged. They used to be local copies, and the
+// week-index one silently disagreed with the dashboard's: that version treated
+// the final week as running to "9999-12-31" and fell back to week 0, so a date
+// before the plan read as "week 1" and a date after the race read as the race
+// week forever.
+export { addDaysIso, weekIndexContaining as currentWeekIndex } from "@engine/plan-ops.ts";

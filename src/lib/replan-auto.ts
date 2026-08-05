@@ -1,5 +1,12 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
 import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
+import {
+  carryStatusForward,
+  describeChange,
+  planShape,
+  preserveCompletedWeeks,
+  withDoneMarkFallback,
+} from "../../engine/plan-ops.ts";
 import { evidenceComplete, reconcileGate, reflowSafeRequest, type ReconcileDecision, type WeekEvidence } from "../../engine/reconcile.ts";
 import { loadEras, loadPopulationPrior } from "../../engine/learned.ts";
 import { loadRaceAnchors } from "../../engine/goal.ts";
@@ -27,15 +34,6 @@ import { nyDate } from "@/lib/imports-io";
 export interface StoredPlanShape {
   request: PlanRequest;
   plan: Plan;
-}
-
-/** Index of the plan week containing `today` (else the next upcoming week). */
-export function currentWeekIndex(weeks: Plan["weeks"], today: string): number {
-  for (let i = 0; i < weeks.length; i++) {
-    const end = weeks[i + 1]?.weekStart ?? "9999-12-31";
-    if (today >= weeks[i].weekStart && today < end) return i;
-  }
-  return weeks.length ? 0 : -1;
 }
 
 /**
@@ -85,55 +83,9 @@ export function executedTssByWeek(plan: Plan): Map<string, number> {
   const fromImports = rollupByWeek(weekStarts, stream, coverage, ctx, corpus.measured, (iso) => nyDate(new Date(iso)));
 
   // Done-marks remain a LAST-RESORT positive signal: they can raise a week the
-  // importers never saw, but they can never authorize a zero — an athlete who
-  // forgets to tap has not proven they rested.
-  const out = new Map(fromImports);
-  for (const w of plan.weeks) {
-    if (out.has(w.weekStart)) continue;
-    const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
-    if (done > 0) out.set(w.weekStart, Math.round(done));
-  }
-  return out;
-}
-
-/** Copy done/skipped marks from the old plan onto matching sessions in the new
- *  one. Match on (date, discipline) — titles change when durations shift. */
-export function carryStatusForward(prev: Plan, next: Plan): void {
-  const marks = new Map<string, string>();
-  for (const w of prev.weeks) {
-    for (const s of w.sessions) {
-      if (s.status) marks.set(`${s.date}|${s.discipline}`, s.status);
-    }
-  }
-  for (const w of next.weeks) {
-    for (const s of w.sessions) {
-      const m = marks.get(`${s.date}|${s.discipline}`);
-      if (m === "done" || m === "skipped") s.status = m;
-    }
-  }
-}
-
-/**
- * The reflow starts at `asOf`, so generatePlan returns ONLY the remaining
- * weeks. Re-attaching the completed ones is what keeps this safe to run every
- * week: the athlete's training log survives, buildLedger keeps seeing the full
- * history (so the engine's multi-week rules — 3-overshoot re-baseline,
- * 2-undershoot recalibration — stay reachable instead of collapsing to one
- * row), and mobile's fitness derivation keeps its original anchor.
- */
-export function preserveCompletedWeeks(previous: Plan, reflowed: Plan): void {
-  const firstNew = reflowed.weeks[0]?.weekStart;
-  if (!firstNew) return;
-  const past = previous.weeks.filter((w) => w.weekStart < firstNew);
-  if (past.length) reflowed.weeks = [...past, ...reflowed.weeks];
-}
-
-/** Honest fallback copy when the reflow changed the plan but no engine rule
- *  fired — states the observation and the consequence, nothing stronger. */
-function describeChange(d: ReconcileDecision): string {
-  const pct = Math.round(Math.abs(d.deltaPct) * 100);
-  const dir = d.deltaPct < 0 ? "under" : "over";
-  return `last week came in ${pct}% ${dir} plan (${d.executedTss} vs ${d.plannedTss} TSS) → the remaining weeks were recalculated from your current fitness`;
+  // importers never saw, but they can never authorize a zero (engine plan-ops,
+  // shared with mobile so the precedence cannot drift between surfaces).
+  return withDoneMarkFallback(plan.weeks, fromImports);
 }
 
 export interface ReconcileOutcome {
@@ -281,8 +233,7 @@ function runReconcile(
   carryStatusForward(stored.plan, plan);
 
   // True no-op check: if the reflow reproduced the stored plan, don't write.
-  const shape = (p: Plan) => JSON.stringify({ weeks: p.weeks, note: p.meta.replanNote ?? null });
-  if (shape(plan) === shape(stored.plan)) {
+  if (planShape(plan) === planShape(stored.plan)) {
     return { decision, stored, commit: null, note: null, error: null };
   }
 

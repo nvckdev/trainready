@@ -5,7 +5,7 @@ import { reconcileGate, reflowSafeRequest } from "../../engine/reconcile.ts";
 import { deriveZones } from "../../engine/zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "../../engine/seed.ts";
 import type { AthleteState } from "../../engine/types.ts";
-import { carryStatusForward, currentWeekIndex, preserveCompletedWeeks } from "./replan-auto";
+import { carryStatusForward, preserveCompletedWeeks, weekIndexContaining } from "../../engine/plan-ops.ts";
 import { buildLedger, type WeekActual } from "../../engine/replan.ts";
 
 /**
@@ -80,8 +80,8 @@ if (!fx) {
   // ——— RR1. runner plumbing ————————————————————————————————————————————————
   {
     check("RR1a", "currentWeekIndex finds the week containing a mid-week date",
-      plan.weeks[currentWeekIndex(plan.weeks, "2026-07-29")].weekStart === "2026-07-27",
-      plan.weeks[currentWeekIndex(plan.weeks, "2026-07-29")].weekStart);
+      plan.weeks[weekIndexContaining(plan.weeks, "2026-07-29")].weekStart === "2026-07-27",
+      plan.weeks[weekIndexContaining(plan.weeks, "2026-07-29")].weekStart);
     const executed = new Map(plan.weeks.map((w) => [w.weekStart, w.targetTss]));
     const ledger = buildLedger(plan.weeks, asOf, executed);
     check("RR1b", "ledger covers exactly the completed weeks", ledger.length === 3, `${ledger.length}`);
