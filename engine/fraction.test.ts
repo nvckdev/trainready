@@ -35,11 +35,24 @@ const lowSeed: AthleteState = {
   last4Shares: { swim: 0, bike: 0, run: 1 },
   daysToNextRace: null, weeksSinceStart: 24, breakRatio: 1, daysSinceLastSession: 1,
 };
-// Established athlete (the polarized fixture): ~60 km weeks — the rail must not bind.
-const highSeed: AthleteState = {
+// Boundary athlete: ~58 km peak-long week, where a 21 km long run IS 36% —
+// the rail and the ≥21 km evidence floor genuinely conflict here, and the
+// plan must pick the rail and SAY so. (This fixture used to stand in for
+// "established, untouched"; it only passed while the rail was computed
+// against pre-redistribution km and quietly allowed ~36%.)
+const boundarySeed: AthleteState = {
   ctl: 30, atl: 28, tsb: 2,
   last4WeeksTss: [190, 200, 205, 210],
   trailingWeeksTss: [170, 180, 185, 190, 190, 200, 205, 210],
+  last4Shares: { swim: 0, bike: 0, run: 1 },
+  daysToNextRace: null, weeksSinceStart: 24, breakRatio: 1, daysSinceLastSession: 1,
+};
+// Genuinely established athlete: ~85 km peak weeks, where 35% is ~30 km —
+// comfortably clear of the 21 km floor, so the rail must not bind at all.
+const highSeed: AthleteState = {
+  ctl: 42, atl: 40, tsb: 2,
+  last4WeeksTss: [265, 270, 280, 290],
+  trailingWeeksTss: [240, 250, 255, 260, 265, 270, 280, 290],
   last4Shares: { swim: 0, bike: 0, run: 1 },
   daysToNextRace: null, weeksSinceStart: 24, breakRatio: 1, daysSinceLastSession: 1,
 };
@@ -86,6 +99,35 @@ const highSeed: AthleteState = {
   chk("F3a", "high-volume plan still meets the 21 km long-run floor",
     vt?.meetsLongFloor === true, `${vt?.peakLongKmActual} km of ${vt?.peakWeeklyKmActual}/wk`);
   chk("F3b", "…and is not flagged fraction-capped", vt?.longCappedByFraction !== true);
+}
+
+// ——— F4. the rail is enforced against the REAL ruler, per week ————————————
+// The rail's final word is measured with sessionRunKm/weekRunKm — the same
+// functions the tests, the meta and the UI use — after the sessions exist and
+// the intensity shaping has moved load around. A pre-construction model of
+// that fraction is a second ruler: it cannot see the shaping, so it either
+// over-tightens or (as the matrix caught) lets the realized fraction reach 39%.
+{
+  const z = zones(3.6);
+  const vT = thresholdMpsFromZones(z);
+  const easy = easyKmhFor(vT);
+  const qual = qualityKmhFor(vT);
+  const p = generatePlan({ ...REQ, goalTime: "1:35:00" }, boundarySeed, [], z);
+  const rows = p.weeks
+    .filter((w) => w.phase === "base" || w.phase === "build" || w.phase === "recovery")
+    .map((w) => {
+      const long = w.sessions.find((s) => s.discipline === "run" && /long/i.test(s.title));
+      return long ? { w, longKm: sessionRunKm(long, easy, qual), weekKm: weekRunKm(w.sessions, easy, qual) } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  const worst = rows.reduce((a, x) => Math.max(a, x.longKm / x.weekKm), 0);
+  chk("F4a", "no week exceeds the rail when measured the way the plan is measured",
+    worst <= LONG_FRACTION_MAX + 1e-6, `worst ${(worst * 100).toFixed(1)}%`);
+  const vt = p.meta.volumeTargets;
+  chk("F4b", "the boundary athlete's long run is held under the 21 km floor by the rail",
+    vt?.meetsLongFloor === false, `${vt?.peakLongKmActual} km`);
+  chk("F4c", "…and the tradeoff is SURFACED, not silently resolved",
+    vt?.longCappedByFraction === true);
 }
 
 for (const p of passes) console.log(p);

@@ -18,7 +18,7 @@ import {
 } from "./goal.ts";
 import { TaperV1, type Era } from "./learned.ts";
 import { activeTissueCaps, tissueReasons, type TissueCaps, type TissueConstraint } from "./tissue.ts";
-import { peakLongRunKm, peakWeekRunKm } from "./volume.ts";
+import { peakLongRunKm, peakWeekRunKm, sessionRunKm, weekRunKm } from "./volume.ts";
 import { crossKindFor } from "./crosstrain.ts";
 import { deriveBaseRichness, rampCapFromRichness } from "./history.ts";
 import { sessionZoneSeconds, targetDistribution, weekDistribution, z1FloorFor } from "./intensity.ts";
@@ -675,7 +675,12 @@ export function generatePlan(
   const planRampCap = richness
     ? Math.min(rampCapFromRichness(richness.richness), caps?.rampCeiling ?? Infinity)
     : caps?.rampCeiling; // no richness signal: only a tissue ramp cap (if any) binds
-  let prevLongKm: number | undefined; // tracked across the week loop (like prevPrescribed)
+  let prevLongKm: number | undefined;
+  // Set by the fraction-rail enforcement below when it actually shortens a
+  // long run — an explicit signal, so the honesty flag never has to infer it
+  // by comparing peaks measured on DIFFERENT weeks (which read false while
+  // the rail was plainly binding).
+  let fractionRailBound = false; // tracked across the week loop (like prevPrescribed)
 
   const raceT = Date.parse(req.raceDate + "T12:00:00Z");
   const startDateStr = req.startDate ?? iso(Date.now());
@@ -842,45 +847,93 @@ export function generatePlan(
     const longSlot = placed.find((s) => s.kind === "run-long");
     const LONG_IF2 = TEMPLATES["run-long"].intensity * TEMPLATES["run-long"].intensity * 100;
     let longFloorHr: number | undefined;
-    if (
-      goal &&
-      isRunRace &&
-      longSlot &&
-      (p.phase === "base" || p.phase === "build" || p.phase === "recovery")
-    ) {
+    // The fraction rail is an INJURY rail, so it applies to every run plan
+    // with a long slot — the matrix found it conditioned on `goal &&`, which
+    // left goal-less athletes with no rail at all (a latent gap: their
+    // weight-based share happened to stay under the cap, but protection must
+    // not depend on having typed a goal time).
+    if (isRunRace && longSlot && (p.phase === "base" || p.phase === "build" || p.phase === "recovery")) {
       const baseLongHr = (trainableTss * longSlot.weight) / totalWeight / LONG_IF2;
       const capHr = (trainableTss * 0.6) / LONG_IF2; // long run ≤ 60% of the week
-      // Week 1 opens the progression from a sensible base (a half build starts
-      // the long run near ~13 km, scaled down for shorter races), then each
-      // later week steps up ≤ +2 km toward the injury-capped peak; cutbacks hold
-      // flat. The 60% cap keeps a low-volume early week from over-weighting it.
-      const startKm = Math.min(13, longPeakKm * 0.6);
-      const targetKm =
-        prevLongKm === undefined
-          ? Math.min(longPeakKm, Math.max(baseLongHr * easyKmh, startKm))
-          : longRunKm(prevLongKm, longPeakKm, p.phase === "recovery");
       // Refinement 5: the long run may not exceed ~35% of the week's running
       // km — the volume-FRACTION overuse pattern the absolute caps miss. The
       // other days' km are computed at the SAME per-kind speeds the
       // achieved-km measurement uses (a TSS-bridge estimate understates
-      // easy-heavy weeks ~1.8×), and the closed form long ≤ f/(1−f)·others
-      // makes the cap self-consistent with the long run it produces. It caps
-      // even the slot's natural budget (the max(targetHr, baseLongHr) below);
-      // freed TSS redistributes to the other days via otherScale.
-      const kmOfSlot = (s: Slot) => {
+      // easy-heavy weeks ~1.8×), using the closed form long ≤ f/(1−f)·others.
+      //
+      // Self-consistency is the part the matrix caught missing: the cap used
+      // to be computed against the other days' UNSCALED km, and when the
+      // goal progression pushed the long above its natural share, the
+      // redistribution then SHRANK those days — the realized fraction landed
+      // at up to 39% while the cap believed 35%. The rail outranks the
+      // progression floor, so the cap now iterates against the km the other
+      // days will actually have AFTER redistribution (fixed point in ≤3
+      // rounds; duration floors only make it conservative).
+      const kmOfSlot = (s: Slot, scale: number) => {
         const t = TEMPLATES[s.kind];
         if (t.discipline !== "run") return 0;
-        const tss = (trainableTss * s.weight) / totalWeight;
+        const tss = ((trainableTss * s.weight) / totalWeight) * scale;
         const dur = Math.min(1.6, Math.max(0.4, tss / (t.intensity * t.intensity * 100)));
         return dur * (KIND_ZONE[s.kind] ? qualityKmh : easyKmh);
       };
-      const othersKm = placed.filter((s) => s.kind !== "run-long").reduce((a, s) => a + kmOfSlot(s), 0);
-      const fracCapHr = ((LONG_FRACTION_MAX / (1 - LONG_FRACTION_MAX)) * othersKm) / easyKmh;
-      // Duration follows the (tissue-capped) distance; the 2.6 h clamp is the
-      // universal session-length sanity bound (was also a blanket 130-min calf
-      // ceiling — removed with INJURY_CAP_KM, since targetKm is already tissue-capped).
-      const targetHr = Math.min(targetKm / easyKmh, 2.6);
-      longFloorHr = Math.min(Math.max(targetHr, baseLongHr), capHr, fracCapHr);
+      const otherSlots = placed.filter((s) => s.kind !== "run-long");
+      const otherBase = otherSlots.reduce((a, s) => a + (trainableTss * s.weight) / totalWeight, 0);
+      const othersKmAt = (scale: number) => otherSlots.reduce((a, s) => a + kmOfSlot(s, scale), 0);
+      // The pre-cap candidate the caps act on: the goal progression when a
+      // goal exists (week-1 opens near ~13 km, later weeks step ≤ +2 km,
+      // cutbacks hold), else the slot's natural weight-based share.
+      // The 60% budget cap belongs to the goal progression — it stops a
+      // low-volume early week over-weighting a progression-driven long run.
+      // A goal-less week's long run is already its natural share, so only the
+      // INJURY rail (the fraction) applies there.
+      let candidateHr: number;
+      if (goal) {
+        const startKm = Math.min(13, longPeakKm * 0.6);
+        const targetKm =
+          prevLongKm === undefined
+            ? Math.min(longPeakKm, Math.max(baseLongHr * easyKmh, startKm))
+            : longRunKm(prevLongKm, longPeakKm, p.phase === "recovery");
+        // 2.6 h is the universal session-length sanity bound.
+        candidateHr = Math.min(Math.max(Math.min(targetKm / easyKmh, 2.6), baseLongHr), capHr);
+      } else {
+        candidateHr = baseLongHr;
+      }
+      // The fraction a given long duration ACTUALLY realizes, measured after
+      // the redistribution that duration itself causes. The old closed form
+      // divided by the other days' UNSCALED km, so when the progression
+      // pushed the long above its natural share the redistribution shrank
+      // those days underneath it and the realized fraction reached 39%.
+      const realizedFrac = (lHr: number): number => {
+        // Mirrors otherScale below EXACTLY, including that it is unclamped:
+        // when the long sits below its natural share the other days grow, and
+        // clamping that away here would over-tighten the rail in precisely
+        // the region the bisection explores.
+        const scale = otherBase > 0 ? Math.max(0, trainableTss - LONG_IF2 * lHr) / otherBase : 1;
+        const oKm = othersKmAt(scale);
+        const lKm = lHr * easyKmh;
+        return lKm + oKm > 0 ? lKm / (lKm + oKm) : 0;
+      };
+      // Largest duration whose realized fraction clears the rail. realizedFrac
+      // is monotone in lHr (a longer long run adds its own km AND removes the
+      // other days'), so bisection lands exactly on the rail — a relaxation
+      // loop here oscillates and settles below it, costing an established
+      // athlete ~0.6 km of peak long run for no safety gain.
+      let capped = candidateHr;
+      if (realizedFrac(capped) > LONG_FRACTION_MAX) {
+        let lo = 0;
+        let hi = capped;
+        for (let i = 0; i < 40; i++) {
+          const mid = (lo + hi) / 2;
+          if (realizedFrac(mid) > LONG_FRACTION_MAX) hi = mid;
+          else lo = mid;
+        }
+        capped = lo;
+      }
+      // Goal plans always carry the floor (the progression is theirs); a
+      // goal-less plan takes it ONLY when the injury rail actually binds below
+      // the natural share — otherwise longFloorHr stays undefined and the week
+      // is byte-identical to the pre-rail construction.
+      if (goal || capped < baseLongHr - 1e-9) longFloorHr = capped;
     }
     const longFinalTss = longFloorHr !== undefined ? LONG_IF2 * longFloorHr : undefined;
     const otherBaseSum =
@@ -1111,6 +1164,76 @@ export function generatePlan(
         rebuildInto(e, eKind, eTssNew);
       }
     }
+    // ——— Refinement 5, ENFORCED: the long run ≤ ~35% of the week's running
+    // km, measured with the SAME ruler the plan, the tests and the UI use
+    // (sessionRunKm/weekRunKm) — not a pre-construction model of it. The
+    // matrix caught realized fractions reaching 39% because the closed form
+    // above divides by the other days' pre-redistribution km, and the
+    // intensity shaping then moves load around underneath it. Rails outrank
+    // floors (§5.6), so when the goal progression and this rail disagree the
+    // rail wins and the shortfall is surfaced through volumeTargets.
+    if (isRunRace && longSlot) {
+      const li = sessions.findIndex((x, i) => sessionKinds[i] === "run-long" && x.discipline === "run");
+      if (li >= 0) {
+        for (let round = 0; round < 4; round++) {
+          const lKm = sessionRunKm(sessions[li], easyKmh, qualityKmh);
+          const wKm = weekRunKm(sessions, easyKmh, qualityKmh);
+          if (wKm <= 0 || lKm <= LONG_FRACTION_MAX * wKm + 1e-9) break;
+          // Closed form against the other days' REAL km, so one pass usually
+          // lands it; the loop only mops up the duration clamps.
+          const allowedKm = (LONG_FRACTION_MAX / (1 - LONG_FRACTION_MAX)) * (wKm - lKm);
+          const newHr = Math.max(0.4, allowedKm / easyKmh);
+          if (newHr >= sessions[li].durationHr - 1e-6) break;
+          fractionRailBound = true;
+          const t = TEMPLATES["run-long"];
+          const rate = t.intensity * t.intensity * 100;
+          const freed = sessions[li].tss - Math.round(rate * (Math.floor(newHr * 100) / 100));
+          // FLOOR, not round: the stored duration is what sessionRunKm
+          // measures, and rounding up would put the week back over the rail
+          // by a hair — a rail that rounds against itself is not a rail.
+          const capHrRounded = Math.floor(newHr * 100) / 100;
+          const m = mins(capHrRounded);
+          const built = t.build(zones, m);
+          sessions[li].durationHr = capHrRounded;
+          sessions[li].tss = Math.round(rate * capHrRounded);
+          sessions[li].title = t.title(m);
+          sessions[li].structure = built.text;
+          sessions[li].workout = { blocks: built.blocks };
+          // The week is conserved: freed load goes to the easiest non-long
+          // EASY run day, the safest place to put volume. Except when a tissue
+          // weekly-RUNNING-km cap is active — then adding running km is
+          // exactly what the cap forbids, so the load goes to a cross-training
+          // day instead, and if there is none it is simply not re-added
+          // (running volume is the constrained resource, not total load).
+          if (freed > 0) {
+            const runCapped = caps?.weeklyKm != null;
+            let ei = -1;
+            let eTss = Infinity;
+            for (let i = 0; i < sessions.length; i++) {
+              if (i === li || sessions[i].substituted) continue;
+              const isRun = sessions[i].discipline === "run";
+              if (runCapped ? isRun : !isRun) continue;
+              if (isRun && KIND_ZONE[sessionKinds[i]]) continue; // quality day — leave the polarity alone
+              if (sessions[i].tss < eTss) { eTss = sessions[i].tss; ei = i; }
+            }
+            if (ei >= 0) {
+              const ek = sessionKinds[ei];
+              const et = TEMPLATES[ek];
+              const erate = et.intensity * et.intensity * 100;
+              const eHr = Math.min(1.6, Math.max(0.4, (sessions[ei].tss + freed) / erate));
+              const em = mins(eHr);
+              const ebuilt = et.build(zones, em);
+              sessions[ei].durationHr = Math.round(eHr * 100) / 100;
+              sessions[ei].tss = Math.round(erate * eHr);
+              sessions[ei].title = et.title(em);
+              sessions[ei].structure = ebuilt.text;
+              sessions[ei].workout = { blocks: ebuilt.blocks };
+            }
+          }
+        }
+      }
+    }
+
     // Track the emitted long-run distance for next week's progression (like
     // prevPrescribed). Only base/build/recovery weeks carry a run-long here.
     const emittedLong = sessions.find((s) => longSlot && s.date === iso(wStart + longSlot.weekdayIdx * DAY) && s.discipline === "run");
@@ -1263,7 +1386,7 @@ export function generatePlan(
         // Drives the honest-tradeoff copy; never silently resolved.
         longCappedByFraction:
           actualLongKm < floor.longRunKm - 0.5 &&
-          LONG_FRACTION_MAX * actualWeeklyKm < floor.longRunKm - 0.5 &&
+          fractionRailBound &&
           (caps?.longRunKm == null || caps.longRunKm >= floor.longRunKm),
       }
     : undefined;

@@ -50,11 +50,6 @@ const caught: string[] = [];
  * ledger cannot rot in either direction.
  */
 const KNOWN_DEFECTS: Record<string, string> = {
-  "long-frac-breach":
-    "the goal-driven long-run progression (week-1 ~13 km opening, +2 km steps) silently " +
-    "overrides the 35% fraction rail on low-CTL athletes — worst 39.1% at CTL 20-45, every " +
-    "pace. Related latent gap: the whole rail block is gated on `goal &&`, so a goal-less " +
-    "athlete has NO fraction rail (no breach manifested in this grid). Bound: ratio ≤ 0.395.",
 };
 
 /** Occurrence tally per known class — a class that never fires means the
@@ -247,12 +242,10 @@ function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZon
     if (!long) continue;
     const longKm = sessionRunKm(long, easy, qual);
     const weekKm = weekRunKm(w.sessions, easy, qual);
-    if (longKm > LONG_FRACTION_MAX * weekKm + 1.5) {
-      const msg = `long ${w.weekStart} ${longKm.toFixed(1)}/${weekKm.toFixed(1)}km`;
-      if (weekKm > 0 && longKm / weekKm <= 0.395) {
-        recordKnown("long-frac-breach", msg);
-        knownViolations.push(msg);
-      } else violations.push(msg);
+    // No slack: the rail is enforced post-construction against these exact
+    // functions, so any excess at all is a real breach.
+    if (longKm > LONG_FRACTION_MAX * weekKm + 1e-6) {
+      violations.push(`long ${w.weekStart} ${longKm.toFixed(1)}/${weekKm.toFixed(1)}km = ${((longKm / weekKm) * 100).toFixed(1)}%`);
     }
   }
 
