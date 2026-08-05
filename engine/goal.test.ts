@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CVOL,
+  MIN_GOAL_WEEKLY_KM,
   easyKmhFor,
   finishEstimate,
   goalCtlTarget,
@@ -406,6 +408,36 @@ if (!fx) {
   check("U-d", "raceDistanceKm mapping", raceDistanceKm("run-half") === 21.1 && raceDistanceKm("sprint") === undefined);
   check("U-e", "vdot monotone decreasing in time at fixed distance",
     vdot(HALF, 80) > vdot(HALF, 90), "");
+}
+
+
+// ——— E4. the goal model prices km at the ATHLETE's bridge ————————————————
+{
+  const half = 21.0975;
+  const goalSec = 84 * 60; // 1:24 half
+
+  const dflt = goalCtlTarget(half, goalSec);
+  check("E4-a", "absent cvol is byte-identical to passing the 4.9 fallback",
+    JSON.stringify(dflt) === JSON.stringify(goalCtlTarget(half, goalSec, CVOL)));
+
+  const slow = goalCtlTarget(half, goalSec, 7.3);
+  check("E4-b", "a higher km cost raises requiredPeakCtl for the same goal",
+    slow.peakCtl > dflt.peakCtl * 1.4, `${slow.peakCtl.toFixed(1)} vs ${dflt.peakCtl.toFixed(1)}`);
+  check("E4-c", "…in exact proportion (weeklyTss = cvol · wKm)",
+    Math.abs(slow.weeklyTss / dflt.weeklyTss - 7.3 / CVOL) < 1e-9);
+
+  const slowGoal = goalCtlTarget(half, 165 * 60);
+  check("E4-d", "the degeneracy kill test: a 2:45 half goal requires a real peak CTL, not ~0",
+    slowGoal.peakCtl > 10, slowGoal.peakCtl.toFixed(1));
+  check("E4-e", "…via the weekly-km floor", slowGoal.weeklyTss >= MIN_GOAL_WEEKLY_KM * CVOL * 0.99,
+    `${slowGoal.weeklyTss.toFixed(0)} TSS`);
+  check("E4-f", "the floor leaves ordinary-fast goals byte-identical",
+    JSON.stringify(goalCtlTarget(half, goalSec)) === JSON.stringify(dflt));
+
+  const fastFinish = finishEstimate(50, half);
+  const slowFinish = finishEstimate(50, half, undefined, Date.now(), 7.3);
+  check("E4-g", "the anchorless finish estimate slows for an athlete whose km cost more",
+    slowFinish > fastFinish * 1.02, `${(slowFinish / 60).toFixed(1)}m vs ${(fastFinish / 60).toFixed(1)}m`);
 }
 
 console.log(`\nGoal-periodization tests (${existsSync("data") ? "real corpus" : "synthetic"})\n`);

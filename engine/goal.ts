@@ -78,9 +78,15 @@ export function vdot(distanceKm: number, timeMin: number): number {
   return vo2 / pct;
 }
 
+/** Floor on the goal-volume norm. `3.0·VDOT − 90` goes NEGATIVE below
+ *  VDOT 30 — a completely ordinary 2:30+ half-marathon goal — which used to
+ *  degenerate the whole goal model to "requires race-day CTL ~0, within
+ *  reach". No runner prepares a race on less than ~25 km/wk. */
+export const MIN_GOAL_WEEKLY_KM = 25;
+
 // weekly running-volume norm (competitive band) with a mild endurance premium
 function weeklyKm(vdotVal: number, distanceKm: number): number {
-  return Math.max(0, 3.0 * vdotVal - 90) * Math.pow(distanceKm / 21.1, 0.15);
+  return Math.max(MIN_GOAL_WEEKLY_KM, 3.0 * vdotVal - 90) * Math.pow(distanceKm / 21.1, 0.15);
 }
 
 export interface GoalCtl {
@@ -92,12 +98,22 @@ export interface GoalCtl {
   weeklyTss: number;
 }
 
-/** Forward: required CTL from race distance + goal pace. */
-export function goalCtlTarget(distanceKm: number, goalTimeSec: number): GoalCtl {
+/**
+ * Forward: required CTL from race distance + goal pace.
+ *
+ * `cvol` is the athlete's km↔TSS bridge (cvolFor). The default is the
+ * population fallback for zone-less callers only — refinement 3's rule that
+ * every km-priced quantity derives from the athlete's threshold applies HERE
+ * too: at the 4.9 constant, a 5:30/km athlete's requiredPeakCtl was ~33%
+ * understated and the goal-gap verdict flipped optimistic, while the learned
+ * goal floor built their weekly TSS to a number that buys ~33% fewer km than
+ * the VDOT model says the goal needs.
+ */
+export function goalCtlTarget(distanceKm: number, goalTimeSec: number, cvol: number = CVOL): GoalCtl {
   const T = goalTimeSec / 60;
   const v = vdot(distanceKm, T);
   const wKm = weeklyKm(v, distanceKm);
-  const weeklyTss = CVOL * wKm;
+  const weeklyTss = cvol * wKm;
   const peakCtl = weeklyTss / 7; // sustained-load equilibrium
   return { peakCtl, raceDayCtl: peakCtl * TAPER_RETENTION, vdot: v, weeklyTss };
 }
@@ -120,10 +136,10 @@ function invertVdotMin(distanceKm: number, vdotTarget: number): number {
 
 /** Generic VDOT-from-reachable-CTL finish (seconds). The pre-calibration body,
  *  used verbatim as the no-anchor fallback (byte-identical for anchorless athletes). */
-function genericFinishSec(reachableRaceDayCtl: number, distanceKm: number): number {
+function genericFinishSec(reachableRaceDayCtl: number, distanceKm: number, cvol: number = CVOL): number {
   const peakCtl = reachableRaceDayCtl / TAPER_RETENTION;
   const weeklyTss = 7 * peakCtl;
-  const wKm = weeklyTss / CVOL;
+  const wKm = weeklyTss / cvol;
   const vdotTarget = (wKm / Math.pow(distanceKm / 21.1, 0.15) + 90) / 3.0;
   return invertVdotMin(distanceKm, vdotTarget) * 60; // seconds
 }
@@ -211,12 +227,15 @@ export function finishEstimate(
   reachableRaceDayCtl: number,
   distanceKm: number,
   anchors?: RaceAnchor[],
-  asOf: string | number | Date = Date.now()
+  asOf: string | number | Date = Date.now(),
+  /** Athlete km↔TSS bridge for the anchorless generic curve; the personal
+   *  anchored curve never uses it. Default = population fallback. */
+  cvol: number = CVOL
 ): number {
   const usable = (anchors ?? []).filter(
     (a) => a.distanceKm > 0 && a.timeSec > 0 && Number.isFinite(a.ctlAtRace)
   );
-  if (usable.length === 0) return genericFinishSec(reachableRaceDayCtl, distanceKm);
+  if (usable.length === 0) return genericFinishSec(reachableRaceDayCtl, distanceKm, cvol);
 
   const asOfMs = asOf instanceof Date ? asOf.getTime() : typeof asOf === "string" ? Date.parse(asOf) : asOf;
   const curve = fitPersonalCurve(usable, Number.isFinite(asOfMs) ? (asOfMs as number) : Date.now());
@@ -238,7 +257,7 @@ export function finishEstimate(
   }
 
   const result = Math.min(modelSec, cap);
-  return Number.isFinite(result) ? result : genericFinishSec(reachableRaceDayCtl, distanceKm);
+  return Number.isFinite(result) ? result : genericFinishSec(reachableRaceDayCtl, distanceKm, cvol);
 }
 
 /**

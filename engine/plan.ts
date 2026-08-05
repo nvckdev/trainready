@@ -1,4 +1,5 @@
 import {
+  CVOL,
   cvolFor,
   easyKmhFor,
   EVIDENCE_FLOOR,
@@ -602,6 +603,14 @@ export function generatePlan(
   // to a goal-less plan. `goalPeakCtl` is threaded onto each week's state below;
   // it is the SOLE trigger for the learned-layer goal floor and never touches
   // the backtest (which never calls generatePlan) — see engine/types.ts.
+  // Refinements 3+4 (hoisted above the goal model for E4): every km-priced
+  // and km-timed quantity — INCLUDING the goal's required CTL — derives from
+  // the ATHLETE's threshold speed.
+  const vTmps = thresholdMpsFromZones(zones);
+  const cvol = cvolFor(vTmps);
+  const easyKmh = easyKmhFor(vTmps);
+  const qualityKmh = qualityKmhFor(vTmps);
+
   const goalDistanceKm = raceDistanceKm(req.raceType);
   const parsedGoalSec = req.goalTime ? parseGoalTime(req.goalTime) : undefined;
   // Plausibility guard (invalid ⇒ inert): reject a superhuman implied pace — e.g.
@@ -614,7 +623,7 @@ export function generatePlan(
       : parsedGoalSec;
   const goal: GoalCtl | undefined =
     goalSec !== undefined && goalDistanceKm !== undefined
-      ? goalCtlTarget(goalDistanceKm, goalSec)
+      ? goalCtlTarget(goalDistanceKm, goalSec, cvol)
       : undefined;
   const isRunRace = goalDistanceKm !== undefined;
   // Active tissue caps (feature 4). Null when none declared/inferred ⇒ every cap
@@ -629,14 +638,6 @@ export function generatePlan(
   // stay byte-identical; the evidence km floor only lifts a modest-goal/goal-less
   // plan. A tissue weekly cap pulls it down (may go below the evidence floor →
   // the goal-gap surfaces the shortfall).
-  // Refinements 3+4: every km-priced and km-timed quantity derives from the
-  // ATHLETE's threshold speed — the km↔TSS bridge (cvol) and the km↔duration
-  // speeds (easy/quality km/h) — so caps, floors, durations, and achieved-km
-  // measurement can never disagree about what a km costs or takes.
-  const vTmps = thresholdMpsFromZones(zones);
-  const cvol = cvolFor(vTmps);
-  const easyKmh = easyKmhFor(vTmps);
-  const qualityKmh = qualityKmhFor(vTmps);
   const tissueWeeklyCapTss = caps?.weeklyKm != null ? caps.weeklyKm * cvol : Infinity;
   const peakWeeklyTssFloor = isRunRace
     ? Math.min(Math.max(EVIDENCE_FLOOR[req.raceType].weeklyKm * cvol, goal ? goal.peakCtl * 7 : 0), tissueWeeklyCapTss)
@@ -1243,7 +1244,7 @@ export function generatePlan(
   })();
   const goalGap =
     goal && goalDistanceKm !== undefined && goalSec !== undefined && req.goalTime
-      ? buildGoalGap(req.goalTime, goal, projectedRaceRunCtl ?? projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich)
+      ? buildGoalGap(req.goalTime, goal, projectedRaceRunCtl ?? projectedRaceCtl, goalDistanceKm, goalSec, r1(initialState.ctl), weeks.length, tissueLongCapped, tissueLabel, volumeShortfall, rampPct, baseRich, cvol)
       : undefined;
 
   return {
@@ -1287,7 +1288,9 @@ function buildGoalGap(
   tissueLabel = "tissue",
   volumeShortfall = "",
   rampPct = 20,
-  baseRich = false
+  baseRich = false,
+  /** Athlete km↔TSS bridge for the anchorless finish curve (E4). */
+  cvol: number = CVOL
 ): NonNullable<Plan["meta"]["goalGap"]> {
   const requiredPeakCtl = r1(goal.raceDayCtl); // the race-relevant "~50" figure
   const reachablePeakCtl = r1(reachableRaceDayCtl);
@@ -1296,7 +1299,7 @@ function buildGoalGap(
   // (personal ceiling-saturating curve + hard invariant clamp, engine/goal.ts)
   // and clamped no faster than the goal. Anchors come from the gitignored
   // corpus; absent ⇒ generic fallback.
-  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, loadRaceAnchors()));
+  const finishSec = Math.max(goalSec, finishEstimate(reachableRaceDayCtl, distanceKm, loadRaceAnchors(), Date.now(), cvol));
   const realisticFinish = fmtClock(finishSec);
   // The tissue long-run limit is named ONLY when a constraint is active — a
   // healthy runner's rails are just the ramp + form floor (feature 4). The ramp
