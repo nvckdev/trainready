@@ -82,7 +82,12 @@ export function executedDailyPmc(
   // imported load while the fitness state decayed as if the athlete did
   // nothing, and the reflow cut the plan from a fiction (Mobile-1).
   imported: ImportedActivity[] = [],
-  ctx: { runThresholdMps?: number; lthrBpm?: number } = {}
+  ctx: { runThresholdMps?: number; lthrBpm?: number } = {},
+  /** Date the seed's CTL/ATL were measured. Replay starts the day AFTER it:
+   *  days at or before the anchor are already inside the seed, and replaying
+   *  them again after a re-pair double-counts that training (M5). Absent ⇒
+   *  replay from the plan start, exactly as before. */
+  anchor?: string
 ): DailyPmcPoint[] {
   const doneByDate = new Map<string, number>();
   for (const w of plan.weeks) {
@@ -94,8 +99,10 @@ export function executedDailyPmc(
   // Plan dates are device-local calendar days; bucket imports the same way so
   // an evening run lands on the day the athlete lived it.
   const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, deviceLocalDate);
-  const start = plan.weeks[0]?.weekStart;
-  if (!start || at(start) > at(through)) return [];
+  const planStart = plan.weeks[0]?.weekStart;
+  if (!planStart) return [];
+  const start = anchor && at(anchor) + DAY > at(planStart) ? iso(at(anchor) + DAY) : planStart;
+  if (at(start) > at(through)) return [];
   let ctl = seedCtl;
   let atl = seedAtl;
   const series: DailyPmcPoint[] = [];
@@ -176,7 +183,7 @@ export async function reconcileIfDue(
   });
   if (!decision.due) return { changed: false, reason: decision.reason, note: null };
 
-  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx);
+  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx, athlete.anchor);
   const actualState: AthleteState = seedStateAt(athlete.seed, series, decision.asOf);
   const request: PlanRequest = reflowSafeRequest(
     { ...stored.request, priorWeights: athlete.priorWeights },

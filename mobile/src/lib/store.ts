@@ -23,6 +23,14 @@ const KEYS = {
 
 export interface StoredAthlete {
   name: string;
+  /** IANA timezone from the pairing payload — the athlete's clock. One
+   *  definition of "today" across surfaces (M3): when present, localToday()
+   *  uses it; absent falls back to the device clock. */
+  tz?: string;
+  /** Date the seed's CTL/ATL were measured (pairing anchor). Without it a
+   *  plan generated weeks after pairing starts from stale fitness, and
+   *  re-pairing mid-plan double-counts (M5). */
+  anchor?: string;
   thresholds: {
     ftpWatts: number;
     lthrBpm: number;
@@ -105,12 +113,22 @@ function createSlot<T>(key: string, valid: (x: unknown) => x is T): Slot<T> {
     void AsyncStorage.getItem(key).then((raw) => {
       let next: T | null = null;
       if (raw) {
+        const quarantine = () => {
+          // The plan is the phone's ONLY training log — an app update whose
+          // schema no longer validates an old payload must never erase it
+          // (M6). Park the raw bytes under a stable side key (recoverable,
+          // overwritten by any later quarantine) and clear the live slot.
+          void AsyncStorage.setItem(key + ".quarantine", raw).then(
+            () => AsyncStorage.removeItem(key),
+            () => AsyncStorage.removeItem(key)
+          );
+        };
         try {
           const parsed: unknown = JSON.parse(raw);
           if (valid(parsed)) next = parsed;
-          else void AsyncStorage.removeItem(key);
+          else quarantine();
         } catch {
-          void AsyncStorage.removeItem(key);
+          quarantine();
         }
       }
       // A set() that raced hydration wins.
@@ -190,8 +208,22 @@ export function zonesFor(a: StoredAthlete): Zones {
   return deriveZones(a.thresholds);
 }
 
-/** Athlete-local calendar date (YYYY-MM-DD) from the device clock. */
+/**
+ * Athlete-local calendar date (YYYY-MM-DD). One definition of "today" (M3):
+ * the athlete's paired timezone when known, else the device clock. The
+ * dashboard pins the same tz into the pairing payload, so a traveling
+ * athlete's two surfaces close weeks on the SAME day instead of a day apart.
+ */
 export function localToday(): string {
+  const tz = athleteSlot.get()?.tz;
+  if (tz) {
+    try {
+      // en-CA formats as YYYY-MM-DD.
+      return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
+    } catch {
+      /* unknown tz string — fall through to the device clock */
+    }
+  }
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -201,30 +233,32 @@ export function localToday(): string {
  *  here so every screen shares one trigger — the first screen the athlete
  *  opens after a week closes is the one that reflows, and the store's
  *  subscription pushes the adjusted plan to all the others. */
-const syncTried = new Set<string>();
-/** On-app-open activity sync: debounced in sync.ts, fired at most once per
- *  day per app session here, and always BEFORE the reconcile reads evidence. */
-export function useActivitySync(): void {
-  const today = useToday();
-  useEffect(() => {
-    if (syncTried.has(today)) return;
-    syncTried.add(today);
-    void import("./sync").then((m) => m.syncIfDue()).catch(() => {});
-  }, [today]);
-}
-
 const reconcileTried = new Set<string>();
 export function useWeeklyReconcile(): void {
-  useActivitySync();
   const plan = usePlan();
   const athlete = useAthlete();
   const today = useToday();
   useEffect(() => {
     if (!plan || !athlete) return;
-    const key = `${plan.plan.meta.generatedAt}|${plan.plan.meta.lastRecomputed ?? ""}|${today}`;
-    if (reconcileTried.has(key)) return;
-    reconcileTried.add(key);
-    void import("./reconcile").then((m) => m.reconcileIfDue(plan, athlete, today)).catch(() => {});
+    // The order is now REAL, not a comment: the sync completes (or skips via
+    // its debounce) before the reconcile reads evidence, and the evidence
+    // generation (lastSyncAt) is part of the idempotence key — so a fresh
+    // same-day sync re-evaluates instead of being ignored until midnight
+    // (M4). Both dynamic imports keep the engine graph off the launch path.
+    void (async () => {
+      try {
+        const sync = await import("./sync");
+        await sync.syncIfDue(Date.now(), plan.plan.weeks[0]?.weekStart);
+        const evidence = (await sync.readSync()).lastSyncAt ?? "";
+        const key = `${plan.plan.meta.generatedAt}|${plan.plan.meta.lastRecomputed ?? ""}|${today}|${evidence}`;
+        if (reconcileTried.has(key)) return;
+        reconcileTried.add(key);
+        const m = await import("./reconcile");
+        await m.reconcileIfDue(plan, athlete, today);
+      } catch {
+        /* reconcile failures must never break a screen */
+      }
+    })();
   }, [plan, athlete, today]);
 }
 

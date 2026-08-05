@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
+import { seedStateAt } from "@engine/seed.ts";
 import { generatePlan, type PlanRequest, type RaceType } from "@engine/plan.ts";
 import { DateSheet, fmtLong } from "@/components/calendar";
 import { Body, Button, Display, Label, RecDot, TaperMark, useReduceMotion } from "@/components/ui";
@@ -219,7 +220,17 @@ export default function GoalScreen() {
           };
           // The real engine, on this device — same code, same rails, same
           // honesty as the dashboard.
-          const plan = generatePlan(request, athlete.seed, [], zonesFor(athlete));
+          // A seed paired weeks ago is stale fitness — roll it zero-load from
+          // its anchor to today before building (M5). Without an anchor the
+          // seed is used as-is (pre-anchor pairing codes).
+          const seed = athlete.anchor
+            ? seedStateAt(
+                athlete.seed,
+                [{ date: athlete.anchor, ctl: athlete.seed.ctl, atl: athlete.seed.atl }],
+                today
+              )
+            : athlete.seed;
+          const plan = generatePlan(request, seed, [], zonesFor(athlete));
           void setPlan({ request, plan });
           void syncReminders({ request, plan });
           const sessions = plan.weeks.reduce((a, w) => a + w.sessions.length, 0);

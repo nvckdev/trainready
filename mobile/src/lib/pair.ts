@@ -13,6 +13,7 @@ interface PairPayload {
   thresholds: StoredAthlete["thresholds"];
   seed: StoredAthlete["seed"];
   anchor?: string;
+  tz?: string;
   prior?: number[];
 }
 
@@ -52,6 +53,8 @@ export function decodePairCode(raw: string): { athlete: StoredAthlete; anchor?: 
     Array.isArray(payload.prior) && payload.prior.length === 11 && payload.prior.every(num)
       ? payload.prior
       : undefined;
+  const anchor = typeof payload.anchor === "string" ? payload.anchor : undefined;
+  const tz = typeof payload.tz === "string" ? payload.tz : undefined;
   return {
     athlete: {
       name: typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : "Athlete",
@@ -59,7 +62,12 @@ export function decodePairCode(raw: string): { athlete: StoredAthlete; anchor?: 
       seed: s,
       demo: false,
       ...(prior ? { priorWeights: prior } : {}),
+      // Persisted ON the athlete (M3/M5): the tz makes both surfaces agree on
+      // "today"; the anchor lets stale seeds decay and re-pairs not
+      // double-count.
+      ...(anchor ? { anchor } : {}),
+      ...(tz ? { tz } : {}),
     },
-    anchor: typeof payload.anchor === "string" ? payload.anchor : undefined,
+    anchor,
   };
 }

@@ -116,7 +116,7 @@ export interface ReplanInput {
   actualState: AthleteState; // getStateAt(asOf) — pmc-seeded ctl/atl/tsb
   actualTrailingTss: number[]; // ACTUAL executed weekly TSS, oldest→newest
   ledger: WeekActual[]; // completed weeks only, chronological
-  asOf: string; // localToday() — America/New_York
+  asOf: string; // athlete-local today (rule 16) — the SURFACE supplies the athlete tz
   history: Array<{ state: AthleteState; actualTss: number; weekStart?: string }>;
   zones: Zones;
 }

@@ -23,6 +23,8 @@ function pairCode(): string | null {
     thresholds: athlete.thresholds,
     seed,
     anchor: localToday(),
+    // The athlete's clock — one definition of "today" on both surfaces (M3).
+    tz: "America/New_York",
     // Refinement 2 parity: the phone has no data/models artifact, so the
     // population prior rides the pairing code (null → field absent).
     ...(loadPopulationPrior() ? { prior: loadPopulationPrior() } : {}),
