@@ -50,11 +50,6 @@ const caught: string[] = [];
  * ledger cannot rot in either direction.
  */
 const KNOWN_DEFECTS: Record<string, string> = {
-  "M1-ramp-inversion":
-    "base-richness inversion: empty history ⇒ default ramp cap 1.2, but 4–26 weeks of " +
-    "unremarkable history derive richness ≈0.02–0.10 ⇒ cap 1.10–1.12. Importing a month of " +
-    "Strava makes the allowed ramp TIGHTER than knowing nothing. Fix needs a product decision: " +
-    "floor the derived cap at the ignorance default, or lower the ignorance default.",
   "z1-floor-breach":
     "duration-floored micro-weeks escape the intensity shaping: CTL-20 athletes (every pace) " +
     "get base/build weeks at 83.3–84.6% Z1 vs the 0.85 floor — the shaping loop's four " +
@@ -336,18 +331,26 @@ check("G0", `all ${CASES.length} grid cells generate`, thrown === 0, `${thrown} 
 {
   const defaultCap = 1.2; // what an empty history yields (learned.ts rampCapFor default)
   const bad: string[] = [];
-  for (const weeks of [4, 8, 16, 26]) {
-    const hist = Array.from({ length: weeks }, (_, i) => ({
-      state: athleteState(45),
-      weekStart: new Date(Date.parse(START + "T12:00:00Z") - (weeks - i) * 7 * 86400000)
-        .toISOString()
-        .slice(0, 10),
-    }));
-    const r = deriveBaseRichness(hist, 45);
-    const cap = r ? rampCapFromRichness(r.richness) : defaultCap;
-    if (cap < defaultCap - 1e-9) bad.push(`${weeks}wk→${cap.toFixed(3)}`);
+  // Every history length, both profiles (flat, and returning-with-reclaimable-
+  // base): the derived cap must never fall below the ignorance default, and
+  // must be monotone non-decreasing in history depth for a fixed profile.
+  for (const reclaim of [false, true]) {
+    let prev = defaultCap;
+    for (const weeks of [0, 4, 8, 16, 26, 52, 104, 156]) {
+      const hist = Array.from({ length: weeks }, (_, i) => ({
+        state: athleteState(reclaim ? 60 : 45),
+        weekStart: new Date(Date.parse(START + "T12:00:00Z") - (weeks - i) * 7 * 86400000)
+          .toISOString()
+          .slice(0, 10),
+      }));
+      const r = deriveBaseRichness(hist, 45);
+      const cap = r ? rampCapFromRichness(r.richness) : defaultCap;
+      if (cap < defaultCap - 1e-9) bad.push(`${reclaim ? "reclaim" : "flat"}:${weeks}wk→${cap.toFixed(3)}`);
+      if (cap < prev - 1e-9) bad.push(`${reclaim ? "reclaim" : "flat"}:${weeks}wk non-monotone`);
+      prev = cap;
+    }
   }
-  check("M1-ramp-inversion", "a little history never yields a tighter ramp than no history",
+  check("M1", "rampCap(history) ≥ rampCap(none) for every history level, monotone in depth",
     bad.length === 0, bad.join(", "));
 }
 

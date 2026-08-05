@@ -50,9 +50,18 @@ export function deriveBaseRichness(
   return { richness, peakHistoricalCtl, yearsLogged };
 }
 
-/** De-novo → +10%/wk; deeply base-rich → +30%/wk. Linear in richness. This is
- *  the plan-side ramp cap; the learned layer clamps it to [1.10, RAMP_CAP_HARD_MAX]
- *  and the tissue rampCeiling (when active) takes precedence over it. */
+/**
+ * Base-richness → plan-side ramp cap, FLOORED at the ignorance default (1.2).
+ *
+ * The matrix caught the inversion the un-floored linear map produced: an
+ * empty history fell through to the 1.2 default, while 4–26 weeks of
+ * unremarkable history derived richness ≈0.02–0.10 and a cap of 1.10–1.12 —
+ * importing a month of Strava made the allowed ramp TIGHTER than knowing
+ * nothing. Product decision (2026-08-05): knowing a little must never cost
+ * the athlete headroom; richness only ever pushes UPWARD from the default,
+ * toward the 1.3 ceiling. Values at richness ≥ 0.5 are byte-identical to the
+ * old map. The tissue rampCeiling (when active) still takes precedence.
+ */
 export function rampCapFromRichness(richness: number): number {
-  return 1.1 + 0.2 * clamp(richness, 0, 1);
+  return Math.max(1.2, 1.1 + 0.2 * clamp(richness, 0, 1));
 }

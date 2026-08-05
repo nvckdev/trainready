@@ -50,9 +50,23 @@ const deNovoHistory = Array.from({ length: 30 }, (_, i) => wk(15 + (i % 3), i));
 
 // ——— H3. rampCapFromRichness bounds & monotonicity ——————————————————————
 {
-  check("H3a", "richness 0 ⇒ +10% ; richness 1 ⇒ +30%", rampCapFromRichness(0) === 1.1 && rampCapFromRichness(1) === 1.3);
-  check("H3b", "monotone increasing", rampCapFromRichness(0.3) < rampCapFromRichness(0.6));
-  check("H3c", "clamped to [1.10, 1.30]", rampCapFromRichness(-1) === 1.1 && rampCapFromRichness(2) === 1.3);
+  // Product decision (matrix M1 catch): the derived cap is FLOORED at the
+  // ignorance default — having history must never yield a tighter ramp than
+  // having none. Richness only ever pushes upward, toward the 1.3 ceiling.
+  check("H3a", "richness 0 ⇒ the ignorance default (1.2); richness 1 ⇒ +30%",
+    rampCapFromRichness(0) === 1.2 && rampCapFromRichness(1) === 1.3);
+  check("H3b", "monotone non-decreasing", rampCapFromRichness(0.3) <= rampCapFromRichness(0.6)
+    && rampCapFromRichness(0.6) < rampCapFromRichness(0.9));
+  check("H3c", "clamped to [1.20, 1.30]", rampCapFromRichness(-1) === 1.2 && rampCapFromRichness(2) === 1.3);
+  // Neutrality for the already-rich: richness ≥ 0.5 sat above the floor
+  // before this change and is byte-identical after it.
+  // Byte-identical to the OLD linear map above 0.5 — including its float
+  // representation (1.1 + 0.2·0.5 is 1.2000…02, not 1.2; the floor must not
+  // "clean" it, or already-rich athletes' plans would shift).
+  check("H3d", "richness ≥ 0.5 byte-identical to the pre-floor map",
+    rampCapFromRichness(0.5) === 1.1 + 0.2 * 0.5 &&
+    rampCapFromRichness(0.75) === 1.1 + 0.2 * 0.75 &&
+    rampCapFromRichness(1) === 1.1 + 0.2 * 1);
 }
 
 // ——— H4. peakHint folds in a demonstrated pre-window CTL ————————————————
