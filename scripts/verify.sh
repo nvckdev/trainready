@@ -30,19 +30,28 @@ else
   echo "  ${GRN}PASS${RST} privacy (nothing under data/ staged)"
 fi
 
-# ── 2. Types (three tsconfigs, all intentional) ──
+# ── 2. Types (four tsconfigs, all intentional) ──
 step "tsc app"      npx tsc --noEmit
 step "tsc engine"   npx tsc -p engine --noEmit
 step "tsc pipeline" npx tsc -p pipeline --noEmit
+# The Expo app was outside every gate until 2026-08-05 — no tsc, no lint, no
+# tests — which is where every mobile-lags-dashboard bug in this repo lived.
+step "tsc mobile"   npx tsc -p mobile --noEmit
 
-# ── 3. Lint ──
-step "eslint" npm run -s lint
+# ── 3. Lint (app + Expo app; warnings are pinned, so a NEW one blocks) ──
+step "eslint" npm run -s lint:ci
 
 # ── 3b. PMC recursion + plan-projection tests (engine/pmc.test.ts) ──
 step "engine tests" npm run -s engine:tests
 
 # ── 3c. Workout-renderer + adjustment-sync tests (structure ↔ engine) ──
 step "app tests" npm run -s app:tests
+
+# ── 3d. Expo-app tests (the dashboard→phone pairing contract) ──
+step "mobile tests" npm run -s mobile:tests
+
+# ── 3e. Strength protocols + pain-hold rules (existed, never gated) ──
+step "strength tests" npm run -s strength:tests
 
 # ── 4. Plan invariants vs committed baseline ──
 # Known failures live in scripts/invariants-baseline.txt (the hardening work
