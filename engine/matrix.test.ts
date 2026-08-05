@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { generatePlan, type Plan, type PlanRequest, type RaceType } from "./plan.ts";
 import { deriveZones } from "./zones.ts";
-import type { AthleteState } from "./types.ts";
+import type { AthleteState, Zone } from "./types.ts";
 import { targetDistribution, weekDistribution } from "./intensity.ts";
 import { easyKmhFor, qualityKmhFor, LONG_FRACTION_MAX } from "./goal.ts";
 import { sessionRunKm, weekRunKm } from "./volume.ts";
@@ -730,6 +730,126 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
   check("DS1", `a damped session's title, structure and durationHr agree (${sessionsChecked} sessions across ${damped} damped cells)`,
     bad.length === 0, bad.slice(0, 3).join("; "));
   check("DS2", "the sweep actually damped weeks (not vacuously green)", damped > 100, `${damped} damped`);
+}
+
+// ——— TC. a declared constraint BINDS the caps it claims ————————————————————
+// The tissue seam publishes caps and a "why it caps what it caps" sentence
+// that the plan page renders. Nothing asserted that the plan then obeyed
+// them: the production slice threaded one constraint and checked the generic
+// invariants, so a cap could have been advertised to an injured athlete and
+// quietly ignored. Each lever gets a constraint that pulls it, swept across
+// the whole grid, measured with the ENGINE's own rulers (easyKmhFor /
+// qualityKmhFor via sessionRunKm) rather than a second set.
+{
+  const vTFor = (c: Case) => thresholdMpsFromZones(zonesFor(c));
+  const ZONE_ORDER: Zone[] = ["recovery", "easy", "tempo", "threshold", "cv", "vo2", "race"];
+  const rank = (z: Zone) => ZONE_ORDER.indexOf(z);
+
+  const bad: string[] = [];
+  const rampOver: number[] = [];
+  let bound = 0;
+  let uncapped = 0;
+  for (const c of CASES) {
+    const zones = zonesFor(c);
+    const easy = easyKmhFor(vTFor(c));
+    const qual = qualityKmhFor(vTFor(c));
+    const req = (tissueConstraints: ReturnType<typeof declareTissue>[]): PlanRequest => ({
+      raceName: "Tissue race",
+      raceDate: c.race.date,
+      raceType: c.race.type,
+      daysPerWeek: 6,
+      longDay: "sunday",
+      startDate: START,
+      ...(c.goal !== "none" ? { goalTime: goalTime(c.paceSec, c.race.km, c.goal) } : {}),
+      tissueConstraints,
+    });
+    const gen = (cs: ReturnType<typeof declareTissue>[]) =>
+      generatePlan(req(cs), athleteState(c.ctl), makeHistory(c.history, c.ctl), zones);
+
+    // NEUTRALITY (§12): no constraint and an EMPTY constraint list are the
+    // same thing — a healthy athlete is never capped prophylactically, and
+    // Fokkema found no volume/injury association to justify it if we wanted.
+    // generatedAt is a wall clock, not construction: the repo's own idiom
+    // (prior.test, tuneup.test, pmc.test) stabilises it before comparing.
+    const stable = (x: Plan) => JSON.stringify({ ...x, meta: { ...x.meta, generatedAt: "-" } });
+    if (stable(gen([])) !== stable(generatePlan(
+      { ...req([]), tissueConstraints: undefined }, athleteState(c.ctl), makeHistory(c.history, c.ctl), zones))) {
+      bad.push(`${c.id}: [] differs from absent`);
+    }
+
+    // volume-provoked → weekly km AND long-run km.
+    {
+      const t = declareTissue("shin", "acute", "volume");
+      const plan = gen([t]);
+      const training = plan.weeks.filter((w) => w.phase !== "race");
+      for (const w of training) {
+        const km = weekRunKm(w.sessions, easy, qual);
+        if (t.caps.weeklyKm != null && km > t.caps.weeklyKm + 0.05) {
+          bad.push(`${c.id}: week ${w.weekStart} runs ${km.toFixed(1)} km over a ${t.caps.weeklyKm} km cap`);
+        }
+        const long = w.sessions.find((x) => x.discipline === "run" && /long/i.test(x.title));
+        const lkm = long ? sessionRunKm(long, easy, qual) : 0;
+        if (t.caps.longRunKm != null && lkm > t.caps.longRunKm + 0.05) {
+          bad.push(`${c.id}: long run ${lkm.toFixed(1)} km over a ${t.caps.longRunKm} km cap`);
+        }
+      }
+      bound++;
+    }
+
+    // speed-provoked → an intensity ceiling. No block anywhere may sit above
+    // it: the cap downgrades the SLOT, so a surviving vo2 block means the
+    // downgrade did not reach the session that was actually built.
+    {
+      const t = declareTissue("hamstring", "acute", "speed");
+      const ceiling = t.caps.maxSessionIntensity;
+      if (ceiling == null) uncapped++;
+      else {
+        for (const w of gen([t]).weeks) {
+          for (const x of w.sessions) {
+            if (x.discipline !== "run") continue;
+            for (const b of x.workout?.blocks ?? []) {
+              if (rank(b.zone as Zone) > rank(ceiling)) {
+                bad.push(`${c.id}: "${x.title}" carries ${b.zone} above a ${ceiling} ceiling`);
+              }
+            }
+          }
+        }
+        bound++;
+      }
+    }
+
+    // acute → a ramp ceiling, which must hold week over week where the ramp
+    // is what governs (base/build). A recovery week or a taper falls, and a
+    // ceiling only ever forbids RISING.
+    {
+      const t = declareTissue("calf", "acute", "impact");
+      const ceiling = t.caps.rampCeiling;
+      if (ceiling == null) uncapped++;
+      else {
+        const wks = gen([t]).weeks.filter((w) => w.phase === "base" || w.phase === "build");
+        for (let i = 1; i < wks.length; i++) {
+          const prev = wks[i - 1].targetTss;
+          const next = wks[i].targetTss;
+          // The weekly-60 floor is a rail of its own and outranks the ramp:
+          // a week held at the floor is not the ramp choosing to rise.
+          // targetTss is an integer, so a ceiling of ×1.05 on a 316 TSS week
+          // lands at 331.8 and the plan stores 332 or 333. The allowance is
+          // that rounding and nothing more: measured across the whole grid the
+          // worst overshoot is 1.75 TSS (0.5% of a 330 TSS week), so 2 pins it
+          // as a ratchet rather than a guess.
+          if (prev >= 60 && next > prev * ceiling) {
+            rampOver.push(next - prev * ceiling);
+            if (next > prev * ceiling + 2) bad.push(`${c.id}: ramp ${prev}→${next} over a ×${ceiling} ceiling`);
+          }
+        }
+        bound++;
+      }
+    }
+  }
+  check("TC1", `a declared constraint binds every cap it publishes (${bound} constrained plans across ${CASES.length} athletes; worst ramp rounding ${Math.max(0, ...rampOver).toFixed(2)} TSS)`,
+    bad.length === 0, bad.slice(0, 3).join("; "));
+  check("TC2", "every lever under test actually published a cap (no vacuous pass)",
+    uncapped === 0 && bound === CASES.length * 3, `${uncapped} unpublished, ${bound} bound`);
 }
 
 // ——— golden digests ———————————————————————————————————————————————————————

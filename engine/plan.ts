@@ -573,6 +573,11 @@ const TEMPLATES: Record<Kind, Template> = {
  * title from mins(), a nearest-5 rounding of a duration they then stored to
  * two decimals.
  */
+/** TSS per hour for a kind — the rate that converts between a session's load
+ *  and its duration. Was local to the Z1 shaping block; the weekly-km cap
+ *  needs the same conversion, and two copies of it would be two rulers. */
+const rateOf = (k: Kind) => TEMPLATES[k].intensity * TEMPLATES[k].intensity * 100;
+
 function fitSession(t: Template, zones: Zones, hr: number): { title: string; structure: string; blocks: Block[] } {
   const sec = Math.round(hr * 3600);
   const built = t.build(zones, sec);
@@ -1236,7 +1241,6 @@ export function generatePlan(
         const e = sessions[ei];
         const qKind = sessionKinds[qi];
         const eKind = sessionKinds[ei];
-        const rateOf = (k: Kind) => TEMPLATES[k].intensity * TEMPLATES[k].intensity * 100;
         // The transfer works in TSS space and CONSERVES the week: whatever the
         // donor sheds the recipient absorbs, and duration follows tss with the
         // same 0.4–1.6 h clamps the original build used. A session already
@@ -1350,6 +1354,90 @@ export function generatePlan(
               sessions[ei].structure = efit.structure;
               sessions[ei].workout = { blocks: efit.blocks };
             }
+          }
+        }
+      }
+    }
+
+    // ——— Feature 4, ENFORCED: the declared weekly running-km cap, measured
+    // with the SAME ruler as the plan, the tests and the UI (weekRunKm) after
+    // everything that can move a duration has run.
+    //
+    // The cross-day conversion above binds the cap against slotRunKm — a
+    // PRE-construction estimate. The Z1 floor's demotion then rebuilds a
+    // quality session as easy AT THE SAME TSS, and easy running buys far more
+    // time per TSS (44.9 vs 64 TSS/hr), so the week grew back past the cap
+    // after it had been fitted: the matrix found weeks running 27.8 km under
+    // a declared 24 km ceiling, every one of them flagged demoted-quality.
+    // Identical failure to refinement 5's, and identical fix — this is a
+    // SAFETY cap on an injured athlete, so it is enforced last and measured
+    // the way it is reported.
+    if (caps?.weeklyKm != null && !raceWeek) {
+      const runKm = weekRunKm(sessions, easyKmh, qualityKmh);
+      if (runKm > caps.weeklyKm + 1e-9) {
+        const shrink = caps.weeklyKm / runKm;
+        let freed = 0;
+        for (let i = 0; i < sessions.length; i++) {
+          const x = sessions[i];
+          if (x.discipline !== "run" || sessionKinds[i] === "run-long") continue;
+          const kind = sessionKinds[i];
+          const t = TEMPLATES[kind];
+          // FLOOR, not round: weekRunKm reads the stored duration, and
+          // rounding up would put the week back over the rail by a hair.
+          const hr = Math.floor(x.durationHr * shrink * 100) / 100;
+          if (hr <= 0 || hr >= x.durationHr) continue;
+          freed += x.tss - Math.round(rateOf(kind) * hr);
+          x.durationHr = hr;
+          x.tss = Math.round(rateOf(kind) * hr);
+          const fit = fitSession(t, zones, hr);
+          x.title = fit.title;
+          x.structure = fit.structure;
+          x.workout = { blocks: fit.blocks };
+        }
+        // The long run is the week's anchor and is capped by longRunKm in its
+        // own right; it yields only if the others could not free enough.
+        const li = sessions.findIndex((x, i) => sessionKinds[i] === "run-long" && x.discipline === "run");
+        if (li >= 0 && weekRunKm(sessions, easyKmh, qualityKmh) > caps.weeklyKm + 1e-9) {
+          const over = weekRunKm(sessions, easyKmh, qualityKmh) - caps.weeklyKm;
+          const x = sessions[li];
+          const hr = Math.max(0.4, Math.floor((x.durationHr - over / easyKmh) * 100) / 100);
+          if (hr < x.durationHr) {
+            const kind = sessionKinds[li];
+            freed += x.tss - Math.round(rateOf(kind) * hr);
+            x.durationHr = hr;
+            x.tss = Math.round(rateOf(kind) * hr);
+            const fit = fitSession(TEMPLATES[kind], zones, hr);
+            x.title = fit.title;
+            x.structure = fit.structure;
+            x.workout = { blocks: fit.blocks };
+          }
+        }
+        // Freed load goes to the CROSS-TRAINING days so total aerobic volume
+        // holds while running impact drops — never back onto a run day, which
+        // is the resource the cap constrains (crosstrain X3a). Split across
+        // every non-impact day rather than piled onto the first: one day
+        // absorbing the whole shortfall is how a 24 km cap produced a
+        // 3.9-hour session.
+        const xis = sessions
+          .map((x, i) => ({ x, i }))
+          .filter(({ x }) => x.discipline !== "run" && x.discipline !== "race" && x.discipline !== "rest");
+        if (xis.length > 0 && freed > 0) {
+          const share = freed / xis.length;
+          for (const { x, i } of xis) {
+            const tss = Math.round(x.tss + share);
+            // A substituted day's kind follows its LOAD (crossKindFor), the
+            // same call that built it — sessionKinds holds crossKindFor(0) for
+            // these, which rebuilt a bike as a 232-minute swim when used here.
+            const kind = x.substituted ? crossKindFor(tss) : sessionKinds[i];
+            const t = TEMPLATES[kind];
+            const hr = Math.min(kind === "bike-long" ? 4.5 : 2.5, Math.max(0.4, tss / rateOf(kind)));
+            x.discipline = t.discipline;
+            x.tss = tss;
+            x.durationHr = Math.round(hr * 100) / 100;
+            const fit = fitSession(t, zones, x.durationHr);
+            x.title = x.substituted ? `${fit.title} · cross-train` : fit.title;
+            x.structure = fit.structure;
+            x.workout = { blocks: fit.blocks };
           }
         }
       }
