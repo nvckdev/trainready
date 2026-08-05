@@ -1,3 +1,4 @@
+import { parseAthleteContext } from "./athlete-context";
 /**
  * Tissue-constraint inference tests (feature 4, app layer). Pure over typed
  * inputs — the file-reading loadTissueConstraints is a thin wrapper over
@@ -41,6 +42,17 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
   check("TC3b", "acute wording ⇒ status acute (+ ramp hold)", acute?.status === "acute" && acute?.caps.rampCeiling === 1.05, JSON.stringify(acute?.caps));
   const vol = declaredConstraint({ area: "shin", symptoms: "aches after high mileage weeks" });
   check("TC3c", "volume wording on shin ⇒ weekly-km cap", vol?.provocation === "volume" && vol?.caps.weeklyKm != null, JSON.stringify(vol?.caps));
+}
+
+// ——— E9. absent vs unreadable — the connector distinction on the safety file
+{
+  const ok = parseAthleteContext('{"injuries":[]}');
+  check("TC-E9a", "valid JSON parses ok", ok.status === "ok");
+  const bad = parseAthleteContext('{"injuries": [broken');
+  check("TC-E9b", "a typo'd file is UNREADABLE, never 'no injuries'",
+    bad.status === "unreadable" && !!(bad as { message?: string }).message);
+  const notObj = parseAthleteContext('"just a string"');
+  check("TC-E9c", "a non-object payload is unreadable too", notObj.status === "unreadable");
 }
 
 for (const p of passes) console.log("  " + p);

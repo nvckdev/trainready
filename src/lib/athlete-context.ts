@@ -61,14 +61,47 @@ export interface AthleteContext {
   [key: string]: unknown;
 }
 
-export function readAthleteContext(): AthleteContext | null {
+/**
+ * Absent vs unreadable — the connector layer's distinction, applied to the
+ * safety file (E9). An ABSENT context is a legitimate state: no injuries on
+ * file. An UNREADABLE one (the file exists but does not parse) is a failure,
+ * and reading it as "no injuries" silently drops declared tissue caps from
+ * the next automatic reflow — the one place absence-vs-failure has safety
+ * stakes, not just accuracy stakes.
+ */
+export type AthleteContextRead =
+  | { status: "ok"; context: AthleteContext }
+  | { status: "absent" }
+  | { status: "unreadable"; message: string };
+
+/** Pure parse — exported so the unreadable branch is testable. */
+export function parseAthleteContext(raw: string): AthleteContextRead {
   try {
-    if (!existsSync(CONTEXT_PATH)) return null;
-    const parsed = JSON.parse(readFileSync(CONTEXT_PATH, "utf8"));
-    return parsed && typeof parsed === "object" ? (parsed as AthleteContext) : null;
-  } catch {
-    return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return { status: "ok", context: parsed as AthleteContext };
+    return { status: "unreadable", message: "athlete-context.json is not an object" };
+  } catch (e) {
+    return { status: "unreadable", message: e instanceof Error ? e.message : String(e) };
   }
+}
+
+export function readAthleteContextTagged(): AthleteContextRead {
+  if (!existsSync(CONTEXT_PATH)) return { status: "absent" };
+  let raw: string;
+  try {
+    raw = readFileSync(CONTEXT_PATH, "utf8");
+  } catch (e) {
+    return { status: "unreadable", message: e instanceof Error ? e.message : String(e) };
+  }
+  return parseAthleteContext(raw);
+}
+
+/** Legacy view: collapses both non-ok states to null. Kept for readers where
+ *  the distinction has no safety consequence (display fallbacks). Safety
+ *  paths use readAthleteContextTagged. */
+export function readAthleteContext(): AthleteContext | null {
+  const r = readAthleteContextTagged();
+  return r.status === "ok" ? r.context : null;
 }
 
 /** Merge intake answers into the context file, preserving every other key. */

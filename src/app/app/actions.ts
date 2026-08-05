@@ -26,7 +26,7 @@ import {
 } from "@/lib/strength-protocols";
 import { deloadSets } from "@/lib/strength-schedule";
 import { isPainHeld, surfaceAlerts } from "@/lib/pain-rules";
-import { loadTissueConstraints } from "@/lib/tissue-constraints";
+import { loadTissueConstraintsTagged } from "@/lib/tissue-constraints";
 import { easedVersion } from "@/lib/week-insights";
 
 function buildAndSave(request: PlanRequest): void {
@@ -48,7 +48,15 @@ function buildAndSave(request: PlanRequest): void {
   // them through its reflow of stored.request.
   const req: PlanRequest = {
     ...request,
-    tissueConstraints: loadTissueConstraints(startDate),
+    // Same safety rule as the reflow path (E9): a corrupt safety file must
+    // fail loudly, never silently produce a plan without declared caps.
+    tissueConstraints: (() => {
+      const t = loadTissueConstraintsTagged(startDate);
+      if (t.status === "unreadable") {
+        throw new Error(`athlete-context.json is unreadable (${t.message ?? "parse error"}) — fix it before generating a plan.`);
+      }
+      return t.constraints;
+    })(),
     // Refinement 2: the population prior makes the learned layer live before
     // 24 observed weeks. Explicitly threaded — absent artifact ⇒ undefined ⇒
     // byte-identical plans (and the founder corpus is past the gate anyway).

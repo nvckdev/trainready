@@ -1,4 +1,4 @@
-import { readAthleteContext } from "./athlete-context";
+import { readAthleteContextTagged, readAthleteContext } from "./athlete-context";
 import { readPainLog } from "./strength-io";
 import { surfaceAlerts } from "./pain-rules";
 import type { PainRegion } from "./strength-protocols";
@@ -80,6 +80,25 @@ export function declaredConstraint(inj: { area?: string; symptoms?: string; stat
  * injuries seed the map; a live pain alert on a matching region escalates that
  * site to `acute` (or adds an alert-only constraint). One constraint per site.
  */
+export interface TissueConstraintsRead {
+  constraints: TissueConstraint[];
+  /** "unreadable" ⇒ the safety file exists but cannot be parsed — callers on
+   *  the automatic path must refuse to reflow rather than proceed with the
+   *  athlete's declared caps silently dropped. */
+  status: "ok" | "absent" | "unreadable";
+  message?: string;
+}
+
+/** The safety-aware loader: absent is a real "no injuries on file"; an
+ *  unreadable file is a failure the caller must handle, never an empty list. */
+export function loadTissueConstraintsTagged(today: string): TissueConstraintsRead {
+  const read = readAthleteContextTagged();
+  if (read.status === "unreadable") {
+    return { constraints: [], status: "unreadable", message: read.message };
+  }
+  return { constraints: loadTissueConstraints(today), status: read.status };
+}
+
 export function loadTissueConstraints(today: string): TissueConstraint[] {
   const ctx = readAthleteContext();
   const bySite = new Map<TissueSite, TissueConstraint>();

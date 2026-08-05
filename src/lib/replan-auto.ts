@@ -4,7 +4,7 @@ import { evidenceComplete, reconcileGate, reflowSafeRequest, type ReconcileDecis
 import { loadPopulationPrior } from "../../engine/learned.ts";
 import { getAthlete, getHistory, getStateAt, getWeekly, intervalsConfigured, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readPlan, writePlan } from "@/lib/plan-io";
-import { loadTissueConstraints } from "@/lib/tissue-constraints";
+import { loadTissueConstraintsTagged } from "@/lib/tissue-constraints";
 import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "../../engine/activity.ts";
 import { thresholdMpsFromZones } from "../../engine/zones.ts";
 import { corpusWeeklyMeasured } from "@/lib/connectors";
@@ -190,6 +190,25 @@ function runReconcile(
   const actualState = getStateAt(decision.asOf);
   if (!athlete || !actualState) return { decision, stored, commit: null, note: null, error: null };
 
+  // The safety file gets the connector layer's absent-vs-unreadable
+  // distinction (E9). ABSENT is a real state — no injuries on file, reflow
+  // proceeds without caps. UNREADABLE (the file exists but does not parse —
+  // one typo in a hand-edited JSON) must REFUSE the reflow: proceeding would
+  // silently rewrite the plan without the athlete's declared tissue caps,
+  // which is the one degradation with injury stakes rather than accuracy
+  // stakes. Applies to the manual path too — this branch is safety, not
+  // preference.
+  const tissue = loadTissueConstraintsTagged(decision.asOf);
+  if (tissue.status === "unreadable") {
+    return {
+      decision,
+      stored,
+      commit: null,
+      note: null,
+      error: `athlete-context.json is unreadable (${tissue.message ?? "parse error"}) — refusing to re-plan without your declared injury constraints. Fix the file and re-plan.`,
+    };
+  }
+
   // Refresh tissue constraints (injuries heal, new pain gets logged), thread
   // the population prior, and drop tune-ups that have already happened — the
   // last of which would otherwise make every reflow throw for the rest of the
@@ -197,7 +216,7 @@ function runReconcile(
   const request: PlanRequest = reflowSafeRequest(
     {
       ...stored.request,
-      tissueConstraints: loadTissueConstraints(decision.asOf),
+      tissueConstraints: tissue.constraints,
       priorWeights: loadPopulationPrior() ?? undefined,
     },
     decision.asOf
