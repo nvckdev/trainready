@@ -181,7 +181,7 @@ interface CellResult {
   requiredPeakCtl: number | null;
 }
 
-function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZones>, tag = ""): CellResult {
+function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZones>, tag = "", longCapKm?: number): CellResult {
   const id = (k: string) => `${k}${tag}[${c.id}]`;
   const violations: string[] = [];
   // Violations of a KNOWN class within its bound — the cell reports as caught
@@ -240,9 +240,16 @@ function assertStructure(c: Case, plan: Plan, zones: ReturnType<typeof deriveZon
     if (!long) continue;
     const longKm = sessionRunKm(long, easy, qual);
     const weekKm = weekRunKm(w.sessions, easy, qual);
-    // No slack: the rail is enforced post-construction against these exact
-    // functions, so any excess at all is a real breach.
-    if (longKm > LONG_FRACTION_MAX * weekKm + 1e-6) {
+    // DECLARED CAPS GOVERN (2026-08-06): a plan built with a declared
+    // longRunKm ceiling holds the long AT that ceiling and the 35% heuristic
+    // defers to it — the athlete's own number outranks the guess. Without a
+    // declared cap the heuristic is the rail, with no slack: it is enforced
+    // post-construction against these exact functions.
+    if (longCapKm != null) {
+      if (longKm > longCapKm + 0.05) {
+        violations.push(`long ${w.weekStart} ${longKm.toFixed(1)}km over the declared ${longCapKm} km ceiling`);
+      }
+    } else if (longKm > LONG_FRACTION_MAX * weekKm + 1e-6) {
       violations.push(`long ${w.weekStart} ${longKm.toFixed(1)}/${weekKm.toFixed(1)}km = ${((longKm / weekKm) * 100).toFixed(1)}%`);
     }
   }
@@ -429,7 +436,7 @@ check("G0", `all ${CASES.length} grid cells generate`, thrown === 0, `${thrown} 
         try {
           const plan = generatePlan(req, athleteState(ctl), makeHistory("rich", ctl), zones);
           const before = failures.length;
-          assertStructure(c, plan, zones, ":prod");
+          assertStructure(c, plan, zones, ":prod", req.tissueConstraints![0].caps.longRunKm);
           if (failures.length > before) prodViolations++;
           const tuneup = plan.weeks.flatMap((w) => w.sessions).find((s) => s.discipline === "race" && s.tuneup);
           check(`P-tuneup[${c.id}]`, "tune-up race lands on its date",
@@ -749,6 +756,7 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
   const rampOver: number[] = [];
   let bound = 0;
   let uncapped = 0;
+  let droppedTss = 0;
   for (const c of CASES) {
     const zones = zonesFor(c);
     const easy = easyKmhFor(vTFor(c));
@@ -814,6 +822,12 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
         }
       }
       z1FloorHolds(plan, "volume");
+      // ⑧ is dead across the grid: freed load either lands on a recipient or
+      // the drop is EXPLICIT on the week (freedTssDropped) — and with the
+      // substituted days now legal recipients, nothing should drop at all.
+      for (const w of plan.weeks) {
+        droppedTss += w.freedTssDropped ?? 0;
+      }
       bound++;
     }
 
@@ -873,6 +887,8 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
   }
   check("TC1", `a declared constraint binds every cap it publishes (${bound} constrained plans across ${CASES.length} athletes; worst ramp rounding ${Math.max(0, ...rampOver).toFixed(2)} TSS)`,
     bad.length === 0, bad.slice(0, 3).join("; "));
+  check("TC3", "no freed load is silently discarded on any volume-capped plan — every drop is either placed or explicit, and none occur",
+    droppedTss === 0, `${droppedTss} TSS dropped across the sweep`);
   check("TC2", "every lever under test actually published a cap (no vacuous pass)",
     uncapped === 0 && bound === CASES.length * 3, `${uncapped} unpublished, ${bound} bound`);
 }

@@ -3,6 +3,7 @@ import { deriveZones, thresholdMpsFromZones } from "./zones.ts";
 import type { AthleteState } from "./types.ts";
 import { easyKmhFor, qualityKmhFor, LONG_FRACTION_MAX } from "./goal.ts";
 import { weekRunKm, sessionRunKm } from "./volume.ts";
+import { declareTissue } from "./tissue.ts";
 
 /**
  * Long-run volume-fraction rail (refinement 5). tsx script; exit code =
@@ -128,6 +129,62 @@ const highSeed: AthleteState = {
     vt?.meetsLongFloor === false, `${vt?.peakLongKmActual} km`);
   chk("F4c", "…and the tradeoff is SURFACED, not silently resolved",
     vt?.longCappedByFraction === true);
+}
+
+// ——— F6. DECLARED CAPS GOVERN (the 2026-08-06 denominator decision) ————————
+// The completeness critic measured the failure this pins: acute-calf volume
+// caps {weeklyKm 24, longRunKm 16}, 4:30/km, CTL 45, run-half. The rail
+// re-measured the week against the RUN-RUMP — the substituted days' km had
+// left the denominator — and cut the 91-minute long run at its declared
+// 16 km ceiling to 33 minutes, in a week whose 24 km cap was never
+// approached; prevLongKm then fed 5.9 km into next week's progression.
+{
+  const zones = deriveZones({ ftpWatts: 250, lthrBpm: 170, runThresholdSpeedMps: 1000 / 270, swimCssMps: 1.1 });
+  const w = 45 * 7;
+  const st: AthleteState = {
+    ctl: 45, atl: 45, tsb: 0, last4WeeksTss: [w, w, w, w],
+    last4Shares: { swim: 0, bike: 0.1, run: 0.9 },
+    daysToNextRace: null, weeksSinceStart: 30, breakRatio: 1, daysSinceLastSession: 1,
+  };
+  const t = declareTissue("calf", "acute", "volume");
+  const plan = generatePlan(
+    { raceName: "F6", raceDate: "2026-04-12", raceType: "run-half", daysPerWeek: 6, longDay: "sunday", startDate: "2026-01-05", tissueConstraints: [t] },
+    st, [], zones
+  );
+  const vT = thresholdMpsFromZones(zones);
+  const easy = easyKmhFor(vT);
+  const qual = qualityKmhFor(vT);
+  const cap = t.caps.longRunKm!;
+  const first = plan.weeks[0];
+  const firstLong = first.sessions.find((s) => s.discipline === "run" && /long/i.test(s.title))!;
+  chk("F6a", `the 91-minute long run at its declared ${cap} km ceiling SURVIVES at the ceiling`,
+    Math.abs(sessionRunKm(firstLong, easy, qual) - cap) < 0.1 && Math.round(firstLong.durationHr * 60) >= 88,
+    `${sessionRunKm(firstLong, easy, qual).toFixed(1)} km / ${Math.round(firstLong.durationHr * 60)} min`);
+  chk("F6b", "…inside a week that still honours the 24 km weekly cap",
+    weekRunKm(first.sessions, easy, qual) <= t.caps.weeklyKm! + 0.05,
+    `${weekRunKm(first.sessions, easy, qual).toFixed(1)} km`);
+
+  // (d) the compounding is dead: consecutive capped build weeks HOLD — the
+  // progression feeds from the governed value, so the long run never decays
+  // week over week under a constant cap.
+  let prevKm = -1;
+  let sawtooth = "";
+  let dropped = 0;
+  for (const wk of plan.weeks) {
+    dropped += wk.freedTssDropped ?? 0;
+    if (wk.phase !== "build") continue;
+    const long = wk.sessions.find((s) => s.discipline === "run" && /long/i.test(s.title));
+    if (!long) continue;
+    const km = sessionRunKm(long, easy, qual);
+    if (prevKm > 0 && km < prevKm - 1) sawtooth = `${wk.weekStart} ${prevKm.toFixed(1)}→${km.toFixed(1)}`;
+    prevKm = km;
+  }
+  chk("F6c", "consecutive capped build weeks hold — no week-over-week decay through prevLongKm",
+    sawtooth === "", sawtooth);
+  chk("F6d", "…and every build long run sits within 1 km of the declared ceiling, not the 5.9 km collapse",
+    prevKm > cap - 1.05, `last build long ${prevKm.toFixed(1)} km`);
+  chk("F6e", "no freed load was silently discarded anywhere in the plan (the 5692/5692 recipient hole is dead)",
+    dropped === 0, `${dropped} TSS dropped`);
 }
 
 for (const p of passes) console.log(p);
