@@ -1,4 +1,4 @@
-import { dedupeActivities, dailyExecutedTss, isDayCovered } from "../../engine/activity.ts";
+import { dedupeActivities, dailyExecutedTss, isDayCovered, type Coverage, type ImportedActivity } from "../../engine/activity.ts";
 import type { GapEvidence } from "../../engine/seed.ts";
 import { thresholdMpsFromZones } from "../../engine/zones.ts";
 import type { Plan } from "../../engine/plan.ts";
@@ -21,12 +21,18 @@ import { readSyncStore } from "@/lib/sync-io";
  * activities plus the stored plan's done-marks — handed to the same PMC
  * recursion that was already in engine/seed.ts. One ruler, one recursion.
  */
-export function gapEvidence(plan?: Plan | null): GapEvidence {
-  const athlete = getAthlete();
-  const ctx = athlete
-    ? { runThresholdMps: thresholdMpsFromZones(athlete.zones), lthrBpm: athlete.thresholds.lthrBpm }
-    : {};
-
+/**
+ * The pure core: gap evidence from explicit inputs. Exported so the wiring —
+ * which source feeds which field — is testable; gapEvidence() below is the
+ * thin reader that gathers the live inputs and MUST add nothing else.
+ */
+export function gapEvidenceFrom(
+  plan: Plan | null | undefined,
+  activities: ImportedActivity[],
+  coverage: Coverage[],
+  ctx: { runThresholdMps?: number; lthrBpm?: number },
+  localDate: (isoInstant: string) => string
+): GapEvidence {
   // Done-marks are positive-only evidence, exactly as in the weekly rollup:
   // a tapped session proves training happened, an untapped day proves
   // nothing. They never contribute coverage.
@@ -37,17 +43,24 @@ export function gapEvidence(plan?: Plan | null): GapEvidence {
       doneByDate.set(s.date, (doneByDate.get(s.date) ?? 0) + s.tss);
     }
   }
+  const load = dailyExecutedTss(doneByDate, activities, ctx, localDate);
+  return { load, covered: (day) => isDayCovered(coverage, day) };
+}
 
+export function gapEvidence(plan?: Plan | null): GapEvidence {
+  const athlete = getAthlete();
+  const ctx = athlete
+    ? { runThresholdMps: thresholdMpsFromZones(athlete.zones), lthrBpm: athlete.thresholds.lthrBpm }
+    : {};
   const sync = readSyncStore();
-  const load = dailyExecutedTss(
-    doneByDate,
+  return gapEvidenceFrom(
+    plan,
     dedupeActivities(sync.activities),
+    sync.coverage,
     ctx,
     // Bucket on the athlete's calendar, the same clock the plan's dates and
     // the weekly rollup use (E7) — an evening run belongs to the day the
     // athlete ran it.
     (iso) => nyDate(new Date(iso))
   );
-
-  return { load, covered: (day) => isDayCovered(sync.coverage, day) };
 }

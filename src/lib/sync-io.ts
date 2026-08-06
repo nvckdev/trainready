@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { mergeSyncEvidence, sinceForSync, syncAll, type SyncEvidence, type SyncSourceStatus } from "../../engine/connector.ts";
+import { mergeSyncEvidence, syncAll, type SyncEvidence, type SyncSourceStatus } from "../../engine/connector.ts";
+import { syncWindow } from "@/lib/sync-window";
 import { dashboardConnectors } from "@/lib/connectors";
 import { readPlan } from "@/lib/plan-io";
 import { localToday } from "@/lib/athlete-data";
@@ -63,22 +64,15 @@ export function syncDue(now = Date.now()): boolean {
 export async function runSync(): Promise<SyncStore> {
   const prev = readSyncStore();
   const todayIso = new Date().toISOString();
-  // The window must reach the plan's first week — an 18-week plan outruns
-  // the default 120-day lookback, and a window shorter than the plan
-  // silently un-covers its early weeks (E10).
+  // Window and retention are one pure decision (sync-window.ts) so the E10
+  // wiring is snapshot-tested rather than trusted.
   const planStart = readPlan()?.plan.weeks[0]?.weekStart;
-  const since = sinceForSync(planStart, todayIso);
+  const { since, pruneBefore } = syncWindow(planStart, todayIso);
   const connectors = dashboardConnectors();
   const summary = await syncAll(connectors, since);
   // Additive by construction (engine mergeSyncEvidence): a refetch can add
   // or corroborate evidence but never erase it, coverage only grows, and a
-  // failed source keeps everything it ever contributed. Retention prunes
-  // only what precedes the plan by more than a month.
-  // No plan ⇒ no prune: erasing to the default window is the E10 bug in
-  // miniature. Retention only applies against a KNOWN horizon.
-  const pruneBefore = planStart
-    ? new Date(Date.parse(planStart + "T12:00:00Z") - 30 * 86400000).toISOString().slice(0, 10)
-    : undefined;
+  // failed source keeps everything it ever contributed.
   const store = mergeSyncEvidence(prev, summary, connectors, todayIso, pruneBefore);
   writeSyncStore(store);
   return store;

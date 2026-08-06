@@ -1,5 +1,6 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
-import { buildLedger, demonstratedTrailingTss, recomputeRemaining } from "../../engine/replan.ts";
+import { recomputeRemaining } from "../../engine/replan.ts";
+import { buildReflowInput } from "@/lib/reflow-input";
 import {
   type DoneMarkFill,
   carryStatusForward,
@@ -19,7 +20,6 @@ import { thresholdMpsFromZones } from "../../engine/zones.ts";
 import { corpusWeeklyMeasured } from "@/lib/connectors";
 import { readSyncStore } from "@/lib/sync-io";
 import { gapEvidence } from "@/lib/fitness-evidence";
-import { tooSpeculativeToPrescribe } from "../../engine/seed.ts";
 import { nyDate } from "@/lib/imports-io";
 
 /**
@@ -149,87 +149,29 @@ function runReconcile(
   if (!decision.due) return { decision, stored, commit: null, note: null, error: null };
 
   const athlete = getAthlete();
-  // E8: the state that seeds this reflow must see the evidence the gate just
-  // judged on. The corpus trails reality by however long it has been since
-  // the last extraction; rolling that tail at zero load understated fitness
-  // by ~40% over three stale weeks and prescribed the whole remaining season
-  // from it. Same merged daily stream, same recursion — see fitness-evidence.
-  const actualState = getStateAt(decision.asOf, gapEvidence(stored.plan));
-  if (!athlete || !actualState) return { decision, stored, commit: null, note: null, error: null };
-
-  // An assumed-zero day is not a measurement. A handful is tolerable — the
-  // error is bounded and, because unknown days can only ever have ADDED
-  // load, the resulting CTL is a LOWER bound, so the risk is one-directional:
-  // prescribing too little. Past a few days that understatement is large
-  // enough to damp a season, so the reflow declines rather than acting on a
-  // state it mostly assumed. Refusing is the same answer the gate gives when
-  // it cannot see a week (no-execution-data) — applied to fitness.
-  if (tooSpeculativeToPrescribe(actualState)) {
-    const since = actualState.anchorDate ?? "the last extraction";
-    return {
-      decision,
-      stored,
-      commit: null,
-      note: null,
-      error: `${actualState.zeroLoadDays} days since ${since} have no training data from any source — refusing to re-plan from a fitness estimate that assumes you did nothing. Connect a source or refresh the extraction, and the plan will adapt.`,
-    };
+  // All reads gathered HERE; the assembly itself is pure (reflow-input.ts) so
+  // the field-by-field wiring is snapshot-tested. E8: the state that seeds
+  // this reflow must see the evidence the gate just judged on — same merged
+  // daily stream, same recursion (fitness-evidence).
+  const assembly = buildReflowInput(stored, decision, fill, {
+    actualState: getStateAt(decision.asOf, gapEvidence(stored.plan)),
+    tissue: loadTissueConstraintsTagged(decision.asOf),
+    priorWeights: loadPopulationPrior() ?? undefined,
+    eras: loadEras() ?? undefined,
+    raceAnchors: loadRaceAnchors(),
+    history: getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss, weekStart: h.weekStart })),
+    zones: athlete?.zones ?? null,
+    prePlanMeasured: corpusWeeklyMeasured().measured,
+  });
+  if (assembly.kind === "skip") return { decision, stored, commit: null, note: null, error: null };
+  if (assembly.kind === "refuse") {
+    return { decision, stored, commit: null, note: null, error: assembly.error };
   }
-
-  // The safety file gets the connector layer's absent-vs-unreadable
-  // distinction (E9). ABSENT is a real state — no injuries on file, reflow
-  // proceeds without caps. UNREADABLE (the file exists but does not parse —
-  // one typo in a hand-edited JSON) must REFUSE the reflow: proceeding would
-  // silently rewrite the plan without the athlete's declared tissue caps,
-  // which is the one degradation with injury stakes rather than accuracy
-  // stakes. Applies to the manual path too — this branch is safety, not
-  // preference.
-  const tissue = loadTissueConstraintsTagged(decision.asOf);
-  if (tissue.status === "unreadable") {
-    return {
-      decision,
-      stored,
-      commit: null,
-      note: null,
-      error: `athlete-context.json is unreadable (${tissue.message ?? "parse error"}) — refusing to re-plan without your declared injury constraints. Fix the file and re-plan.`,
-    };
-  }
-
-  // Refresh tissue constraints (injuries heal, new pain gets logged), thread
-  // the population prior, and drop tune-ups that have already happened — the
-  // last of which would otherwise make every reflow throw for the rest of the
-  // season (engine/reconcile.ts reflowSafeRequest).
-  const request: PlanRequest = reflowSafeRequest(
-    {
-      ...stored.request,
-      tissueConstraints: tissue.constraints,
-      priorWeights: loadPopulationPrior() ?? undefined,
-      // E6: refreshed per reflow like tissue — never read inside the engine.
-      eras: loadEras() ?? undefined,
-      raceAnchors: loadRaceAnchors(),
-    },
-    decision.asOf
-  );
+  const { request, input } = assembly;
 
   let result;
   try {
-    result = recomputeRemaining({
-      stored: { request, plan: stored.plan },
-      actualState,
-      // ⑤: the SAME merged, E3-filtered evidence the gate and ledger use —
-      // never the raw corpus rollup, whose trailing row may be a half-
-      // extracted week (verified live: 2026-06-29 at 39 TSS of a real 334).
-      actualTrailingTss: demonstratedTrailingTss(
-        stored.plan.weeks,
-        decision.asOf,
-        fill.executed,
-        fill.partial,
-        corpusWeeklyMeasured().measured
-      ),
-      ledger: buildLedger(stored.plan.weeks, decision.asOf, fill.executed, fill.partial),
-      asOf: decision.asOf,
-      history: getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss, weekStart: h.weekStart })),
-      zones: athlete.zones,
-    });
+    result = recomputeRemaining(input);
   } catch (e) {
     // The gate is the primary defence; this exists so an unforeseen invariant
     // can never leave the athlete without a plan. Leave the stored plan alone.

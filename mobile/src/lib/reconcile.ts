@@ -1,7 +1,7 @@
-import type { Plan, PlanRequest } from "@engine/plan.ts";
+import type { Plan } from "@engine/plan.ts";
 import { readTissue } from "./tissue-store";
 import type { AthleteState } from "@engine/types.ts";
-import { buildLedger, demonstratedTrailingTss, recomputeRemaining } from "@engine/replan.ts";
+import { recomputeRemaining } from "@engine/replan.ts";
 import {
   type DoneMarkFill,
   carryStatusForward,
@@ -10,12 +10,12 @@ import {
   preserveCompletedWeeks,
   withDoneMarkFallback,
 } from "@engine/plan-ops.ts";
-import { evidenceComplete, reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
+import { evidenceComplete, reconcileGate } from "@engine/reconcile.ts";
 import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
 import { thresholdMpsFromZones } from "@engine/zones.ts";
-import { tooSpeculativeToPrescribe } from "@engine/seed.ts";
 import { localToday, setPlan, zonesFor, type StoredAthlete, type StoredPlan } from "./store";
 import { seedActualState } from "./fitness-seed";
+import { buildMobileReflowInput } from "./reflow-input";
 import { readSync } from "./sync";
 import { healthKitPossible } from "./healthkit";
 
@@ -174,61 +174,25 @@ export async function reconcileIfDue(
   });
   if (!decision.due) return { changed: false, reason: decision.reason, note: null };
 
-  // E8, on the phone: the state that seeds this reflow is rolled through the
-  // engine's own gap loop, which COUNTS every day nothing vouched for. A
-  // scheduled session with no tap, no import and no coverage is an
-  // assumption, not a rest day.
-  const actualState = seedActualState(
-    athlete.seed, athlete.anchor, stored.plan, decision.asOf, stream, sync.coverage, ctx, athleteLocalDate(athlete.tz)
-  );
-  if (tooSpeculativeToPrescribe(actualState)) {
-    // Same answer the dashboard gives on identical evidence: refuse to
-    // re-plan a season from a fitness estimate that assumes the athlete did
-    // nothing. The remedy is stated because the athlete can actually do it.
-    return {
-      changed: false,
-      reason: `${actualState.zeroLoadDays} scheduled days since ${actualState.anchorDate ?? "pairing"} have no tap, no import and no coverage — refusing to re-plan from a fitness estimate that assumes you did nothing. Tap the sessions you completed and the plan will adapt.`,
-      note: null,
-    };
-  }
-  // Tissue constraints are refreshed per reflow, like the dashboard's:
-  // injuries heal and new ones get declared, and a request carrying last
-  // season's caps is as wrong as one carrying none. Mobile threaded NOTHING
-  // here before it could declare — a constraint declared on the phone would
-  // have been inert.
-  const tissue = await readTissue(decision.asOf);
-  if (tissue.status === "unreadable") {
-    // The E9 discipline, on the phone: caps that cannot be READ are not caps
-    // that are absent. Re-planning an injured athlete without their declared
-    // limits is the one degradation with injury stakes rather than accuracy
-    // stakes, so this refuses instead of proceeding uncapped.
-    return {
-      changed: false,
-      reason: `tissue-declarations unreadable (${tissue.message ?? "parse error"}) — refusing to re-plan without your declared injury limits`,
-      note: null,
-    };
-  }
-  const request: PlanRequest = reflowSafeRequest(
-    { ...stored.request, priorWeights: athlete.priorWeights, tissueConstraints: tissue.constraints },
-    decision.asOf
-  );
+  // All reads gathered here; the field-by-field assembly is pure
+  // (reflow-input.ts) and snapshot-tested. E8: the state rolls through the
+  // engine's own gap loop, which COUNTS every day nothing vouched for; the
+  // tissue store is re-read per reflow (injuries heal, new ones get
+  // declared).
+  const assembly = buildMobileReflowInput(stored, decision, executed, {
+    actualState: seedActualState(
+      athlete.seed, athlete.anchor, stored.plan, decision.asOf, stream, sync.coverage, ctx, athleteLocalDate(athlete.tz)
+    ),
+    tissue: await readTissue(decision.asOf),
+    priorWeights: athlete.priorWeights,
+    zones,
+  });
+  if (assembly.kind === "refuse") return { changed: false, reason: assembly.reason, note: null };
+  const { request, input } = assembly;
 
   let result;
   try {
-    result = recomputeRemaining({
-      stored: { request, plan: stored.plan },
-      actualState,
-      // Known weeks only — a fabricated zero here depressed the very
-      // capacity terms the rebaseline reads (E2).
-      // Same window builder as the dashboard; a phone has no pre-plan corpus,
-      // so the pre-plan map is empty — but the function is shared so the two
-      // surfaces cannot drift on what "demonstrated capacity" means.
-      actualTrailingTss: demonstratedTrailingTss(stored.plan.weeks, decision.asOf, executed.executed, executed.partial),
-      ledger: buildLedger(stored.plan.weeks, decision.asOf, executed.executed, executed.partial),
-      asOf: decision.asOf,
-      history: [],
-      zones,
-    });
+    result = recomputeRemaining(input);
   } catch (e) {
     // The gate is the primary defence; this guarantees a failed reflow can
     // never leave the athlete without a plan.
