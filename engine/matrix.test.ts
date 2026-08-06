@@ -766,6 +766,26 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
     const gen = (cs: ReturnType<typeof declareTissue>[]) =>
       generatePlan(req(cs), athleteState(c.ctl), makeHistory(c.history, c.ctl), zones);
 
+    // The Z1 hard floor on the FINAL built weeks of a constrained plan — the
+    // 2026-08-06 verification pass measured 42 of 1536 volume-capped
+    // base/build weeks at down to 75% easy against the 0.85 floor, every one
+    // reporting z1FloorAction "none": the shaping held at construction and
+    // the fraction rail and km cap broke it two passes later. Same rule as
+    // the per-cell check (floor met, or the breach SURFACED), applied to
+    // every lever's plan because every lever can move easy running out of a
+    // week.
+    const z1FloorHolds = (plan: Plan, lever: string) => {
+      for (const w of plan.weeks) {
+        if (w.phase !== "base" && w.phase !== "build") continue;
+        if (w.sessions.some((x) => x.discipline === "race" && x.tuneup)) continue;
+        const d = weekDistribution(w.sessions);
+        if (d.totalSec <= 0) continue;
+        if (d.z1Pct < 0.85 - 1e-9 && w.z1FloorAction !== "unreachable") {
+          bad.push(`${c.id}[${lever}]: z1 ${(d.z1Pct * 100).toFixed(1)}% on ${w.weekStart} action=${w.z1FloorAction ?? "none"}`);
+        }
+      }
+    };
+
     // NEUTRALITY (§12): no constraint and an EMPTY constraint list are the
     // same thing — a healthy athlete is never capped prophylactically, and
     // Fokkema found no volume/injury association to justify it if we wanted.
@@ -793,6 +813,7 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
           bad.push(`${c.id}: long run ${lkm.toFixed(1)} km over a ${t.caps.longRunKm} km cap`);
         }
       }
+      z1FloorHolds(plan, "volume");
       bound++;
     }
 
@@ -804,7 +825,9 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
       const ceiling = t.caps.maxSessionIntensity;
       if (ceiling == null) uncapped++;
       else {
-        for (const w of gen([t]).weeks) {
+        const speedPlan = gen([t]);
+        z1FloorHolds(speedPlan, "speed");
+        for (const w of speedPlan.weeks) {
           for (const x of w.sessions) {
             if (x.discipline !== "run") continue;
             for (const b of x.workout?.blocks ?? []) {
@@ -826,7 +849,9 @@ const TITLE_DURATION = /(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(h?)(?=\D*$)/;
       const ceiling = t.caps.rampCeiling;
       if (ceiling == null) uncapped++;
       else {
-        const wks = gen([t]).weeks.filter((w) => w.phase === "base" || w.phase === "build");
+        const impactPlan = gen([t]);
+        z1FloorHolds(impactPlan, "impact");
+        const wks = impactPlan.weeks.filter((w) => w.phase === "base" || w.phase === "build");
         for (let i = 1; i < wks.length; i++) {
           const prev = wks[i - 1].targetTss;
           const next = wks[i].targetTss;

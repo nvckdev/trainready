@@ -1359,6 +1359,36 @@ export function generatePlan(
       }
     }
 
+    /** Freed running load goes to the CROSS-TRAINING days so total aerobic
+     *  volume holds while running impact drops — never back onto a run day,
+     *  which is the resource a weekly-km cap constrains (crosstrain X3a).
+     *  Split across every non-impact day rather than piled onto the first:
+     *  one day absorbing a whole shortfall is how a 24 km cap once produced a
+     *  3.9-hour session. A substituted day's kind follows its LOAD
+     *  (crossKindFor), the same call that built it — sessionKinds holds
+     *  crossKindFor(0) for these. Shared by the weekly-km cap and the final
+     *  Z1 floor re-check, ONE implementation on purpose. */
+    const spreadAcrossCrossDays = (freed: number): void => {
+      const xis = sessions
+        .map((x, i) => ({ x, i }))
+        .filter(({ x }) => x.discipline !== "run" && x.discipline !== "race" && x.discipline !== "rest");
+      if (xis.length === 0 || freed <= 0) return;
+      const share = freed / xis.length;
+      for (const { x, i } of xis) {
+        const tss = Math.round(x.tss + share);
+        const kind = x.substituted ? crossKindFor(tss) : sessionKinds[i];
+        const t = TEMPLATES[kind];
+        const hr = Math.min(kind === "bike-long" ? 4.5 : 2.5, Math.max(0.4, tss / rateOf(kind)));
+        x.discipline = t.discipline;
+        x.tss = tss;
+        x.durationHr = Math.round(hr * 100) / 100;
+        const fit = fitSession(t, zones, x.durationHr);
+        x.title = x.substituted ? `${fit.title} · cross-train` : fit.title;
+        x.structure = fit.structure;
+        x.workout = { blocks: fit.blocks };
+      }
+    };
+
     // ——— Feature 4, ENFORCED: the declared weekly running-km cap, measured
     // with the SAME ruler as the plan, the tests and the UI (weekRunKm) after
     // everything that can move a duration has run.
@@ -1412,35 +1442,78 @@ export function generatePlan(
             x.workout = { blocks: fit.blocks };
           }
         }
-        // Freed load goes to the CROSS-TRAINING days so total aerobic volume
-        // holds while running impact drops — never back onto a run day, which
-        // is the resource the cap constrains (crosstrain X3a). Split across
-        // every non-impact day rather than piled onto the first: one day
-        // absorbing the whole shortfall is how a 24 km cap produced a
-        // 3.9-hour session.
-        const xis = sessions
-          .map((x, i) => ({ x, i }))
-          .filter(({ x }) => x.discipline !== "run" && x.discipline !== "race" && x.discipline !== "rest");
-        if (xis.length > 0 && freed > 0) {
-          const share = freed / xis.length;
-          for (const { x, i } of xis) {
-            const tss = Math.round(x.tss + share);
-            // A substituted day's kind follows its LOAD (crossKindFor), the
-            // same call that built it — sessionKinds holds crossKindFor(0) for
-            // these, which rebuilt a bike as a 232-minute swim when used here.
-            const kind = x.substituted ? crossKindFor(tss) : sessionKinds[i];
-            const t = TEMPLATES[kind];
-            const hr = Math.min(kind === "bike-long" ? 4.5 : 2.5, Math.max(0.4, tss / rateOf(kind)));
-            x.discipline = t.discipline;
-            x.tss = tss;
-            x.durationHr = Math.round(hr * 100) / 100;
-            const fit = fitSession(t, zones, x.durationHr);
-            x.title = x.substituted ? `${fit.title} · cross-train` : fit.title;
-            x.structure = fit.structure;
-            x.workout = { blocks: fit.blocks };
-          }
-        }
+        spreadAcrossCrossDays(freed);
       }
+    }
+
+    // ——— The Z1 floor, RE-MEASURED after the last pass that can move load —
+    // The shaping pass above constructs the week to the phase Z1 target, but
+    // the fraction rail and the weekly-km cap both run AFTER it and both can
+    // move easy running out of the week (the km cap converts easy days to
+    // cross-training; the fraction rail shortens the long run). Until
+    // 2026-08-06 nothing re-measured: a volume-capped athlete's weeks ran 25%
+    // hard against the 0.85 floor while z1FloorAction said "none" — the rail
+    // held at construction and silently broke two passes later, on exactly
+    // the injured population it exists for. Same resolution as the fraction
+    // and weekly-km fixes: enforce last, measure the way it is reported
+    // (weekDistribution — the ruler the matrix, the plan page and the tests
+    // all read). Tune-up weeks are exempt as everywhere else: their quality
+    // is the B-race, and demoting a race is not a thing.
+    if (isRunRace && (p.phase === "base" || p.phase === "build") && !tuneup) {
+      const z1Floor = z1FloorFor(p.phase);
+      const kmCapped = caps?.weeklyKm != null && !raceWeek;
+      for (let round = 0; round < 4; round++) {
+        const d = weekDistribution(sessions);
+        if (d.totalSec <= 0 || d.z1Pct >= z1Floor - 1e-9) break;
+        // Hardest remaining demotable quality run (never a race, never a
+        // cross-substituted day — those are not runs anymore).
+        let qi = -1;
+        for (let i = 0; i < sessions.length; i++) {
+          if (sessions[i].discipline !== "run") continue;
+          const z = KIND_ZONE[sessionKinds[i]];
+          if (z === undefined) continue;
+          if (qi < 0 || zRank(z) > zRank(KIND_ZONE[sessionKinds[qi]]!)) qi = i;
+        }
+        if (qi < 0) {
+          weekZ1FloorAction = "unreachable";
+          break;
+        }
+        const q = sessions[qi];
+        if (kmCapped) {
+          // In a km-capped week, km is the constrained resource — the cap is
+          // a SAFETY ceiling that was enforced one pass ago, and the usual
+          // same-TSS demotion would grow this session's km by ~25% (easy km/h
+          // is lower AND easy TSS/hr is lower) and quietly un-bind it. So the
+          // demotion holds the session's KM constant instead, and the freed
+          // load takes the same non-impact channel the cap itself uses.
+          const hr = Math.min(1.6, Math.round(q.durationHr * (qualityKmh / easyKmh) * 100) / 100);
+          const newTss = Math.round(rateOf("run-easy") * hr);
+          const freed = q.tss - newTss;
+          q.durationHr = hr;
+          q.tss = newTss;
+          const fit = fitSession(TEMPLATES["run-easy"], zones, hr);
+          q.title = fit.title;
+          q.structure = fit.structure;
+          q.workout = { blocks: fit.blocks };
+          spreadAcrossCrossDays(freed);
+        } else {
+          // Uncapped: the original demotion contract — same TSS, less
+          // intensity, more easy volume, the week conserved.
+          const hr = Math.min(1.6, Math.max(0.4, q.tss / rateOf("run-easy")));
+          q.durationHr = Math.round(hr * 100) / 100;
+          q.tss = Math.round(rateOf("run-easy") * q.durationHr);
+          const fit = fitSession(TEMPLATES["run-easy"], zones, q.durationHr);
+          q.title = fit.title;
+          q.structure = fit.structure;
+          q.workout = { blocks: fit.blocks };
+        }
+        sessionKinds[qi] = "run-easy";
+        weekZ1FloorAction = "demoted-quality";
+      }
+      // Demotions exhausted and the floor still unmet: say so. A breach that
+      // reports "none" is the defect this block exists to end.
+      const final = weekDistribution(sessions);
+      if (final.totalSec > 0 && final.z1Pct < z1Floor - 1e-9) weekZ1FloorAction = "unreachable";
     }
 
     // Track the emitted long-run distance for next week's progression (like
