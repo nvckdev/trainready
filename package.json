@@ -17,7 +17,7 @@
     "prepare": "git config core.hooksPath .githooks || true",
     "verify": "bash scripts/verify.sh",
     "train:prior": "tsx scripts/train-population-prior.ts",
-    "mobile:tests": "tsx mobile/src/lib/pair.test.ts && tsx mobile/src/lib/health-codec.test.ts && tsx mobile/src/lib/plan-request.test.ts",
+    "mobile:tests": "tsx mobile/src/lib/pair.test.ts && tsx mobile/src/lib/health-codec.test.ts && tsx mobile/src/lib/plan-request.test.ts && tsx mobile/src/lib/fitness-seed.test.ts",
     "lint:ci": "eslint --max-warnings 0"
   },
   "dependencies": {

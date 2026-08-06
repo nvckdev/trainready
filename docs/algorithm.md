@@ -74,11 +74,10 @@ Three facts a maintainer must internalize:
 
 - **The time constants 42 and 7 are never tuned.** They are the standard
   Coggan/TrainingPeaks constants; the entire corpus, the backtest pins, the
-  dashboard's Today header, and the mobile app all assume them. They appear in
-  `engine/plan.ts` (plan simulation), `pipeline/lib/derive.ts` (corpus
-  derivation), and `engine/seed.ts` (zero-load roll-forward) — always as the
-  same literal recursion, deliberately duplicated rather than abstracted so a
-  "refactor" can't quietly change one copy.
+  dashboard's Today header, and the mobile app all assume them. The recursion
+  is written out in **five** places — the full list lives in §9 seam 1 —
+  always as the same literal recursion, deliberately duplicated rather than
+  abstracted so a "refactor" can't quietly change one copy.
 - **TSB uses *yesterday's* CTL−ATL** (the TrainingPeaks convention): the form
   you wake into, not the form after today's workout.
 - **Useful identities.** Holding daily TSS `t` for a week moves CTL by
@@ -332,16 +331,21 @@ A weaker model working on this codebase should treat these as hard
 constraints. Violating any of them is a rejected change, full stop.
 
 1. **The PMC recursion** (τ=42/7, TSB convention) — never tuned, never
-   abstracted. It is written out in **six** places, and all six must stay
+   abstracted. It is written out in **five** places, and all five must stay
    literally identical: `engine/plan.ts` (the plan's week simulation),
-   `engine/seed.ts` (roll-forward to the seed date), `engine/replan.ts`
+   `engine/seed.ts` (roll-forward to the seed date, including the gap loop
+   every surface's fitness state now routes through), `engine/replan.ts`
    (`resimulateProjected`), `pipeline/lib/derive.ts` (the corpus daily
-   series), `src/lib/strava-data.ts` (the no-corpus Strava estimate) and
-   `mobile/src/lib/reconcile.ts` (`executedDailyPmc`). This doc claimed
-   "three" until 2026-08-05, which was the count when the rule was written
-   and would have let a reader "fix" the other three without realising they
-   were load-bearing. Adding a seventh is a rejected change: thread one of
-   the existing functions instead.
+   series) and `src/lib/strava-data.ts` (the no-corpus Strava estimate).
+   Mobile carries NO copy: its two private replays (`executedDailyPmc` and
+   an inline loop in `evidenceSeedState`) were deleted on 2026-08-06 — they
+   filled uncovered days with zeros nothing had vouched for, they disagreed
+   with each other by one day, and one of them was never on this list at
+   all. That is the standing lesson of this count: the doc claimed "three"
+   until 2026-08-05 and "six" until 2026-08-06, and each undercount hid a
+   copy that could drift. Adding a copy anywhere is a rejected change:
+   thread `engine/seed.ts` (state seeding) or one of the other listed
+   functions instead.
 2. **The backtest path must not see plan-only signals.**
    `engine/backtest.ts` replays corpus rows through `prescribeWeek` directly.
    Any new behavior gated on a field that backtest rows don't carry is safe;

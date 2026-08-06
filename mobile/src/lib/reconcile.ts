@@ -10,10 +10,11 @@ import {
   withDoneMarkFallback,
 } from "@engine/plan-ops.ts";
 import { evidenceComplete, reconcileGate, reflowSafeRequest } from "@engine/reconcile.ts";
-import { dailyExecutedTss, dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
+import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "@engine/activity.ts";
 import { thresholdMpsFromZones } from "@engine/zones.ts";
-import { seedStateAt, type DailyPmcPoint } from "@engine/seed.ts";
+import { tooSpeculativeToPrescribe } from "@engine/seed.ts";
 import { localToday, setPlan, zonesFor, type StoredAthlete, type StoredPlan } from "./store";
+import { seedActualState } from "./fitness-seed";
 import { readSync } from "./sync";
 import { healthKitPossible } from "./healthkit";
 
@@ -30,10 +31,6 @@ import { healthKitPossible } from "./healthkit";
  * a zero. A genuinely empty covered week reflows, which is the correct
  * response to real evidence of no training.
  */
-
-const DAY = 86400000;
-const at = (d: string) => Date.parse(d + "T12:00:00Z");
-const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /**
  * Executed TSS per plan week.
@@ -78,78 +75,31 @@ export function executedByWeek(
 }
 
 /**
- * Daily PMC series from the merged evidence (done marks + imports) between
- * two dates.
+ * The athlete's CURRENT fitness from everything this device knows — the seed,
+ * rolled forward through engine/seed.ts's own pinned gap loop over the merged
+ * evidence (done-marks + imports + coverage + the plan's own rest days). Built
+ * for new-plan generation: the review caught goal.tsx seeding from pure
+ * zero-load decay, which turned eight weeks of tapped training into a
+ * near-beginner CTL (the mirror image of the Mobile-1 fiction).
  *
- * This is the τ=42/7 recursion (rule 6 — never tuned, deliberately written out
- * rather than abstracted, exactly as in plan.ts / derive.ts / seed.ts /
- * replan.ts). It exists because mobile has no other route to actual fitness:
- * the plan's `projected` is what was PRESCRIBED, not what happened. Feeding
- * the result through the tested seedStateAt keeps the merge + provenance
- * behavior identical to the dashboard's path.
- */
-export function executedDailyPmc(
-  plan: Plan,
-  seedCtl: number,
-  seedAtl: number,
-  through: string,
-  // Imported activities merged per-day (max, never sum — a tapped session and
-  // its imported twin are the same workout). Without this the gate saw real
-  // imported load while the fitness state decayed as if the athlete did
-  // nothing, and the reflow cut the plan from a fiction (Mobile-1).
-  imported: ImportedActivity[] = [],
-  ctx: { runThresholdMps?: number; lthrBpm?: number } = {},
-  /** Date the seed's CTL/ATL were measured. Replay starts the day AFTER it
-   *  WHETHER the anchor precedes the plan or falls inside it: days at or
-   *  before the anchor are inside the seed (replaying them double-counts a
-   *  re-pair), and days between an early anchor and the plan start are the
-   *  zero-load-plus-imports decay the seed needs (the review caught the
-   *  first cut clamping to planStart and replaying raw pairing-day fitness —
-   *  the "ahead of the curve" fiction). Absent ⇒ replay from plan start. */
-  anchor?: string,
-  tz?: string
-): DailyPmcPoint[] {
-  const doneByDate = new Map<string, number>();
-  for (const w of plan.weeks) {
-    for (const s of w.sessions) {
-      if (s.status !== "done") continue;
-      doneByDate.set(s.date, (doneByDate.get(s.date) ?? 0) + s.tss);
-    }
-  }
-  // Plan dates are device-local calendar days; bucket imports the same way so
-  // an evening run lands on the day the athlete lived it.
-  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, athleteLocalDate(tz));
-  const planStart = plan.weeks[0]?.weekStart;
-  if (!planStart) return [];
-  const start = anchor ? iso(at(anchor) + DAY) : planStart;
-  if (at(start) > at(through)) return [];
-  let ctl = seedCtl;
-  let atl = seedAtl;
-  const series: DailyPmcPoint[] = [];
-  for (let t = at(start); t <= at(through); t += DAY) {
-    const date = iso(t);
-    const tss = tssByDate.get(date) ?? 0;
-    ctl = ctl + (tss - ctl) / 42;
-    atl = atl + (tss - atl) / 7;
-    series.push({ date, ctl, atl });
-  }
-  return series;
-}
-
-/**
- * The athlete's CURRENT fitness from everything this device knows: the seed,
- * decayed and re-fed day by day with done-marks (from the stored plan, when
- * one exists) and imported activities — the same merged evidence the weekly
- * reconcile uses. Built for new-plan generation: the review caught goal.tsx
- * seeding from pure zero-load decay, which turned eight weeks of tapped
- * training into a near-beginner CTL and declared in-reach goals unreachable
- * — the mirror image of the Mobile-1 fiction.
+ * Mobile used to carry two PRIVATE PMC replays here (executedDailyPmc and an
+ * inline loop in this function) that filled every day `?? 0` and consulted no
+ * coverage — so zeroLoadDays was 0 by construction and E8's refusal could
+ * never fire on this surface. Both are deleted; the recursion and the
+ * provenance accounting now live in exactly one place (engine/seed.ts,
+ * reached through fitness-seed.ts), and mobile no longer carries a PMC copy
+ * at all. They also disagreed with each other by one day (this function
+ * rolled THROUGH `through`; seedStateAt stops at its morning) — ~12 TSB on a
+ * hard training day. The morning convention wins: it is the engine's, and a
+ * state that already contains today is a state the day has not finished
+ * earning.
  */
 export function evidenceSeedState(
   athlete: StoredAthlete,
   stored: StoredPlan | null,
   through: string,
-  imported: ImportedActivity[] = []
+  imported: ImportedActivity[] = [],
+  coverage: Coverage[] = []
 ): AthleteState {
   if (!athlete.anchor) return athlete.seed;
   const zones = zonesFor(athlete);
@@ -157,24 +107,11 @@ export function evidenceSeedState(
     runThresholdMps: thresholdMpsFromZones(zones),
     lthrBpm: athlete.thresholds.lthrBpm,
   };
-  const doneByDate = new Map<string, number>();
-  if (stored) {
-    for (const w of stored.plan.weeks) {
-      for (const sess of w.sessions) {
-        if (sess.status !== "done") continue;
-        doneByDate.set(sess.date, (doneByDate.get(sess.date) ?? 0) + sess.tss);
-      }
-    }
-  }
-  const tssByDate = dailyExecutedTss(doneByDate, imported, ctx, athleteLocalDate(athlete.tz));
-  let ctl = athlete.seed.ctl;
-  let atl = athlete.seed.atl;
-  for (let t = at(athlete.anchor) + DAY; t <= at(through); t += DAY) {
-    const tss = tssByDate.get(iso(t)) ?? 0;
-    ctl = ctl + (tss - ctl) / 42;
-    atl = atl + (tss - atl) / 7;
-  }
-  return { ...athlete.seed, ctl, atl, tsb: ctl - atl };
+  // Generation does not refuse on provenance — a speculative state is a LOWER
+  // bound, and a conservative first plan is the safe answer for someone who
+  // has evidence gaps; the weekly reconcile is where prescribing from
+  // assumption is refused (tooSpeculativeToPrescribe below).
+  return seedActualState(athlete.seed, athlete.anchor, stored?.plan, through, imported, coverage, ctx, athleteLocalDate(athlete.tz));
 }
 
 export interface MobileReconcileResult {
@@ -230,8 +167,23 @@ export async function reconcileIfDue(
   });
   if (!decision.due) return { changed: false, reason: decision.reason, note: null };
 
-  const series = executedDailyPmc(stored.plan, athlete.seed.ctl, athlete.seed.atl, decision.asOf, stream, ctx, athlete.anchor, athlete.tz);
-  const actualState: AthleteState = seedStateAt(athlete.seed, series, decision.asOf);
+  // E8, on the phone: the state that seeds this reflow is rolled through the
+  // engine's own gap loop, which COUNTS every day nothing vouched for. A
+  // scheduled session with no tap, no import and no coverage is an
+  // assumption, not a rest day.
+  const actualState = seedActualState(
+    athlete.seed, athlete.anchor, stored.plan, decision.asOf, stream, sync.coverage, ctx, athleteLocalDate(athlete.tz)
+  );
+  if (tooSpeculativeToPrescribe(actualState)) {
+    // Same answer the dashboard gives on identical evidence: refuse to
+    // re-plan a season from a fitness estimate that assumes the athlete did
+    // nothing. The remedy is stated because the athlete can actually do it.
+    return {
+      changed: false,
+      reason: `${actualState.zeroLoadDays} scheduled days since ${actualState.anchorDate ?? "pairing"} have no tap, no import and no coverage — refusing to re-plan from a fitness estimate that assumes you did nothing. Tap the sessions you completed and the plan will adapt.`,
+      note: null,
+    };
+  }
   // Tissue constraints are refreshed per reflow, like the dashboard's:
   // injuries heal and new ones get declared, and a request carrying last
   // season's caps is as wrong as one carrying none. Mobile threaded NOTHING

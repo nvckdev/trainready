@@ -257,7 +257,8 @@ export default function GoalScreen() {
             athlete,
             storedPlan ?? null,
             today,
-            dedupeActivities(syncStore.activities)
+            dedupeActivities(syncStore.activities),
+            syncStore.coverage
           );
           const plan = generatePlan(request, seed, [], zonesFor(athlete));
           void setPlan({ request, plan });
