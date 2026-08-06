@@ -134,6 +134,15 @@ if (!fx) {
       ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss * 0.5), led(2, w(2).targetTss * 0.45, { sessionsMissed: 3 })],
     }));
     check("T3a", "2 consecutive ≥40% misses ⇒ recalibration card", r.recalibration != null);
+    // ④ (2026-08-06): the same two misses, but the second week is a PARTIAL
+    // tap — its number is a lower bound, so "≥40% missed" cannot be proven
+    // from it and the streak breaks instead of recalibrating the season.
+    const partial = recomputeRemaining(mkInput({
+      actualState: { ctl: 14, atl: 10, tsb: 4 },
+      ledger: [led(0, w(0).targetTss), led(1, w(1).targetTss * 0.5), led(2, w(2).targetTss * 0.45, { sessionsMissed: 3, incomplete: true })],
+    }));
+    check("T3d", "…but an INCOMPLETE second miss breaks the streak — a lower bound never locks an undershoot",
+      partial.recalibration == null, JSON.stringify(partial.recalibration ?? null));
     check("T3b", "recalibration carries a revised finish + realistic week + message",
       !!r.recalibration && !!r.recalibration.revisedFinish && r.recalibration.realisticWeekTss > 0 && r.recalibration.message.length > 40);
     check("T3c", "note reprojects the goal", !!r.note && /reprojected/.test(r.note!));

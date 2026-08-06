@@ -46,6 +46,11 @@ export interface WeekActual {
    * before comparing.
    */
   actualTss: number | null;
+  /** True when actualTss is a LOWER BOUND — a partially tapped week whose
+   *  untapped sessions are unknowns. It may prove an overshoot (real load at
+   *  least this high happened) but must never lock an undershoot verdict,
+   *  feed missStreak, or stand as demonstrated capacity. */
+  incomplete?: boolean;
   plannedTss: number; // the stored PlanWeek.targetTss for that week
   rampCapTss?: number; // the +20% anchor ramp ceiling that governed the week
   sessionsMissed: number;
@@ -76,16 +81,23 @@ const ledgerAt = (d: string) => Date.parse(d + "T12:00:00Z");
 export function buildLedger(
   weeks: LedgerWeekInput[],
   asOf: string,
-  executed: Map<string, number>
+  executed: Map<string, number>,
+  partial: Set<string> = new Set()
 ): WeekActual[] {
   const completed = weeks.filter((w) => ledgerAt(w.weekStart) + 7 * LEDGER_DAY <= ledgerAt(asOf));
   return completed.map((wk, i) => {
     const prev = completed[i - 1];
-    const rampRef = prev ? (executed.get(prev.weekStart) || prev.targetTss) : wk.targetTss;
+    // A partial week's lower bound must not become the ramp reference: a
+    // 300-TSS week tapped at 120 would set rampCapTss = 144 and hand the
+    // NEXT normal week a forced-recovery verdict born of tap laziness. Fall
+    // back to the target, exactly as for an unknown week.
+    const prevKnown = prev && !partial.has(prev.weekStart) ? executed.get(prev.weekStart) : undefined;
+    const rampRef = prev ? (prevKnown || prev.targetTss) : wk.targetTss;
     const known = executed.get(wk.weekStart);
     return {
       weekStart: wk.weekStart,
       actualTss: known === undefined ? null : Math.round(known),
+      ...(known !== undefined && partial.has(wk.weekStart) ? { incomplete: true } : {}),
       plannedTss: wk.targetTss,
       rampCapTss: Math.round(rampRef * 1.2),
       sessionsMissed: wk.sessions.filter((s) => s.discipline !== "race" && s.status !== "done").length,
@@ -104,10 +116,19 @@ export function knownTrailingTss(
   weeks: LedgerWeekInput[],
   asOf: string,
   executed: Map<string, number>,
-  n = 8
+  n = 8,
+  partial: Set<string> = new Set()
 ): number[] {
   return weeks
-    .filter((w) => ledgerAt(w.weekStart) + 7 * LEDGER_DAY <= ledgerAt(asOf) && executed.has(w.weekStart))
+    .filter(
+      (w) =>
+        ledgerAt(w.weekStart) + 7 * LEDGER_DAY <= ledgerAt(asOf) &&
+        executed.has(w.weekStart) &&
+        // A partial-tap lower bound in the capacity window depresses the very
+        // demonstrated-capacity terms the rebaseline reads — the same
+        // fabricated-authority error E2 removed for absent weeks.
+        !partial.has(w.weekStart)
+    )
     .slice(-n)
     .map((w) => Math.round(executed.get(w.weekStart)!));
 }
@@ -213,7 +234,10 @@ export function recomputeRemaining(input: ReplanInput): ReplanResult {
   // exists to prevent. An unknown week breaks the streak.
   const missStreak = trailingStreak(
     ledger,
-    (w) => w.actualTss !== null && w.plannedTss > 0 && w.actualTss <= w.plannedTss * (1 - MISS_FRAC)
+    // An incomplete week breaks the streak rather than counting as a miss:
+    // its number is a lower bound, and "≥40% missed" cannot be proven from a
+    // bound that only promises AT LEAST this much happened.
+    (w) => !w.incomplete && w.actualTss !== null && w.plannedTss > 0 && w.actualTss <= w.plannedTss * (1 - MISS_FRAC)
   );
   const last = ledger[ledger.length - 1];
   const rebaselined = overshootStreak >= OVERSHOOT_STREAK;

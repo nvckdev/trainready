@@ -114,16 +114,39 @@ export function planShape(p: Plan): string {
  * week with no marks stays absent from the map (unknown) rather than becoming
  * an authoritative zero. Both surfaces need exactly this precedence, and both
  * had their own copy of it.
+ *
+ * The same rule holds INSIDE a week, and until 2026-08-06 it did not: a week
+ * with one tap and four untapped sessions was filled with the one tap's TSS
+ * and nothing recorded that the other four were unknowns — so a 300-TSS week
+ * with 2 of 5 sessions tapped read "120 executed, 60% under plan" and the
+ * whole remaining season was rebuilt downward from tap discipline rather
+ * than training. The number is kept (it is a true LOWER bound: it can prove
+ * an overshoot) but every fallback-filled week with untapped sessions is
+ * reported in `partial`, and the consumers — the gate's completeness flag,
+ * the ledger's undershoot rules, the trailing-capacity window — refuse to
+ * lock a downward verdict on it. The E3 contract, applied within the week.
  */
+export interface DoneMarkFill {
+  executed: Map<string, number>;
+  /** Weeks whose number came from done-marks while some non-race session was
+   *  untapped — a lower bound, never authority for an undershoot. */
+  partial: Set<string>;
+}
+
 export function withDoneMarkFallback(
   weeks: Array<Pick<PlanWeek, "weekStart" | "sessions">>,
   executed: Map<string, number>
-): Map<string, number> {
+): DoneMarkFill {
   const out = new Map(executed);
+  const partial = new Set<string>();
   for (const w of weeks) {
     if (out.has(w.weekStart)) continue;
     const done = w.sessions.filter((s) => s.status === "done").reduce((a, s) => a + s.tss, 0);
-    if (done > 0) out.set(w.weekStart, Math.round(done));
+    if (done > 0) {
+      out.set(w.weekStart, Math.round(done));
+      const untapped = w.sessions.some((s) => s.discipline !== "race" && s.status !== "done");
+      if (untapped) partial.add(w.weekStart);
+    }
   }
-  return out;
+  return { executed: out, partial };
 }

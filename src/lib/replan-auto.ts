@@ -1,6 +1,7 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
 import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
 import {
+  type DoneMarkFill,
   carryStatusForward,
   describeChange,
   planShape,
@@ -44,25 +45,31 @@ export interface StoredPlanShape {
  * verdict on it (evidence-settling).
  */
 export function closedWeekEvidence(
-  executed: Map<string, number>,
+  fill: DoneMarkFill,
   weekStart: string,
   today: string
 ): WeekEvidence | undefined {
-  const v = executed.get(weekStart);
+  const v = fill.executed.get(weekStart);
   if (v === undefined) return undefined;
   return {
     tss: v,
-    complete: evidenceComplete({
-      weekStart,
-      today,
-      hasRemoteSource: stravaConfigured() || intervalsConfigured(),
-      lastSyncAt: readSyncStore().lastSyncAt,
-      measured: corpusWeeklyMeasured().measured.has(weekStart),
-    }),
+    // Two independent reasons a number can be a lower bound, EITHER of which
+    // forbids locking an undershoot on it: evidence still settling past the
+    // week's close, or a partially tapped week whose untapped sessions are
+    // unknowns — tap discipline is not training.
+    complete:
+      !fill.partial.has(weekStart) &&
+      evidenceComplete({
+        weekStart,
+        today,
+        hasRemoteSource: stravaConfigured() || intervalsConfigured(),
+        lastSyncAt: readSyncStore().lastSyncAt,
+        measured: corpusWeeklyMeasured().measured.has(weekStart),
+      }),
   };
 }
 
-export function executedTssByWeek(plan: Plan): Map<string, number> {
+export function executedTssByWeek(plan: Plan): DoneMarkFill {
   const weekStarts = plan.weeks.map((w) => w.weekStart);
   const athlete = getAthlete();
   const ctx = athlete
@@ -137,7 +144,7 @@ export function reconcileIfDue(today = localToday()): ReconcileOutcome {
 function runReconcile(
   stored: StoredPlanShape,
   decision: ReconcileDecision,
-  executed: Map<string, number>
+  fill: DoneMarkFill
 ): ReconcileOutcome {
   if (!decision.due) return { decision, stored, commit: null, note: null, error: null };
 
@@ -209,7 +216,7 @@ function runReconcile(
       stored: { request, plan: stored.plan },
       actualState,
       actualTrailingTss: getWeekly().slice(-8).map((r) => Math.round(r.tss)),
-      ledger: buildLedger(stored.plan.weeks, decision.asOf, executed),
+      ledger: buildLedger(stored.plan.weeks, decision.asOf, fill.executed, fill.partial),
       asOf: decision.asOf,
       history: getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss, weekStart: h.weekStart })),
       zones: athlete.zones,
@@ -275,8 +282,13 @@ export function reconcileNow(today = localToday()): ReconcileOutcome {
     // complete: true — the manual button is the athlete explicitly saying
     // "judge with what you have, now". The settling refusal exists to stop
     // AUTOMATIC verdicts on arriving evidence, not to overrule a person.
+    // complete: true even for a partially tapped week — unlike the automatic
+    // gate, which now treats partial as a lower bound. The manual button must
+    // stay usable by the athlete who genuinely skipped sessions and cannot
+    // honestly tap them; the LEDGER inside runReconcile still refuses to let
+    // those weeks feed missStreak or demonstrated capacity.
     executedTssFor: (ws) => {
-      const v = executed.get(ws);
+      const v = executed.executed.get(ws);
       return v === undefined ? undefined : { tss: v, complete: true };
     },
     tolerance: -1,

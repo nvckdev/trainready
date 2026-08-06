@@ -199,6 +199,35 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
     JSON.stringify(trail) === JSON.stringify([195, 0]), JSON.stringify(trail));
 }
 
+// ——— RC11 (pure). partial-tap weeks are lower bounds, never authority ——————
+// The 2026-08-06 verification pass: a 300-TSS week with 2 of 5 sessions
+// tapped read "120 executed, 60% under plan" as COMPLETE evidence, rebuilt
+// the season downward, and the idempotence stamp made it permanent. Tap
+// discipline is not training. The number survives (a tap is a real lower
+// bound — it can prove an overshoot); what it can no longer do is stand as
+// authority for anything downward.
+{
+  const weeks = [
+    { weekStart: "2026-07-06", targetTss: 300, sessions: [{ discipline: "run", tss: 60, status: "done" as const }, { discipline: "run", tss: 60, status: "done" as const }, { discipline: "run", tss: 60 }, { discipline: "run", tss: 60 }, { discipline: "run", tss: 60 }] },
+    { weekStart: "2026-07-13", targetTss: 300, sessions: [{ discipline: "run", tss: 300, status: "done" as const }] },
+    { weekStart: "2026-07-20", targetTss: 310, sessions: [] },
+  ];
+  const executed = new Map([
+    ["2026-07-06", 120], // the two taps — a lower bound
+    ["2026-07-13", 300],
+  ]);
+  const partial = new Set(["2026-07-06"]);
+  const rows = buildLedger(weeks, "2026-07-20", executed, partial);
+  check("RC11a", "a partial-tap week keeps its lower bound AND carries incomplete: true",
+    rows[0].actualTss === 120 && rows[0].incomplete === true, JSON.stringify(rows[0]));
+  check("RC11b", "a fully accounted week does not", rows[1].incomplete === undefined);
+  check("RC11c", "rampRef refuses a partial week as reference — the NEXT week's ceiling comes from target, not from tap laziness",
+    rows[1].rampCapTss === Math.round(300 * 1.2), String(rows[1].rampCapTss));
+  const trail = knownTrailingTss(weeks, "2026-07-20", executed, 8, partial);
+  check("RC11d", "demonstrated capacity excludes partial weeks — a lower bound must not depress the rebaseline",
+    JSON.stringify(trail) === JSON.stringify([300]), JSON.stringify(trail));
+}
+
 // ——— RC4/RC5/RC6. against the real engine, with the real corpus ——————————
 function loadFixture(): { seed: AthleteState; history: Array<{ state: AthleteState; actualTss: number; weekStart?: string }>; zones: ReturnType<typeof deriveZones> } | null {
   try {

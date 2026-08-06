@@ -3,6 +3,7 @@ import { readTissue } from "./tissue-store";
 import type { AthleteState } from "@engine/types.ts";
 import { buildLedger, knownTrailingTss, recomputeRemaining } from "@engine/replan.ts";
 import {
+  type DoneMarkFill,
   carryStatusForward,
   describeChange,
   planShape,
@@ -64,7 +65,7 @@ export function executedByWeek(
   coverage: Coverage[] = [],
   ctx: { runThresholdMps?: number; lthrBpm?: number } = {},
   tz?: string
-): Map<string, number> {
+): DoneMarkFill {
   const weekStarts = plan.weeks.map((w) => w.weekStart);
   // Bucket imports on the athlete's clock — the same one localToday and the
   // plan dates use (E7 + M3, unified after review).
@@ -152,16 +153,22 @@ export async function reconcileIfDue(
     // HealthKit is live, until a post-close sync has run). The gate refuses
     // to lock an undershoot verdict on arriving evidence.
     executedTssFor: (ws) => {
-      const v = executed.get(ws);
+      const v = executed.executed.get(ws);
       if (v === undefined) return undefined;
       return {
         tss: v,
-        complete: evidenceComplete({
-          weekStart: ws,
-          today,
-          hasRemoteSource: healthKitPossible(),
-          lastSyncAt: sync.lastSyncAt,
-        }),
+        // Either lower-bound condition forbids locking an undershoot: still
+        // settling past the close, or a partially tapped week whose untapped
+        // sessions are unknowns — 2 taps in a 5-session week is not "60%
+        // under plan", it is 40% accounted for.
+        complete:
+          !executed.partial.has(ws) &&
+          evidenceComplete({
+            weekStart: ws,
+            today,
+            hasRemoteSource: healthKitPossible(),
+            lastSyncAt: sync.lastSyncAt,
+          }),
       };
     },
   });
@@ -213,8 +220,8 @@ export async function reconcileIfDue(
       actualState,
       // Known weeks only — a fabricated zero here depressed the very
       // capacity terms the rebaseline reads (E2).
-      actualTrailingTss: knownTrailingTss(stored.plan.weeks, decision.asOf, executed),
-      ledger: buildLedger(stored.plan.weeks, decision.asOf, executed),
+      actualTrailingTss: knownTrailingTss(stored.plan.weeks, decision.asOf, executed.executed, 8, executed.partial),
+      ledger: buildLedger(stored.plan.weeks, decision.asOf, executed.executed, executed.partial),
       asOf: decision.asOf,
       history: [],
       zones,

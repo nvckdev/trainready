@@ -118,20 +118,33 @@ const mkPlan = (weeks: PlanWeek[]): Plan =>
   check("O6c", "a new note is a change (the athlete must see it)", planShape(a) !== planShape(d));
 }
 
-// ——— O7. withDoneMarkFallback is POSITIVE-ONLY ————————————————————————————
+// ——— O7. withDoneMarkFallback is POSITIVE-ONLY, within the week too ———————
+// O7a used to pin the OPPOSITE of the current contract: it asserted that a
+// week with one tap and one untapped session simply "is filled from its done
+// marks", with nothing recording that the untapped 40 TSS had been counted as
+// zero. The 2026-08-06 verification pass showed where that leads — 2 taps in
+// a 5-session week read "60% under plan" and rebuilt the season downward from
+// tap discipline. The fill still happens (a tap is a lower bound worth
+// having); what changed is that the week is now REPORTED as partial.
 {
   const weeks = [
     { weekStart: "2026-01-05", sessions: [sess("2026-01-05", "run", 60, "done"), sess("2026-01-07", "run", 40)] },
     { weekStart: "2026-01-12", sessions: [sess("2026-01-12", "run", 60)] }, // nothing tapped
     { weekStart: "2026-01-19", sessions: [sess("2026-01-19", "run", 60, "done")] },
+    { weekStart: "2026-01-26", sessions: [sess("2026-01-26", "run", 50, "done"), sess("2026-01-27", "run", 30, "done")] },
   ];
   const executed = new Map([["2026-01-19", 999]]); // importers already spoke for this week
-  const out = withDoneMarkFallback(weeks, executed);
-  check("O7a", "an untouched week is filled from its done marks", out.get("2026-01-05") === 60);
+  const { executed: out, partial } = withDoneMarkFallback(weeks, executed);
+  check("O7a", "a partially tapped week is filled AS A LOWER BOUND and flagged partial",
+    out.get("2026-01-05") === 60 && partial.has("2026-01-05"), `${out.get("2026-01-05")} partial=${partial.has("2026-01-05")}`);
   check("O7b", "a week with NO marks stays UNKNOWN — never an authoritative zero",
     !out.has("2026-01-12"), String(out.get("2026-01-12")));
   check("O7c", "import evidence is never overwritten by done marks", out.get("2026-01-19") === 999);
   check("O7d", "the input map is not mutated", executed.size === 1);
+  check("O7e", "an import-covered week is never flagged partial — completeness there is the settling rule's job",
+    !partial.has("2026-01-19"));
+  check("O7f", "a FULLY tapped week is not partial — every session accounted for",
+    out.get("2026-01-26") === 80 && !partial.has("2026-01-26"), `${out.get("2026-01-26")}`);
 }
 
 for (const p of passes) console.log("  " + p);
