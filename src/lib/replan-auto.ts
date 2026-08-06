@@ -1,5 +1,5 @@
 import { generatePlan, type Plan, type PlanRequest } from "../../engine/plan.ts";
-import { buildLedger, recomputeRemaining } from "../../engine/replan.ts";
+import { buildLedger, demonstratedTrailingTss, recomputeRemaining } from "../../engine/replan.ts";
 import {
   type DoneMarkFill,
   carryStatusForward,
@@ -11,7 +11,7 @@ import {
 import { evidenceComplete, reconcileGate, reflowSafeRequest, type ReconcileDecision, type WeekEvidence } from "../../engine/reconcile.ts";
 import { loadEras, loadPopulationPrior } from "../../engine/learned.ts";
 import { loadRaceAnchors } from "../../engine/goal.ts";
-import { getAthlete, getHistory, getStateAt, getWeekly, intervalsConfigured, localToday, stravaConfigured } from "@/lib/athlete-data";
+import { getAthlete, getHistory, getStateAt, intervalsConfigured, localToday, stravaConfigured } from "@/lib/athlete-data";
 import { readPlan, writePlan } from "@/lib/plan-io";
 import { loadTissueConstraintsTagged } from "@/lib/tissue-constraints";
 import { dedupeActivities, executedByWeek as rollupByWeek, type Coverage, type ImportedActivity } from "../../engine/activity.ts";
@@ -215,7 +215,16 @@ function runReconcile(
     result = recomputeRemaining({
       stored: { request, plan: stored.plan },
       actualState,
-      actualTrailingTss: getWeekly().slice(-8).map((r) => Math.round(r.tss)),
+      // ⑤: the SAME merged, E3-filtered evidence the gate and ledger use —
+      // never the raw corpus rollup, whose trailing row may be a half-
+      // extracted week (verified live: 2026-06-29 at 39 TSS of a real 334).
+      actualTrailingTss: demonstratedTrailingTss(
+        stored.plan.weeks,
+        decision.asOf,
+        fill.executed,
+        fill.partial,
+        corpusWeeklyMeasured().measured
+      ),
       ledger: buildLedger(stored.plan.weeks, decision.asOf, fill.executed, fill.partial),
       asOf: decision.asOf,
       history: getHistory().map((h) => ({ state: h.state, actualTss: h.actualTss, weekStart: h.weekStart })),

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { generatePlan, type PlanRequest } from "./plan.ts";
-import { buildLedger, knownTrailingTss, recomputeRemaining, type WeekActual } from "./replan.ts";
+import { buildLedger, demonstratedTrailingTss, knownTrailingTss, recomputeRemaining, type WeekActual } from "./replan.ts";
 import { evidenceComplete } from "./reconcile.ts";
 import { deriveZones } from "./zones.ts";
 import { seedStateAt, type DailyPmcPoint } from "./seed.ts";
@@ -226,6 +226,44 @@ function check(id: string, desc: string, ok: boolean, detail = "") {
   const trail = knownTrailingTss(weeks, "2026-07-20", executed, 8, partial);
   check("RC11d", "demonstrated capacity excludes partial weeks — a lower bound must not depress the rebaseline",
     JSON.stringify(trail) === JSON.stringify([300]), JSON.stringify(trail));
+}
+
+// ——— RC12 (pure). the rebaseline's capacity window is EVIDENCE, merged ————
+// The dashboard fed getWeekly().slice(-8) — the raw corpus rollup — into the
+// rebaseline: its trailing row can be a half-extracted week (E3's partial-row
+// rule, verified live at 39 TSS of a real 334), and a connector-only athlete
+// got [] because imports never enter the corpus. The window now comes from
+// the merged evidence plus the E3-FILTERED corpus for pre-plan weeks, through
+// one shared function so the surfaces cannot drift.
+{
+  const weeks = [
+    { weekStart: "2026-07-06", targetTss: 300, sessions: [{ discipline: "run", tss: 300, status: "done" as const }] },
+    { weekStart: "2026-07-13", targetTss: 300, sessions: [{ discipline: "run", tss: 150, status: "done" as const }, { discipline: "run", tss: 150 }] },
+    { weekStart: "2026-07-20", targetTss: 310, sessions: [] },
+  ];
+  const executed = new Map([
+    ["2026-07-06", 320], // import-evidenced plan week
+    ["2026-07-13", 150], // partial-tap lower bound
+  ]);
+  const partial = new Set(["2026-07-13"]);
+  const pre = new Map([
+    ["2026-06-22", 280.4], // authoritative corpus weeks before the plan
+    ["2026-06-29", 334],
+    ["2026-07-06", 999], // overlaps the plan — the plan-week evidence wins
+  ]);
+  const t = demonstratedTrailingTss(weeks, "2026-07-20", executed, partial, pre);
+  check("RC12a", "pre-plan corpus weeks prepend oldest→newest, rounded",
+    JSON.stringify(t) === JSON.stringify([280, 334, 320]), JSON.stringify(t));
+  check("RC12b", "a corpus row overlapping a plan week never double-counts — plan evidence wins",
+    !t.includes(999));
+  check("RC12c", "a partial-tap plan week is excluded — a lower bound is not demonstrated capacity",
+    !t.includes(150));
+  const connectorOnly = demonstratedTrailingTss(weeks, "2026-07-20", executed, partial, new Map());
+  check("RC12d", "a connector-only athlete (no corpus) still gets a real window, not []",
+    JSON.stringify(connectorOnly) === JSON.stringify([320]), JSON.stringify(connectorOnly));
+  const trimmed = demonstratedTrailingTss(weeks, "2026-07-20", executed, partial,
+    new Map(Array.from({ length: 12 }, (_, i) => [`2026-0${1 + Math.floor(i / 4)}-${String(1 + (i % 4) * 7).padStart(2, "0")}`, 100 + i])), 8);
+  check("RC12e", "the window trims to n, keeping the most recent", trimmed.length === 8, String(trimmed.length));
 }
 
 // ——— RC4/RC5/RC6. against the real engine, with the real corpus ——————————

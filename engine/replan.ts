@@ -133,6 +133,40 @@ export function knownTrailingTss(
     .map((w) => Math.round(executed.get(w.weekStart)!));
 }
 
+/**
+ * The demonstrated-capacity window the rebaseline reads: the last `n` weeks
+ * of AUTHORITATIVE weekly load before `asOf`, oldest → newest.
+ *
+ * Two sources, one discipline. Plan weeks come from the merged evidence map
+ * with partial-tap weeks excluded (knownTrailingTss). Weeks BEFORE the plan
+ * come from `prePlanMeasured` — the caller's E3-filtered corpus rollup, which
+ * on the dashboard is corpusWeeklyMeasured() and on mobile is empty (a phone
+ * has no pre-plan history).
+ *
+ * This replaces the dashboard's raw getWeekly().slice(-8), which the
+ * 2026-08-06 verification pass caught feeding a PARTIAL trailing corpus row
+ * (non-authoritative by E3's own rule) into the rebaseline as demonstrated
+ * capacity: prevNonZeroWeek read the half-extracted 39-TSS week instead of
+ * the real 334, and rampCapRef dropped ~30% — throttling exactly the lift
+ * three overshoot weeks had earned. It also saw corpus only, so a
+ * connector-only athlete got [] and the seed shaping silently no-oped.
+ */
+export function demonstratedTrailingTss(
+  weeks: LedgerWeekInput[],
+  asOf: string,
+  executed: Map<string, number>,
+  partial: Set<string> = new Set(),
+  prePlanMeasured: Map<string, number> = new Map(),
+  n = 8
+): number[] {
+  const planStart = weeks[0]?.weekStart ?? asOf;
+  const pre = [...prePlanMeasured]
+    .filter(([ws]) => ws < planStart)
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([, tss]) => Math.round(tss));
+  return [...pre, ...knownTrailingTss(weeks, asOf, executed, n, partial)].slice(-n);
+}
+
 export interface ReplanInput {
   stored: StoredPlan;
   actualState: AthleteState; // getStateAt(asOf) — pmc-seeded ctl/atl/tsb

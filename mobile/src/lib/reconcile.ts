@@ -1,7 +1,7 @@
 import type { Plan, PlanRequest } from "@engine/plan.ts";
 import { readTissue } from "./tissue-store";
 import type { AthleteState } from "@engine/types.ts";
-import { buildLedger, knownTrailingTss, recomputeRemaining } from "@engine/replan.ts";
+import { buildLedger, demonstratedTrailingTss, recomputeRemaining } from "@engine/replan.ts";
 import {
   type DoneMarkFill,
   carryStatusForward,
@@ -220,7 +220,10 @@ export async function reconcileIfDue(
       actualState,
       // Known weeks only — a fabricated zero here depressed the very
       // capacity terms the rebaseline reads (E2).
-      actualTrailingTss: knownTrailingTss(stored.plan.weeks, decision.asOf, executed.executed, 8, executed.partial),
+      // Same window builder as the dashboard; a phone has no pre-plan corpus,
+      // so the pre-plan map is empty — but the function is shared so the two
+      // surfaces cannot drift on what "demonstrated capacity" means.
+      actualTrailingTss: demonstratedTrailingTss(stored.plan.weeks, decision.asOf, executed.executed, executed.partial),
       ledger: buildLedger(stored.plan.weeks, decision.asOf, executed.executed, executed.partial),
       asOf: decision.asOf,
       history: [],
