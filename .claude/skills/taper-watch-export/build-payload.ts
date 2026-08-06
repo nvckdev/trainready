@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { BIKE_BANDS, RUN_BANDS } from "../../../engine/zones.ts";
 
 /**
  * Turn stored plan sessions into TrainingPeaks workout payloads.
@@ -48,8 +49,9 @@ if (!fromArg || !toArg) {
   process.exit(2);
 }
 
-const stored = JSON.parse(readFileSync("data/app/plan.json", "utf8"));
-const athlete = JSON.parse(readFileSync("data/raw/athlete.json", "utf8"));
+// Overridable for the test harness — the default is the live stored plan.
+const stored = JSON.parse(readFileSync(process.env.TAPER_PLAN_PATH ?? "data/app/plan.json", "utf8"));
+const athlete = JSON.parse(readFileSync(process.env.TAPER_ATHLETE_PATH ?? "data/raw/athlete.json", "utf8"));
 /** The engine's own run threshold — the same field generatePlan derives zones
  *  from, so exported percentages agree with the paces already in the plan. */
 const thresholdMps: number =
@@ -83,22 +85,22 @@ interface Step {
 /** Expand a block into flat steps. The simplified TP structure has no nesting
  *  and ignores a `repeat` field, so reps are written out — which is also what
  *  a watch actually executes, one step at a time. */
-function expand(b: Block, index: number, total: number): Step[] {
+function expand(b: Block, sport: string): Step[] {
   const reps = b.reps ?? 1;
   const dur = b.durationSec ?? 0;
   if (dur <= 0) return [];
-  // Percentages come from the block's own pace window when it has one; the
-  // zone fallbacks match the engine's zone table for structureless blocks.
+  // Percentages come from the block's own pace window when it has one (runs);
+  // otherwise from the ENGINE's band tables for the block's discipline.
   const fast = b.paceMinSecPerKm;
   const slow = b.paceMaxSecPerKm;
-  const lo = slow ? pctOfThreshold(slow) : zoneFallback(b.zone)[0];
-  const hi = fast ? pctOfThreshold(fast) : zoneFallback(b.zone)[1];
+  const lo = slow ? pctOfThreshold(slow) : bandFor(sport, b.zone)[0];
+  const hi = fast ? pctOfThreshold(fast) : bandFor(sport, b.zone)[1];
   const base =
     b.kind === "warmup" ? "Warm up" : b.kind === "cooldown" ? "Cool down" : b.kind === "strides" ? "Strides" : label(b.zone);
   const out: Step[] = [];
   for (let r = 0; r < reps; r++) {
     out.push({
-      name: reps > 1 ? `${base} ${r + 1}/${reps}` : index === 0 && total > 1 ? base : base,
+      name: reps > 1 ? `${base} ${r + 1}/${reps}` : base,
       duration_seconds: dur,
       intensity_min: lo,
       intensity_max: hi,
@@ -107,8 +109,8 @@ function expand(b: Block, index: number, total: number): Step[] {
       out.push({
         name: "Recovery",
         duration_seconds: b.recoverySec!,
-        intensity_min: zoneFallback("recovery")[0],
-        intensity_max: zoneFallback("recovery")[1],
+        intensity_min: bandFor(sport, "recovery")[0],
+        intensity_max: bandFor(sport, "recovery")[1],
       });
     }
   }
@@ -119,17 +121,47 @@ function label(zone: string): string {
   return zone === "vo2" ? "VO2" : zone === "threshold" ? "Threshold" : zone === "tempo" ? "Tempo" : zone === "cv" ? "CV" : "Easy";
 }
 
-/** Percent-of-threshold-speed windows, mirroring engine/zones.ts bands. */
-function zoneFallback(zone: string): [number, number] {
+/**
+ * Numeric band for a block that carries no pace fields, as % of the
+ * discipline's threshold — READ from engine/zones.ts's own band tables, the
+ * same fractions deriveZones renders into the plan's pace/watt strings.
+ *
+ * The previous version carried its own table "mirroring" the engine's, and it
+ * did not: a bike-z2 block fell through to the run-flavoured easy band
+ * (72–85%) and exported as percentOfFtp, so a Zone 2 ride reached the watch
+ * at 180–212W while the same payload's description printed the engine's
+ * 155–188W — ~15% too hard, held for hours. One table, and it is the engine's.
+ *
+ * Block zones map onto the engine's named bands per discipline. A bike "easy"
+ * block IS the z2 band (that is what the bike-z2 template writes). The two
+ * bounds the engine deliberately does not define — how easy a recovery
+ * spin/jog may be — take a display floor of 40/60%, bounded ABOVE by the
+ *  engine's own easiest band so a "recovery" step can never prescribe work.
+ */
+function bandFor(sport: string, zone: string): [number, number] {
+  const pct = (b: readonly [number, number]): [number, number] =>
+    [Math.round(b[0] * 1000) / 10, Math.round(b[1] * 1000) / 10];
+  if (sport === "Bike") {
+    switch (zone) {
+      case "recovery": return [40, Math.round(BIKE_BANDS.z2[0] * 1000) / 10];
+      case "easy": return pct(BIKE_BANDS.z2);
+      case "tempo": return pct(BIKE_BANDS.tempo);
+      case "threshold": return pct(BIKE_BANDS.threshold);
+      case "vo2": return pct(BIKE_BANDS.vo2);
+      default: return pct(BIKE_BANDS.z2);
+    }
+  }
   switch (zone) {
-    case "recovery": return [60, 72];
-    case "easy": return [72, 85];
-    case "tempo": return [88, 94];
-    case "threshold": return [95, 100];
-    case "cv": return [100, 104];
-    case "vo2": return [104, 112];
-    case "race": return [95, 105];
-    default: return [72, 85];
+    case "recovery": return [60, Math.round(RUN_BANDS.easy[0] * 1000) / 10];
+    case "easy": return pct(RUN_BANDS.easy);
+    case "tempo": return pct(RUN_BANDS.tempo);
+    case "threshold": return pct(RUN_BANDS.threshold);
+    // The engine defines no separate run cv/race band; threshold–vo2 edges
+    // bound them rather than inventing numbers the plan never prescribed.
+    case "cv": return [Math.round(RUN_BANDS.threshold[1] * 1000) / 10, Math.round(RUN_BANDS.vo2[0] * 1000) / 10];
+    case "race": return pct(RUN_BANDS.threshold);
+    case "vo2": return pct(RUN_BANDS.vo2);
+    default: return pct(RUN_BANDS.easy);
   }
 }
 
@@ -144,7 +176,7 @@ for (const s of sessions) {
   const declaredSec = Math.round(s.durationHr * 3600);
   const blocks = s.workout?.blocks ?? [];
   const structuredSec = blocks.reduce((a, b) => a + blockSeconds(b), 0);
-  const steps = blocks.flatMap((b, i) => expand(b, i, blocks.length));
+  const steps = blocks.flatMap((b) => expand(b, sport));
 
   // Pace lines for the description, so the athlete sees real targets even if
   // the watch renders percentages.
@@ -159,6 +191,14 @@ for (const s of sessions) {
   if (s.status === "done") {
     pushable = false;
     reason = "already completed in the plan";
+  } else if (sport === "Swim") {
+    // Stated plainly rather than falling through to "no structured blocks":
+    // the swim templates are DISTANCE-defined (metres, no per-block seconds)
+    // and this export builds time-based steps, so swims are not exported.
+    // The full set structure is already in the plan and in the description
+    // TP would show; a wrong-duration swim on a watch helps nobody.
+    pushable = false;
+    reason = "swim sessions are distance-defined and this export is time-based — not exported; the set is in the plan";
   } else if (!steps.length) {
     pushable = false;
     reason = "no structured blocks to export";

@@ -43,6 +43,17 @@ approval and per-user OAuth, which only pays off multi-user.
    the structure written into `description`) and SAY WHICH MODE YOU USED in
    the report. Never silently downgrade.
 7. `tp_get_workouts` rejects ranges > 90 days. Query only the window.
+8. **Watch targets come from `engine/zones.ts` (RUN_BANDS / BIKE_BANDS)** —
+   never from a table in this skill. The skill once carried its own
+   "mirror" of the engine's bands; it drifted, and a Zone 2 ride exported
+   at 72–85% FTP against the plan's 62–75% while the description in the
+   same payload printed the correct watts. `src/lib/watch-export.test.ts`
+   pins the exported bands to the engine's exports.
+9. **Swims are not exported, by design.** The swim templates are
+   DISTANCE-defined (metres, no per-block seconds) and this export builds
+   time-based steps. Every swim reports `pushable: false` with the reason
+   stated; the set is in the plan and in the description TP would show.
+   Say so in the report rather than counting them as failures.
 
 ## Procedure
 
@@ -78,6 +89,7 @@ approval and per-user OAuth, which only pays off multi-user.
 
 - **`already completed in the plan`** — the athlete marked it done.
 - **`no structured blocks to export`** — nothing to put on a watch.
+- **`swim sessions are distance-defined…`** — every swim, by design (fact 9).
 - **structure/duration mismatch > 25%** — the plan's own structure
   contradicts its own duration. This happens after a reflow damp:
   `engine/replan.ts scaleWeek` rescales `tss` and `durationHr` but leaves

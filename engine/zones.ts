@@ -90,32 +90,57 @@ export function thresholdMpsFromZones(z: Zones): number {
   return midSecPerKm > 0 ? 1000 / midSecPerKm : 0;
 }
 
+/**
+ * The fractional intensity bands, as [lo, hi] multiples of the discipline's
+ * threshold. These ARE the zones — deriveZones renders them into pace/watt
+ * strings, and anything else that needs a numeric band (the TrainingPeaks
+ * export's watch targets) must read THESE rather than transcribe them. The
+ * export once carried its own copy of this table; it drifted, and a Zone 2
+ * ride reached the watch at 72–85% FTP against the plan's own 62–75% — a
+ * ~15% overshoot held for hours, in the same payload whose description
+ * printed the correct engine watts.
+ */
+export const RUN_BANDS = {
+  easy: [0.76, 0.84],
+  steady: [0.85, 0.9],
+  tempo: [0.91, 0.96],
+  threshold: [0.97, 1.02],
+  vo2: [1.05, 1.1],
+} as const satisfies Record<string, readonly [number, number]>;
+
+export const BIKE_BANDS = {
+  z2: [0.62, 0.75],
+  tempo: [0.8, 0.88],
+  threshold: [0.95, 1.03],
+  vo2: [1.08, 1.2],
+} as const satisfies Record<string, readonly [number, number]>;
+
 export function deriveZones(t: Thresholds): Zones {
   const rt = t.runThresholdSpeedMps;
   const css = t.swimCssMps;
   const ftp = t.ftpWatts;
-  const w = (lo: number, hi: number) => `${Math.round(ftp * lo)}–${Math.round(ftp * hi)}W`;
+  const w = (b: readonly [number, number]) => `${Math.round(ftp * b[0])}–${Math.round(ftp * b[1])}W`;
   return {
     run: {
-      easy: runRange(rt, 0.76, 0.84),
-      steady: runRange(rt, 0.85, 0.9),
-      tempo: runRange(rt, 0.91, 0.96),
-      threshold: runRange(rt, 0.97, 1.02),
-      vo2: runRange(rt, 1.05, 1.1),
+      easy: runRange(rt, ...RUN_BANDS.easy),
+      steady: runRange(rt, ...RUN_BANDS.steady),
+      tempo: runRange(rt, ...RUN_BANDS.tempo),
+      threshold: runRange(rt, ...RUN_BANDS.threshold),
+      vo2: runRange(rt, ...RUN_BANDS.vo2),
       strides: `${paceKm(rt * 1.15)}/km feel, 20s`,
     },
     runSec: {
-      easy: runRangeSec(rt, 0.76, 0.84),
-      steady: runRangeSec(rt, 0.85, 0.9),
-      tempo: runRangeSec(rt, 0.91, 0.96),
-      threshold: runRangeSec(rt, 0.97, 1.02),
-      vo2: runRangeSec(rt, 1.05, 1.1),
+      easy: runRangeSec(rt, ...RUN_BANDS.easy),
+      steady: runRangeSec(rt, ...RUN_BANDS.steady),
+      tempo: runRangeSec(rt, ...RUN_BANDS.tempo),
+      threshold: runRangeSec(rt, ...RUN_BANDS.threshold),
+      vo2: runRangeSec(rt, ...RUN_BANDS.vo2),
     },
     bike: {
-      z2: w(0.62, 0.75),
-      tempo: w(0.8, 0.88),
-      threshold: w(0.95, 1.03),
-      vo2: w(1.08, 1.2),
+      z2: w(BIKE_BANDS.z2),
+      tempo: w(BIKE_BANDS.tempo),
+      threshold: w(BIKE_BANDS.threshold),
+      vo2: w(BIKE_BANDS.vo2),
     },
     swim: {
       easy: `${per100(css * 0.88)}`,
