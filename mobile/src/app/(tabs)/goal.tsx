@@ -21,6 +21,8 @@ import { localToday, setPlan, useAthlete, useToday, zonesFor, usePlan } from "@/
 import { tapLight, tapSuccess } from "@/lib/haptics";
 import { syncReminders } from "@/lib/notifications";
 import { seedDemoAthlete } from "@/lib/demo";
+import { readTissue } from "@/lib/tissue-store";
+import { buildGoalRequest } from "@/lib/plan-request";
 
 const RACE_TYPES: Array<{ v: RaceType; label: string }> = [
   { v: "run-5k", label: "5K" },
@@ -215,19 +217,28 @@ export default function GoalScreen() {
     {
       setTimeout(async () => {
         try {
-          const request: PlanRequest = {
-            raceName: raceName.trim() || "A race",
-            raceDate,
-            raceType,
-            daysPerWeek,
-            longDay,
-            startDate: today,
-            goalTime: goalTime.trim() || undefined,
-            priorWeights: athlete.priorWeights,
-            ...(tuneupDate
-              ? { tuneups: [{ date: tuneupDate, raceType: tuneupType, name: tuneupName.trim() || undefined }] }
-              : {}),
-          };
+          // Feature 4: a phone-declared injury must bind the plan built on
+          // the phone, and a corrupt declaration store must refuse (E9) —
+          // both enforced inside buildGoalRequest, which is pure so the
+          // gauntlet pins this wiring (plan-request.test.ts). Until
+          // 2026-08-06 the request literal lived inline here and threaded
+          // priorWeights but not tissueConstraints.
+          const request: PlanRequest = buildGoalRequest(
+            {
+              raceName,
+              raceDate,
+              raceType,
+              daysPerWeek,
+              longDay,
+              today,
+              goalTime,
+              priorWeights: athlete.priorWeights,
+              ...(tuneupDate
+                ? { tuneup: { date: tuneupDate, raceType: tuneupType, name: tuneupName.trim() || undefined } }
+                : {}),
+            },
+            await readTissue(today)
+          );
           // The real engine, on this device — same code, same rails, same
           // honesty as the dashboard.
           // A seed paired weeks ago is stale — but "stale" cuts both ways:
